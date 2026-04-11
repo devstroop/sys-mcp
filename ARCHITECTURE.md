@@ -1,0 +1,117 @@
+# Architecture
+
+## Overview
+
+gui-mcp is an MCP (Model Context Protocol) server that bridges AI agents to the local desktop. It reads JSON-RPC 2.0 requests from stdin, performs GUI operations, and writes responses to stdout.
+
+```
+AI Agent (Claude, etc.)
+    │
+    │  JSON-RPC 2.0 over stdio
+    │
+┌───▼──────────────────────────────┐
+│  GuiMcpServer                    │  src/mcp/server.rs
+│  ├── handle_request()            │
+│  │   ├── initialize / ping       │
+│  │   ├── tools/list → all_tools()│  src/mcp/tools.rs
+│  │   └── tools/call              │
+│  │       └── handle_tool_call()  │  src/mcp/handlers.rs
+│  └── WebServer (optional)        │  src/web/server.rs
+└───┬──────────────────────────────┘
+    │
+┌───▼──────────────────────────────┐
+│  GuiClient (facade)              │  src/gui/mod.rs
+│  ├── display methods             │
+│  ├── input methods               │
+│  ├── window methods              │
+│  ├── clipboard methods           │
+│  ├── accessibility methods       │
+│  └── system_info()               │
+└───┬──────────────────────────────┘
+    │
+┌───▼──────────────────────────────┐
+│  GuiBackend (trait)              │  src/gui/backend/mod.rs
+│  ├── DisplayCapability (required)│  src/gui/display.rs
+│  ├── InputCapability  (required) │  src/gui/input.rs
+│  ├── WindowCapability (optional) │  src/gui/window.rs
+│  ├── ClipboardCapability (opt.)  │  src/gui/clipboard.rs
+│  └── AccessibilityCapability(opt)│  src/gui/accessibility.rs
+└───┬──────────────────────────────┘
+    │
+┌───▼──────────────────────────────┐
+│  LocalBackend                    │  src/gui/backend/local.rs
+│  ├── Mutex<RustAutoGui>          │  rustautogui/ (submodule)
+│  ├── PlatformWindowManager       │  src/platform/window/{os}.rs
+│  ├── Mutex<arboard::Clipboard>   │  (feature: clipboard)
+│  └── OcrEngine (OnceLock)        │  src/gui/ocr.rs (feature: ocr)
+└──────────────────────────────────┘
+```
+
+## Layer Responsibilities
+
+### MCP Layer (`src/mcp/`)
+
+- **server.rs** — Reads JSON-RPC from stdin, dispatches by method name, writes responses to stdout. Manages the web preview server lifecycle.
+- **tools.rs** — Declares all 28 tool schemas (name, description, inputSchema) returned by `tools/list`.
+- **handlers.rs** — Extracts typed arguments from JSON, calls `GuiClient` methods, formats `ToolResult` responses. Handles JPEG compression for screenshots.
+
+### GUI Layer (`src/gui/`)
+
+- **mod.rs (GuiClient)** — Facade over `Box<dyn GuiBackend>`. Provides a clean async API. Checks capability availability via `as_*()` methods, returning `UnsupportedCapability` errors when backends don't support a feature.
+- **types.rs** — All shared data types (Screenshot, WindowInfo, Point, Region, etc.). Serializable for JSON responses.
+- **Capability traits** — Each trait defines a clean async interface for one capability area. Backends implement what they support.
+- **ocr.rs** — Standalone OCR module using the `ocrs` crate. Manages model downloads, runs text detection/recognition, provides text search with click coordinates.
+
+### Backend Layer (`src/gui/backend/`)
+
+- **mod.rs (GuiBackend trait)** — Super-trait combining required capabilities (Display + Input) with optional ones accessed via `as_*()` downcasting.
+- **local.rs (LocalBackend)** — The main backend. Wraps `RustAutoGui` in a Mutex for thread safety, delegates window management to platform-specific code, uses `arboard` for clipboard.
+
+### Platform Layer (`src/platform/`)
+
+- **window/** — OS-specific window management implementations behind a common `PlatformWindowManager` interface. Full Win32 implementation on Windows; stubs on Linux/macOS.
+- **accessibility/** — Placeholder stubs for future platform-specific accessibility tree access.
+
+### Protocol Layer (`src/protocol/`)
+
+- **mcp.rs** — JSON-RPC 2.0 types: `McpRequest`, `McpResponse`, `ToolResult`, `ContentItem`. Handles serialization details like untagged enums for success/error responses.
+
+### Web Layer (`src/web/`)
+
+- **server.rs** — Optional Axum HTTP server for the web preview feature. Serves a live interactive desktop viewer with screenshot refresh, click-through, keyboard passthrough, and scroll. Token-authenticated for security.
+
+## Key Design Decisions
+
+### Capability-Based Composition
+
+Instead of a monolithic backend interface, capabilities are split into independent traits. The `GuiBackend` super-trait combines required traits (`Display + Input`) and provides optional access to others via `as_*()` methods. This allows backends to selectively implement features and makes it easy to add new capability areas.
+
+### Thread Safety via Mutex
+
+`RustAutoGui` holds raw platform handles (HDC/HBITMAP on Windows) making it `!Send + !Sync`. Rather than restructuring the underlying library, `LocalBackend` wraps it in `Mutex<AutoGuiWrapper>` with `unsafe impl Send + Sync`. All access is serialized through the mutex, which is safe because the MCP server processes one request at a time.
+
+### OCR Model Management
+
+OCR models (~15MB total) are downloaded on first use from S3 and cached in the user's cache directory (`%LOCALAPPDATA%/gui-mcp/models/` on Windows). The `OcrEngine` is initialized once via `OnceLock` for the process lifetime.
+
+### Screenshot Pipeline
+
+Screenshots flow through: `RustAutoGui.save_screenshot()` → temp PNG file → read bytes → decode with `image` crate → (optional crop/resize/JPEG compress) → base64 encode → MCP response. JPEG compression at quality 60 with 0.5x scaling keeps full-screen screenshots under ~200KB.
+
+### Feature Flags
+
+Optional capabilities are compile-time gated:
+- `ocr` — adds ~15MB runtime model download, significant binary size increase
+- `clipboard` — adds `arboard` dependency
+- `web-preview` — adds `axum` web server dependency
+- `opencl` — enables GPU-accelerated template matching in rustautogui
+
+## MCP Protocol
+
+gui-mcp implements MCP protocol version `2024-11-05`:
+
+- **Transport**: stdio (newline-delimited JSON)
+- **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `ping`
+- **Capabilities**: `{ "tools": {} }`
+
+Tool results use MCP's `ContentItem` format with `type: "text"` for text results and `type: "image"` with base64-encoded data for screenshots.

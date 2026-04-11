@@ -1,0 +1,75 @@
+[package]
+name = "gui-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "MCP server for local GUI automation — screen capture, OCR, mouse/keyboard, window management, accessibility, and template matching"
+license = "MIT"
+authors = ["Devstroop"]
+
+[[bin]]
+name = "gui-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# Core
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+hostname = "0.4"
+
+# GUI automation (submodule)
+rustautogui = { path = "rustautogui", default-features = false, features = ["full"] }
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# OCR (optional, on by default)
+ocrs = { version = "0.10", default-features = false, optional = true }
+rten = { version = "0.21", optional = true }
+rten-tensor = { version = "0.21", optional = true }
+ureq = { version = "3", optional = true }
+dirs-next = { version = "2", optional = true }
+
+# Web preview (optional, on by default)
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", features = ["cors"], optional = true }
+
+# Clipboard (cross-platform)
+arboard = { version = "3", optional = true }
+
+# ── Platform: Windows ──────────────────────────────────────────────
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_UI_Accessibility",
+    "Win32_System_Threading",
+] }
+
+# ── Platform: Linux ────────────────────────────────────────────────
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+
+# ── Platform: macOS ────────────────────────────────────────────────
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = { version = "0.24", features = ["highsierra"] }
+cocoa = "0.26"
+objc = "0.2"
+
+[features]
+default = ["ocr", "clipboard", "web-preview"]
+ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
+clipboard = ["dep:arboard"]
+web-preview = ["dep:axum", "dep:tower-http"]
+opencl = ["rustautogui/opencl"]
+ml = []

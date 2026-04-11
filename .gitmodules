@@ -1,0 +1,3 @@
+[submodule "rustautogui"]
+	path = rustautogui
+	url = https://gitlab.devstroop.com/devstroop/rustautogui
