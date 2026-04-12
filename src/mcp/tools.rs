@@ -43,7 +43,13 @@ pub fn all_tools() -> Vec<Value> {
                     "x": { "type": "integer", "description": "Region X (optional — omit for full screen)." },
                     "y": { "type": "integer", "description": "Region Y." },
                     "width": { "type": "integer", "description": "Region width." },
-                    "height": { "type": "integer", "description": "Region height." }
+                    "height": { "type": "integer", "description": "Region height." },
+                    "detail": {
+                        "type": "string",
+                        "enum": ["full", "lines", "text"],
+                        "description": "Response detail level. 'text' = plain text only (smallest), 'lines' = text per line with bounding boxes (no words), 'full' = lines + word-level coordinates (default).",
+                        "default": "full"
+                    }
                 }
             }
         }),
@@ -244,82 +250,39 @@ pub fn all_tools() -> Vec<Value> {
             }
         }),
 
-        // ── Accessibility ───────────────────────────────────────────────
+        // ── Accessibility (Phase 6 — not yet wired up) ────────────────
+        // gui_accessibility_tree and gui_find_ui_element are kept in
+        // handlers.rs but hidden from tools/list until backend is ready.
+
+        // ── Template Matching (Phase 7 — not yet implemented) ──────────
+        // gui_find_image and gui_wait_for_image are kept in handlers.rs
+        // but hidden from tools/list until handlers are wired up.
+
+        // ── Utility ────────────────────────────────────────────────────
         json!({
-            "name": "gui_accessibility_tree",
-            "description": "Get the UI element accessibility tree for a window. Returns element hierarchy with ids, roles, names, bounds, and clickable coordinates. Requires the 'accessibility' feature.",
+            "name": "gui_wait",
+            "description": "Wait for a specified duration. Useful between focus + type sequences or to wait for UI transitions.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "window_id": { "type": "integer", "description": "Window ID (omit for focused window)." },
-                    "max_depth": { "type": "integer", "description": "Maximum tree depth (default: 5).", "default": 5 }
+                    "ms": { "type": "integer", "description": "Duration to wait in milliseconds (max 30000).", "default": 500 }
                 }
             }
         }),
         json!({
-            "name": "gui_find_ui_element",
-            "description": "Search for a UI element by name and/or role in the accessibility tree. Returns matching elements with clickable coordinates (cx, cy).",
+            "name": "gui_scroll_to_text",
+            "description": "Scroll the screen until specific text is found via OCR, or give up after max_scrolls. Useful for finding off-screen content like buttons, links, or sections. Returns the match coordinates when found.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "Element name to search for." },
-                    "role": { "type": "string", "description": "Element role filter (e.g. 'button', 'text', 'edit')." },
-                    "window_id": { "type": "integer", "description": "Window ID (omit for focused window)." }
+                    "query": { "type": "string", "description": "Text to search for (case-insensitive substring match)." },
+                    "direction": { "type": "string", "enum": ["up", "down"], "description": "Scroll direction.", "default": "down" },
+                    "max_scrolls": { "type": "integer", "description": "Maximum number of scroll attempts before giving up.", "default": 10 },
+                    "scroll_amount": { "type": "integer", "description": "Number of scroll notches per attempt.", "default": 3 },
+                    "x": { "type": "integer", "description": "X coordinate to scroll at (defaults to screen center)." },
+                    "y": { "type": "integer", "description": "Y coordinate to scroll at (defaults to screen center)." }
                 },
                 "required": ["query"]
-            }
-        }),
-
-        // ── Template Matching ───────────────────────────────────────────
-        json!({
-            "name": "gui_find_image",
-            "description": "Find an image template on screen. Returns match locations with center coordinates for clicking. Supports GPU-accelerated matching with OpenCL.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "template_base64": { "type": "string", "description": "Base64-encoded PNG/JPEG image to find on screen." },
-                    "precision": { "type": "number", "description": "Match precision 0.0-1.0 (default 0.8).", "default": 0.8 },
-                    "region": {
-                        "type": "object",
-                        "properties": {
-                            "x": { "type": "integer" },
-                            "y": { "type": "integer" },
-                            "width": { "type": "integer" },
-                            "height": { "type": "integer" }
-                        },
-                        "description": "Optional screen region to search within."
-                    },
-                    "match_mode": {
-                        "type": "string",
-                        "enum": ["segmented", "fft"],
-                        "description": "Matching algorithm.",
-                        "default": "segmented"
-                    }
-                },
-                "required": ["template_base64"]
-            }
-        }),
-        json!({
-            "name": "gui_wait_for_image",
-            "description": "Wait for an image template to appear on screen (polling with timeout). Returns match location when found, or error on timeout.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "template_base64": { "type": "string", "description": "Base64-encoded PNG/JPEG image to wait for." },
-                    "precision": { "type": "number", "description": "Match precision 0.0-1.0 (default 0.8).", "default": 0.8 },
-                    "timeout": { "type": "integer", "description": "Timeout in seconds (default 30).", "default": 30 },
-                    "region": {
-                        "type": "object",
-                        "properties": {
-                            "x": { "type": "integer" },
-                            "y": { "type": "integer" },
-                            "width": { "type": "integer" },
-                            "height": { "type": "integer" }
-                        },
-                        "description": "Optional screen region to search within."
-                    }
-                },
-                "required": ["template_base64"]
             }
         }),
 

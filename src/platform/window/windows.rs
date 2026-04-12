@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE, WPARAM};
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::error::GuiError;
@@ -52,7 +53,34 @@ impl PlatformWindowManager {
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_RESTORE);
             }
+
+            // Try SetForegroundWindow directly first
             let _ = SetForegroundWindow(hwnd);
+
+            // Verify — if it didn't work, use AttachThreadInput trick
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let fg = GetForegroundWindow();
+            if fg != hwnd {
+                let fg_tid = GetWindowThreadProcessId(fg, None);
+                let our_tid = GetCurrentThreadId();
+                if fg_tid != 0 && fg_tid != our_tid {
+                    let _ = AttachThreadInput(our_tid, fg_tid, true);
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = BringWindowToTop(hwnd);
+                    let _ = AttachThreadInput(our_tid, fg_tid, false);
+                } else {
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = BringWindowToTop(hwnd);
+                }
+            }
+
+            // Final nudge — bring to top of Z-order
+            let _ = SetWindowPos(
+                hwnd,
+                HWND_TOP,
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
         }
         Ok(())
     }

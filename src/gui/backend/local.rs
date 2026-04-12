@@ -171,12 +171,24 @@ impl InputCapability for LocalBackend {
         Ok(())
     }
 
-    async fn mouse_double_click(&self, x: u32, y: u32, _button: MouseButton) -> Result<(), GuiError> {
+    async fn mouse_double_click(&self, x: u32, y: u32, button: MouseButton) -> Result<(), GuiError> {
         let autogui = self.autogui.lock().unwrap();
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
-        autogui.double_click()
-            .map_err(|e| GuiError::InputError(e.to_string()))?;
+        match button {
+            MouseButton::Left => autogui.double_click(),
+            // rustautogui only supports left double-click natively;
+            // for right/middle we simulate with two rapid clicks.
+            MouseButton::Right => {
+                autogui.right_click().map_err(|e| GuiError::InputError(e.to_string()))?;
+                autogui.right_click()
+            }
+            MouseButton::Middle => {
+                autogui.middle_click().map_err(|e| GuiError::InputError(e.to_string()))?;
+                autogui.middle_click()
+            }
+        }
+        .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 

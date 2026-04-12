@@ -52,6 +52,10 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "gui_find_image" => handle_find_image(client, &args).await,
         "gui_wait_for_image" => handle_wait_for_image(client, &args).await,
 
+        // Utility
+        "gui_wait" => handle_wait(&args).await,
+        "gui_scroll_to_text" => handle_scroll_to_text(client, &args).await,
+
         // System
         "gui_system_info" => handle_system_info(client).await,
 
@@ -248,14 +252,45 @@ async fn handle_read_screen(client: &GuiClient, args: &Value) -> Result<ToolResu
             .map_err(|e| format!("OCR task failed: {e}"))?
             .map_err(|e| e.to_string())?;
 
-        let summary = format!(
-            "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for gui_click):\n{}",
-            result.screen_width,
-            result.screen_height,
-            result.lines.len(),
-            result.text,
-            serde_json::to_string(&result.lines).unwrap_or_default(),
-        );
+        let detail = args.get("detail").and_then(Value::as_str).unwrap_or("full");
+
+        let summary = match detail {
+            "text" => format!(
+                "Screen {}x{}, {} lines of text detected.\n\n{}",
+                result.screen_width,
+                result.screen_height,
+                result.lines.len(),
+                result.text,
+            ),
+            "lines" => {
+                // Lines with bounding boxes but no word-level detail
+                let lines_data: Vec<serde_json::Value> = result.lines.iter().map(|l| {
+                    serde_json::json!({
+                        "text": l.text,
+                        "x": l.x, "y": l.y,
+                        "width": l.width, "height": l.height,
+                        "cx": l.x + l.width / 2,
+                        "cy": l.y + l.height / 2,
+                    })
+                }).collect();
+                format!(
+                    "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for gui_click):\n{}",
+                    result.screen_width,
+                    result.screen_height,
+                    result.lines.len(),
+                    result.text,
+                    serde_json::to_string(&lines_data).unwrap_or_default(),
+                )
+            }
+            _ => format!(
+                "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for gui_click):\n{}",
+                result.screen_width,
+                result.screen_height,
+                result.lines.len(),
+                result.text,
+                serde_json::to_string(&result.lines).unwrap_or_default(),
+            ),
+        };
         Ok(ToolResult::text(summary))
     }
 
@@ -371,14 +406,16 @@ async fn handle_type_text(client: &GuiClient, args: &Value) -> Result<ToolResult
 }
 
 async fn handle_press_key(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
-    let key = str_arg(args, "key")?;
+    let raw_key = str_arg(args, "key")?;
+    // Normalize key names to lowercase for rustautogui compatibility
+    let key = raw_key.to_lowercase();
     if key.contains('+') {
         let keys: Vec<String> = key.split('+').map(|s| s.trim().to_string()).collect();
         client.key_combo(&keys).await.map_err(|e| e.to_string())?;
     } else {
-        client.press_key(key).await.map_err(|e| e.to_string())?;
+        client.press_key(&key).await.map_err(|e| e.to_string())?;
     }
-    Ok(ToolResult::text(format!("Pressed {key}.")))
+    Ok(ToolResult::text(format!("Pressed {raw_key}.")))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -528,6 +565,69 @@ async fn handle_find_image(_client: &GuiClient, _args: &Value) -> Result<ToolRes
 
 async fn handle_wait_for_image(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
     Err("Template matching not yet implemented. This is a permanent error — do not retry.".to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Utility handlers
+// ═══════════════════════════════════════════════════════════════════════════
+
+async fn handle_wait(args: &Value) -> Result<ToolResult, String> {
+    let ms = args.get("ms").and_then(Value::as_u64).unwrap_or(500);
+    let ms = ms.min(30000); // Cap at 30 seconds
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    Ok(ToolResult::text(format!("Waited {ms}ms.")))
+}
+
+async fn handle_scroll_to_text(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    #[cfg(feature = "ocr")]
+    {
+        let query = str_arg(args, "query")?.to_string();
+        let direction = match args.get("direction").and_then(Value::as_str).unwrap_or("down") {
+            "up" => ScrollDirection::Up,
+            _ => ScrollDirection::Down,
+        };
+        let max_scrolls = args.get("max_scrolls").and_then(Value::as_u64).unwrap_or(10) as u32;
+        let scroll_amount = args.get("scroll_amount").and_then(Value::as_u64).unwrap_or(3) as i32;
+
+        // Default scroll position to screen center
+        let screen = client.get_screen_size().await.map_err(|e| e.to_string())?;
+        let sx = args.get("x").and_then(Value::as_u64).map(|v| v as u32).unwrap_or(screen.width / 2);
+        let sy = args.get("y").and_then(Value::as_u64).map(|v| v as u32).unwrap_or(screen.height / 2);
+
+        for i in 0..max_scrolls {
+            // Take screenshot and OCR
+            let shot = client.screenshot().await.map_err(|e| e.to_string())?;
+            let q = query.clone();
+            let matches = tokio::task::spawn_blocking(move || ocr::find_text(&shot, &q))
+                .await
+                .map_err(|e| format!("OCR task failed: {e}"))?
+                .map_err(|e| e.to_string())?;
+
+            if !matches.is_empty() {
+                return Ok(ToolResult::text(format!(
+                    "Found '{}' after {} scroll(s). Use cx/cy with gui_click.\n{}",
+                    query,
+                    i,
+                    serde_json::to_string_pretty(&matches).unwrap_or_default()
+                )));
+            }
+
+            // Scroll and wait for content to settle
+            client.scroll(sx, sy, direction, scroll_amount).await.map_err(|e| e.to_string())?;
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
+        Ok(ToolResult::text(format!(
+            "Text '{}' not found after {} scrolls. Try gui_read_screen to see what's currently visible.",
+            query, max_scrolls
+        )))
+    }
+
+    #[cfg(not(feature = "ocr"))]
+    {
+        let _ = (client, args);
+        Err("OCR not available — build with 'ocr' feature enabled.".to_string())
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
