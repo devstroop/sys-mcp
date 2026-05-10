@@ -1,0 +1,188 @@
+use std::sync::Arc;
+
+use axum::{
+    body::Body,
+    extract::State,
+    http::{HeaderMap, HeaderName, Method, StatusCode},
+    response::Response,
+    routing::{delete, get, post},
+    Json, Router,
+};
+use serde_json::{json, Value};
+use tokio::sync::Mutex;
+use tower_http::cors::{Any, CorsLayer};
+
+use crate::config::ServerConfig;
+use crate::mcp::session::SessionManagerHandle;
+use crate::protocol::mcp::McpRequest;
+
+pub struct HttpServer {
+    config: ServerConfig,
+    session_mgr: SessionManagerHandle,
+    mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+}
+
+impl HttpServer {
+    pub fn new(
+        config: ServerConfig,
+        session_mgr: SessionManagerHandle,
+        mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+    ) -> Self {
+        Self {
+            config,
+            session_mgr,
+            mcp_handler,
+        }
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let addr: std::net::SocketAddr = format!("{}:{}", self.config.host, self.config.port)
+            .parse()
+            .unwrap();
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+            .allow_headers(Any)
+            .expose_headers([HeaderName::from_static("mcp-session-id")]);
+
+        let state = HttpState {
+            session_mgr: self.session_mgr.clone(),
+            mcp_handler: self.mcp_handler.clone(),
+        };
+
+        let app = Router::new()
+            .route("/health", get(health_handler))
+            .route("/mcp", post(mcp_handler))
+            .route("/mcp", delete(mcp_delete_handler))
+            .route("/mcp", get(mcp_get_handler))
+            .layer(cors)
+            .with_state(state);
+
+        log::info!("gui-mcp HTTP server listening on http://{}", addr);
+        log::info!("MCP endpoint: http://{}/mcp", addr);
+
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c().await.ok();
+            })
+            .await?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct HttpState {
+    session_mgr: SessionManagerHandle,
+    mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+}
+
+async fn health_handler() -> Json<Value> {
+    Json(json!({
+        "status": "ok",
+        "server": "gui-mcp",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+async fn mcp_get_handler() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .body(Body::from(r#"{"error":"Use POST for MCP requests"}"#))
+        .unwrap()
+}
+
+async fn mcp_delete_handler(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    let session_id = match headers.get("mcp-session-id") {
+        Some(v) => v.to_str().ok(),
+        None => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(r#"{"error":"Missing Mcp-Session-Id header"}"#))
+                .unwrap();
+        }
+    };
+
+    if let Some(sid) = session_id {
+        let mut mgr = state.session_mgr.lock().await;
+        if mgr.remove(sid) {
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"message":"Session terminated"}"#))
+                .unwrap();
+        }
+    }
+
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::from(r#"{"error":"Session not found"}"#))
+        .unwrap()
+}
+
+async fn mcp_handler(
+    State(state): State<HttpState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response<Body> {
+    // Cleanup expired sessions periodically
+    {
+        let mut mgr = state.session_mgr.lock().await;
+        mgr.cleanup_expired();
+    }
+
+    // Get or create session
+    let session_id = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let session = {
+        let mut mgr = state.session_mgr.lock().await;
+        mgr.get_or_create(session_id.as_deref())
+    };
+
+    // Parse MCP request
+    let mcp_request: McpRequest = match serde_json::from_value(body) {
+        Ok(req) => req,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(format!(r#"{{"error":"parse error: {}"}}"#, e)))
+                .unwrap();
+        }
+    };
+
+    // Handle MCP request
+    let mut handler = state.mcp_handler.lock().await;
+    let response = handler.handle_request(&mcp_request).await;
+
+    // Serialize response
+    let response_json = match serde_json::to_string(&response) {
+        Ok(json) => json,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(format!(r#"{{"error":"serialization error: {}"}}"#, e)))
+                .unwrap();
+        }
+    };
+
+    let status = if response_json.is_empty() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .header("mcp-session-id", session.id)
+        .body(Body::from(response_json))
+        .unwrap()
+}

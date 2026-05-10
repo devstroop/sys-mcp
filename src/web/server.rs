@@ -8,6 +8,8 @@ use axum::http::StatusCode;
 #[cfg(feature = "web-preview")]
 use axum::response::{Html, IntoResponse, Response};
 #[cfg(feature = "web-preview")]
+use axum::Json;
+#[cfg(feature = "web-preview")]
 use axum::routing::get;
 #[cfg(feature = "web-preview")]
 use axum::Router;
@@ -68,6 +70,7 @@ impl WebServer {
             .route("/", get(page_index))
             .route("/screenshot", get(screenshot_feed))
             .route("/screenshot.png", get(screenshot_png))
+            .route("/api/ocr", get(api_ocr))
             .route("/api/click", get(api_click))
             .route("/api/type", get(api_type))
             .route("/api/key", get(api_key))
@@ -137,6 +140,8 @@ async fn page_index(
   html, body {{ background: #000; width: 100%; height: 100%; overflow: hidden; }}
   #viewport {{ width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }}
   #screen {{ max-width: 100vw; max-height: 100vh; width: auto; height: auto; object-fit: contain; cursor: crosshair; display: block; }}
+  #text-overlay {{ position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }}
+  #text-overlay .word {{ position: absolute; color: #00ff00; font-size: 12px; font-family: monospace; background: rgba(0,0,0,0.6); padding: 1px 3px; border-radius: 2px; white-space: nowrap; }}
   #overlay {{ position: fixed; top: 0; right: 0; z-index: 90; display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(10,10,10,0.75); backdrop-filter: blur(8px); border-bottom-left-radius: 8px; font: 11px/1.2 system-ui, sans-serif; color: #aaa; opacity: 0; transition: opacity 0.25s; pointer-events: none; }}
   #overlay:hover, body:hover #overlay {{ opacity: 1; pointer-events: auto; }}
   #overlay label {{ cursor: pointer; white-space: nowrap; user-select: none; }}
@@ -159,11 +164,13 @@ async fn page_index(
     <option value="5000">5s</option>
   </select>
   <label><input type="checkbox" id="click-mode" checked> Click</label>
+  <label><input type="checkbox" id="show-text" onchange="toggleText()"> Text</label>
 </div>
 
 <div id="viewport">
   <img id="screen" src="/screenshot.png?token={token}&_t=0" alt="Screen"
        onclick="handleClick(event)" onmousemove="trackMouse(event)" oncontextmenu="handleRightClick(event)">
+  <div id="text-overlay"></div>
 </div>
 
 <div id="coords">-</div>
@@ -176,8 +183,10 @@ async fn page_index(
 <script>
 const TOKEN = "{token}";
 const IMG = document.getElementById("screen");
+const TEXT_OVERLAY = document.getElementById("text-overlay");
 let refreshTimer = null;
 let interval = 1000;
+let showText = false;
 
 function refreshScreenshot() {{
   const next = new Image();
@@ -191,6 +200,38 @@ function scheduleRefresh() {{
 }}
 function toggleAutoRefresh() {{ scheduleRefresh(); if (document.getElementById("auto-refresh").checked) refreshScreenshot(); }}
 function updateInterval() {{ interval = parseInt(document.getElementById("refresh-interval").value); }}
+function toggleText() {{ showText = document.getElementById("show-text").checked; TEXT_OVERLAY.innerHTML = ""; if (showText) fetchOcr(); }}
+async function fetchOcr() {{
+  try {{
+    const resp = await fetch(`/api/ocr?token=${{TOKEN}}`);
+    const data = await resp.json();
+    if (!data.lines) return;
+    // Wait for image to be fully loaded
+    if (!IMG.complete || IMG.naturalWidth === 0) {{
+      IMG.onload = fetchOcr;
+      return;
+    }}
+    // Get image position within viewport
+    const imgRect = IMG.getBoundingClientRect();
+    const viewRect = document.getElementById("viewport").getBoundingClientRect();
+    const offsetX = imgRect.left - viewRect.left;
+    const offsetY = imgRect.top - viewRect.top;
+    const scaleX = imgRect.width / data.screen_width;
+    const scaleY = imgRect.height / data.screen_height;
+    console.log("OCR: screen=" + data.screen_width + "x" + data.screen_height + " img=" + imgRect.width + "x" + imgRect.height + " offset=" + offsetX + "," + offsetY);
+    TEXT_OVERLAY.innerHTML = "";
+    for (const line of data.lines) {{
+      for (const word of line.words || []) {{
+        const el = document.createElement("span");
+        el.className = "word";
+        el.textContent = word.text;
+        el.style.left = Math.round(offsetX + word.x * scaleX) + "px";
+        el.style.top = Math.round(offsetY + word.y * scaleY) + "px";
+        TEXT_OVERLAY.appendChild(el);
+      }}
+    }}
+  }} catch(e) {{ console.log("OCR error:", e); }}
+}}
 refreshTimer = setTimeout(refreshScreenshot, interval);
 
 function getImageCoords(e) {{
@@ -260,6 +301,24 @@ async fn screenshot_png(
         screenshot.data,
     )
         .into_response())
+}
+
+#[cfg(feature = "web-preview")]
+async fn api_ocr(
+    State(state): State<SharedState>,
+    Query(q): Query<TokenQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    check_token(&state, &q)?;
+
+    let ocr_result = state.client.read_screen(None).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("OCR error: {e}")).into_response()
+    })?;
+
+    let json_value = serde_json::to_value(ocr_result).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("JSON error: {e}")).into_response()
+    })?;
+
+    Ok(Json(json_value))
 }
 
 #[cfg(feature = "web-preview")]

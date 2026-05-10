@@ -161,6 +161,19 @@ impl GuiClient {
         self.accessibility()?.find_elements(query).await
     }
 
+    // ── OCR ─────────────────────────────────────────────────────────
+
+    #[cfg(feature = "ocr")]
+    pub async fn read_screen(&self, region: Option<Region>) -> Result<crate::gui::ocr::OcrResult, GuiError> {
+        let screenshot = match region {
+            Some(r) => self.backend.screenshot_region(r).await?,
+            None => self.backend.screenshot().await?,
+        };
+        tokio::task::spawn_blocking(move || crate::gui::ocr::read_screen(&screenshot))
+            .await
+            .map_err(|e| GuiError::OcrError(e.to_string()))?
+    }
+
     // ── System info ────────────────────────────────────────────────────
 
     pub async fn system_info(&self) -> Result<SystemInfo, GuiError> {

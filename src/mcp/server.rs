@@ -3,69 +3,47 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::Mutex;
 
-use crate::config::ServerConfig;
+use crate::config::{ServerConfig, TransportMode};
 use crate::gui::GuiClient;
 use crate::mcp::handlers::handle_tool_call;
+use crate::mcp::session::create_session_manager;
 use crate::mcp::tools::all_tools;
 use crate::protocol::mcp::{McpRequest, McpResponse};
 
 #[cfg(feature = "web-preview")]
 use crate::web::server::WebServer;
 
-pub struct GuiMcpServer {
+pub struct McpRequestHandler {
     client: Arc<GuiClient>,
-    #[allow(dead_code)]
-    config: ServerConfig,
     #[cfg(feature = "web-preview")]
     web_server: Option<WebServer>,
 }
 
-impl GuiMcpServer {
-    pub fn new(client: GuiClient, config: ServerConfig) -> Self {
+impl McpRequestHandler {
+    pub fn new(client: Arc<GuiClient>) -> Self {
         Self {
-            client: Arc::new(client),
-            config,
+            client,
             #[cfg(feature = "web-preview")]
             web_server: None,
         }
     }
 
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        // Auto-start web preview (local backend is always "connected")
-        #[cfg(feature = "web-preview")]
-        if self.config.web_preview {
-            self.start_web_preview().await;
-        }
-
-        let stdin = tokio::io::stdin();
-        let reader = BufReader::new(stdin);
-        let mut lines = reader.lines();
-        let mut stdout = std::io::stdout().lock();
-
-        while let Ok(Some(line)) = lines.next_line().await {
-            let line = line.trim().to_string();
-            if line.is_empty() {
-                continue;
+    #[cfg(feature = "web-preview")]
+    pub async fn start_web_preview(&mut self) {
+        match WebServer::start(Arc::clone(&self.client)).await {
+            Ok(ws) => {
+                log::info!("web preview: {}", ws.url());
+                self.web_server = Some(ws);
             }
-
-            let request: McpRequest = match serde_json::from_str(&line) {
-                Ok(r) => r,
-                Err(e) => {
-                    let resp = McpResponse::error(None, -32700, format!("parse error: {e}"));
-                    write_response(&mut stdout, &resp);
-                    continue;
-                }
-            };
-
-            let response = self.handle_request(&request).await;
-            write_response(&mut stdout, &response);
+            Err(e) => {
+                log::error!("failed to start web preview: {e}");
+            }
         }
-
-        Ok(())
     }
 
-    async fn handle_request(&mut self, req: &McpRequest) -> McpResponse {
+    pub async fn handle_request(&mut self, req: &McpRequest) -> McpResponse {
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req),
             "initialized" => McpResponse::success(req.id.clone(), json!({})),
@@ -115,7 +93,6 @@ impl GuiMcpServer {
             }
         };
 
-        // Handle web_preview directly — needs mutable access to web_server state
         #[cfg(feature = "web-preview")]
         if tool_name == "gui_web_preview" {
             return self.handle_web_preview(req);
@@ -135,19 +112,6 @@ impl GuiMcpServer {
     }
 
     #[cfg(feature = "web-preview")]
-    async fn start_web_preview(&mut self) {
-        match WebServer::start(Arc::clone(&self.client)).await {
-            Ok(ws) => {
-                log::info!("web preview: {}", ws.url());
-                self.web_server = Some(ws);
-            }
-            Err(e) => {
-                log::error!("failed to start web preview: {e}");
-            }
-        }
-    }
-
-    #[cfg(feature = "web-preview")]
     fn handle_web_preview(&self, req: &McpRequest) -> McpResponse {
         use crate::protocol::mcp::{ContentItem, ToolResult};
 
@@ -163,6 +127,82 @@ impl GuiMcpServer {
             req.id.clone(),
             serde_json::to_value(&result).unwrap_or_default(),
         )
+    }
+}
+
+pub struct GuiMcpServer {
+    #[allow(dead_code)]
+    client: Arc<GuiClient>,
+    config: ServerConfig,
+    handler: Arc<Mutex<McpRequestHandler>>,
+}
+
+impl GuiMcpServer {
+    pub fn new(client: GuiClient, config: ServerConfig) -> Self {
+        let client = Arc::new(client);
+        let handler = Arc::new(Mutex::new(McpRequestHandler::new(Arc::clone(&client))));
+        Self {
+            client,
+            config,
+            handler,
+        }
+    }
+
+    pub async fn run(&mut self) -> anyhow::Result<()> {
+        #[cfg(feature = "web-preview")]
+        if self.config.web_preview {
+            self.handler.lock().await.start_web_preview().await;
+        }
+
+        match self.config.transport {
+            TransportMode::Stdio => {
+                self.run_stdio().await?;
+            }
+            TransportMode::Http => {
+                self.run_http().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn run_stdio(&self) -> anyhow::Result<()> {
+        let stdin = tokio::io::stdin();
+        let reader = BufReader::new(stdin);
+        let mut lines = reader.lines();
+        let mut stdout = std::io::stdout().lock();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = line.trim().to_string();
+            if line.is_empty() {
+                continue;
+            }
+
+            let request: McpRequest = match serde_json::from_str(&line) {
+                Ok(r) => r,
+                Err(e) => {
+                    let resp = McpResponse::error(None, -32700, format!("parse error: {e}"));
+                    write_response(&mut stdout, &resp);
+                    continue;
+                }
+            };
+
+            let mut handler = self.handler.lock().await;
+            let response = handler.handle_request(&request).await;
+            write_response(&mut stdout, &response);
+        }
+
+        Ok(())
+    }
+
+    async fn run_http(&self) -> anyhow::Result<()> {
+        let session_mgr = create_session_manager(self.config.max_sessions, self.config.session_ttl_secs);
+        let http_server = crate::mcp::http_transport::HttpServer::new(
+            self.config.clone(),
+            session_mgr,
+            self.handler.clone(),
+        );
+        http_server.run().await
     }
 }
 
