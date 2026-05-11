@@ -1,4 +1,5 @@
 pub mod local;
+pub mod stub;
 
 use crate::gui::accessibility::AccessibilityCapability;
 use crate::gui::clipboard::ClipboardCapability;

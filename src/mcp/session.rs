@@ -142,22 +142,22 @@ pub fn create_session_manager(max_sessions: usize, ttl_secs: u64) -> SessionMana
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+    mod tests {
+        use super::*;
 
-    #[test]
-    fn test_session_creation() {
-        let session = Session::new();
-        assert!(!session.id.is_empty());
-        assert_eq!(session.created_at, session.last_active);
-    }
+        #[test]
+        fn test_session_creation() {
+            let session = Session::new();
+            assert!(!session.id.is_empty());
+            assert_eq!(session.created_at, session.last_active);
+        }
 
-    #[test]
-    fn test_session_manager() {
-        let mut mgr = SessionManager::new(10, 60);
-        let session = mgr.create();
-        assert!(mgr.touch(&session.id));
-        assert!(!mgr.remove(&session.id));
-        assert!(!mgr.touch(&session.id)); // already removed
+        #[test]
+        fn test_session_manager() {
+            let mut mgr = SessionManager::new(10, 60);
+            let session = mgr.create();
+            assert!(mgr.touch(&session.id));
+            assert!(mgr.remove(&session.id));
+            assert!(!mgr.touch(&session.id)); // already removed
+        }
     }
-}
