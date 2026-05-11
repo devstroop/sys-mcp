@@ -20,6 +20,9 @@ pub enum GuiError {
     #[error("OCR error: {0}")]
     OcrError(String),
 
+    #[error("detection error: {0}")]
+    DetectionError(String),
+
     #[error("template matching error: {0}")]
     TemplateMatchError(String),
 

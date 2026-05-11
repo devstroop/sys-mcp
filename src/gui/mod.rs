@@ -7,6 +7,8 @@ pub mod input;
 pub mod ocr;
 pub mod types;
 pub mod window;
+#[cfg(feature = "detection")]
+pub mod detection;
 
 use crate::error::GuiError;
 use crate::gui::backend::GuiBackend;
@@ -172,6 +174,17 @@ impl GuiClient {
         tokio::task::spawn_blocking(move || crate::gui::ocr::read_screen(&screenshot))
             .await
             .map_err(|e| GuiError::OcrError(e.to_string()))?
+    }
+
+    // ── Object Detection ──────────────────────────────────────────────
+
+    #[cfg(feature = "detection")]
+    pub async fn detect_objects(&self) -> Result<crate::gui::detection::DetectionResult, GuiError> {
+        let screenshot = self.backend.screenshot().await?;
+        let result = tokio::task::spawn_blocking(move || crate::gui::detection::detect_objects(&screenshot))
+            .await
+            .map_err(|e| GuiError::DetectionError(e.to_string()))?;
+        result.map_err(|e| GuiError::DetectionError(e))
     }
 
     // ── System info ────────────────────────────────────────────────────

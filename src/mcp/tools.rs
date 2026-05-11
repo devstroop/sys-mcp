@@ -293,6 +293,39 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {} }
         }),
 
+        // ── Object Detection ────────────────────────────────────────────
+        json!({
+            "name": "gui_detect_objects",
+            "description": "Detect objects on screen using YOLOv8. Returns bounding boxes with labels for common objects (person, laptop, mouse, keyboard, chair, cup, bottle, etc.). Useful for 'click the laptop' or 'click the cup' automation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence threshold (0.0-1.0).",
+                        "default": 0.3
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter to only these labels (e.g. [\"laptop\", \"mouse\"]). Omit for all."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_click_object",
+            "description": "Click an object by label. Use gui_detect_objects first to see available objects, then specify the label and index (0-based) to click.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Object label (e.g. \"laptop\", \"cup\")" },
+                    "index": { "type": "integer", "description": "Which object to click if multiple match (0 = first).", "default": 0 }
+                },
+                "required": ["label"]
+            }
+        }),
+
         // ── System Info ─────────────────────────────────────────────────
         json!({
             "name": "gui_system_info",
