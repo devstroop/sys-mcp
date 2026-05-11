@@ -44,6 +44,12 @@ tower-http = { version = "0.6", features = ["cors"], optional = true }
 # Clipboard (cross-platform)
 arboard = { version = "3", optional = true }
 
+# Terminal/PTY
+portable-pty = "0.8"
+
+# Logging
+tracing = "0.1"
+
 # Object detection (optional) - tract is more Rust-native
 tract-onnx = { version = "0.22", optional = true }
 

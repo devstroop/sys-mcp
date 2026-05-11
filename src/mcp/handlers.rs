@@ -3,6 +3,11 @@ use serde_json::Value;
 use crate::gui::GuiClient;
 use crate::gui::types::*;
 use crate::protocol::mcp::{ContentItem, ToolResult};
+use crate::terminal::{PtyManager, TerminalHandle};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 #[cfg(feature = "ocr")]
 use crate::gui::ocr;
@@ -67,6 +72,22 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
 
         // System
         "gui_system_info" => handle_system_info(client).await,
+
+        // File System
+        "gui_read_file" => handle_read_file(client, &args).await,
+        "gui_write_file" => handle_write_file(client, &args).await,
+        "gui_list_dir" => handle_list_dir(client, &args).await,
+        "gui_file_exists" => handle_file_exists(client, &args).await,
+        "gui_delete_file" => handle_delete_file(client, &args).await,
+        "gui_create_dir" => handle_create_dir(client, &args).await,
+
+        // Shell/Terminal
+        "gui_shell_exec" => handle_shell_exec(client, &args).await,
+        "gui_shell_open" => handle_shell_open(client, &args).await,
+        "gui_shell_write" => handle_shell_write(client, &args).await,
+        "gui_shell_read" => handle_shell_read(client, &args).await,
+        "gui_shell_close" => handle_shell_close(client, &args).await,
+        "gui_shell_list" => handle_shell_list(client).await,
 
         _ => Err(format!("unknown tool: {tool_name}")),
     };
@@ -741,4 +762,366 @@ async fn handle_system_info(client: &GuiClient) -> Result<ToolResult, String> {
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&info).unwrap_or_default(),
     ))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// File System handlers
+// ═══════════════════════════════════════════════════════════════════════════
+
+use std::fs;
+use std::path::Path;
+
+async fn handle_read_file(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = str_arg(args, "path")?;
+    let path = Path::new(path);
+
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+
+    let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
+    if metadata.is_dir() {
+        return Err(format!("Path is a directory, not a file: {}", path.display()));
+    }
+
+    // Limit file size to 10MB to prevent memory issues
+    if metadata.len() > 10_000_000 {
+        return Err(format!("File too large ({} bytes). Max size is 10MB.", metadata.len()));
+    }
+
+    let data = fs::read(path).map_err(|e| e.to_string())?;
+    let base64 = base64_encode(&data);
+
+    Ok(ToolResult::text(base64))
+}
+
+async fn handle_write_file(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = str_arg(args, "path")?;
+    let content = str_arg(args, "content")?;
+
+    let path = Path::new(path);
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        }
+    }
+
+    let data = base64_decode(content)?;
+    fs::write(path, data).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(ToolResult::text(format!("Written to {}", path.display())))
+}
+
+async fn handle_list_dir(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = args.get("path")
+        .and_then(Value::as_str)
+        .unwrap_or(".");
+    let path = Path::new(path);
+
+    if !path.exists() {
+        return Err(format!("Directory not found: {}", path.display()));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("Path is not a directory: {}", path.display()));
+    }
+
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    let read_dir = fs::read_dir(path).map_err(|e| e.to_string())?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        let metadata = entry.metadata().map_err(|e| e.to_string())?;
+
+        let file_type = if metadata.is_dir() {
+            "directory"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            "other"
+        };
+
+        let modified = metadata.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        entries.push(serde_json::json!({
+            "name": file_name,
+            "type": file_type,
+            "size": metadata.len(),
+            "modified": modified
+        }));
+    }
+
+    // Sort by name
+    entries.sort_by(|a, b| {
+        let a_is_dir = a.get("type").and_then(|t| t.as_str()) == Some("directory");
+        let b_is_dir = b.get("type").and_then(|t| t.as_str()) == Some("directory");
+        if a_is_dir != b_is_dir {
+            b_is_dir.cmp(&a_is_dir)
+        } else {
+            a.get("name").and_then(|n| n.as_str()).unwrap_or("").cmp(
+                b.get("name").and_then(|n| n.as_str()).unwrap_or("")
+            )
+        }
+    });
+
+    Ok(ToolResult::text(serde_json::to_string_pretty(&entries).unwrap_or("[]".to_string())))
+}
+
+async fn handle_file_exists(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = str_arg(args, "path")?;
+    let path = Path::new(path);
+
+    let exists = path.exists();
+    let file_type = if !exists {
+        "none"
+    } else if path.is_dir() {
+        "directory"
+    } else if path.is_file() {
+        "file"
+    } else {
+        "other"
+    };
+
+    Ok(ToolResult::text(serde_json::json!({
+        "exists": exists,
+        "type": file_type
+    }).to_string()))
+}
+
+async fn handle_delete_file(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = str_arg(args, "path")?;
+    let path = Path::new(path);
+
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+
+    if path.is_dir() {
+        return Err(format!("Cannot delete directory with gui_delete_file: {}. Use gui_delete_dir instead.", path.display()));
+    }
+
+    fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))?;
+
+    Ok(ToolResult::text(format!("Deleted {}", path.display())))
+}
+
+async fn handle_create_dir(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let path = str_arg(args, "path")?;
+    let path = Path::new(path);
+
+    fs::create_dir_all(path).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    Ok(ToolResult::text(format!("Created {}", path.display())))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Base64 helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn base64_encode(data: &[u8]) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD.encode(data)
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    STANDARD.decode(input).map_err(|e| format!("Invalid base64: {}", e))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Shell/Terminal state
+// ═══════════════════════════════════════════════════════════════════════════
+
+static SHELL_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<String, SessionState>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+static PTY_MANAGER: std::sync::LazyLock<Arc<PtyManager>> =
+    std::sync::LazyLock::new(|| Arc::new(PtyManager::new()));
+
+struct SessionState {
+    handle: TerminalHandle,
+    output_buffer: Arc<RwLock<Vec<u8>>>,
+}
+
+async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let command = str_arg(args, "command")?;
+    let cwd = args.get("cwd").and_then(Value::as_str);
+
+    let session_id = format!("exec_{}", Uuid::new_v4());
+    let output_buffer = Arc::new(RwLock::new(Vec::new()));
+    let output_buffer_clone = output_buffer.clone();
+
+    let handle = PTY_MANAGER
+        .spawn(
+            session_id.clone(),
+            80,
+            24,
+            cwd.map(String::from),
+            vec![],
+            move |data| {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    let mut buf = output_buffer_clone.write().await;
+                    buf.extend(data);
+                });
+            },
+        )
+        .await
+        .map_err(|e| format!("Failed to spawn terminal: {}", e))?;
+
+    // Send command with newline
+    handle
+        .input_tx
+        .send(format!("{}\n", command).into_bytes())
+        .await
+        .map_err(|e| format!("Failed to send command: {}", e))?;
+
+    // Wait a bit for output
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Close the terminal
+    let _ = PTY_MANAGER.close(&session_id).await;
+
+    // Get output
+    let output = output_buffer.read().await.clone();
+    let output_str = String::from_utf8(output).unwrap_or_default();
+
+    // Clean up ANSI escape codes for display
+    let cleaned = strip_ansi_codes(&output_str);
+
+    Ok(ToolResult::text(cleaned))
+}
+
+async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let cwd = args.get("cwd").and_then(Value::as_str).map(String::from);
+    let cols = args
+        .get("cols")
+        .and_then(Value::as_u64)
+        .unwrap_or(80) as u16;
+    let rows = args
+        .get("rows")
+        .and_then(Value::as_u64)
+        .unwrap_or(24) as u16;
+
+    let session_id = Uuid::new_v4().to_string();
+    let output_buffer = Arc::new(RwLock::new(Vec::new()));
+    let output_buffer_clone = output_buffer.clone();
+    let session_id_clone = session_id.clone();
+
+    let handle = PTY_MANAGER
+        .spawn(
+            session_id.clone(),
+            cols,
+            rows,
+            cwd,
+            vec![],
+            move |data| {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    let mut buf = output_buffer_clone.write().await;
+                    buf.extend(data);
+                });
+            },
+        )
+        .await
+        .map_err(|e| format!("Failed to open shell: {}", e))?;
+
+    let state = SessionState {
+        handle,
+        output_buffer,
+    };
+
+    SHELL_SESSIONS
+        .write()
+        .await
+        .insert(session_id.clone(), state);
+
+    Ok(ToolResult::text(serde_json::json!({
+        "session_id": session_id,
+        "message": "Shell session opened. Use gui_shell_write to send commands, gui_shell_read to get output, gui_shell_close to close."
+    }).to_string()))
+}
+
+async fn handle_shell_write(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let session_id = str_arg(args, "session_id")?;
+    let input = str_arg(args, "input")?;
+
+    let sessions = SHELL_SESSIONS.read().await;
+    let session = sessions
+        .get(session_id)
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    session
+        .handle
+        .input_tx
+        .send(input.as_bytes().to_vec())
+        .await
+        .map_err(|e| format!("Failed to write to shell: {}", e))?;
+
+    Ok(ToolResult::text(format!("Sent {} bytes to session {}", input.len(), session_id)))
+}
+
+async fn handle_shell_read(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let session_id = str_arg(args, "session_id")?;
+
+    let sessions = SHELL_SESSIONS.read().await;
+    let session = sessions
+        .get(session_id)
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    let mut buffer = session.output_buffer.write().await;
+    let output = buffer.clone();
+    buffer.clear();
+
+    let output_str = String::from_utf8(output).unwrap_or_default();
+    let cleaned = strip_ansi_codes(&output_str);
+
+    Ok(ToolResult::text(cleaned))
+}
+
+async fn handle_shell_close(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let session_id = str_arg(args, "session_id")?;
+
+    PTY_MANAGER
+        .close(&session_id)
+        .await
+        .map_err(|e| format!("Failed to close shell: {}", e))?;
+
+    SHELL_SESSIONS.write().await.remove(session_id);
+
+    Ok(ToolResult::text(format!("Closed session {}", session_id)))
+}
+
+async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult, String> {
+    let sessions = SHELL_SESSIONS.read().await;
+    let ids: Vec<String> = sessions.keys().cloned().collect();
+
+    Ok(ToolResult::text(serde_json::to_string_pretty(&ids).unwrap_or("[]".to_string())))
+}
+
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::new();
+    let mut skip = false;
+
+    for c in s.chars() {
+        if c == '\u{1B}' {
+            skip = true;
+        } else if skip {
+            if c == 'm' || c == 'H' || c == 'J' || c == 'K' || c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'P' || c == 'S' || c == 'T' {
+                skip = false;
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }

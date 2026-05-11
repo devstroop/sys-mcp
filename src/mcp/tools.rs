@@ -332,5 +332,138 @@ pub fn all_tools() -> Vec<Value> {
             "description": "Get system information: OS, screen size, and available capabilities. Call this first to understand what the local GUI server supports.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
+
+        // ── File System ──────────────────────────────────────────────────
+        json!({
+            "name": "gui_read_file",
+            "description": "Read a file and return its contents as base64. Use this to read binary files (images, executables, archives) or large text files. For small text files, gui_get_clipboard may be simpler.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the file to read." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_write_file",
+            "description": "Write base64-encoded content to a file. Use this to write binary files (images, executables, archives) or large text files. The content must be base64-encoded. Creates parent directories if they don't exist.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to write the file to." },
+                    "content": { "type": "string", "description": "Base64-encoded file content." }
+                },
+                "required": ["path", "content"]
+            }
+        }),
+        json!({
+            "name": "gui_list_dir",
+            "description": "List contents of a directory. Returns files and subdirectories with names, sizes, and modification times.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the directory to list.", "default": "." }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_file_exists",
+            "description": "Check if a file or directory exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to check." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_delete_file",
+            "description": "Delete a file. Does not delete directories. Use gui_delete_dir for directories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the file to delete." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_create_dir",
+            "description": "Create a directory (and parent directories if needed).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path of the directory to create." }
+                },
+                "required": ["path"]
+            }
+        }),
+
+        // ── Shell/Terminal ─────────────────────────────────────────────────
+        json!({
+            "name": "gui_shell_exec",
+            "description": "Execute a shell command and return its output. Opens a temporary terminal, runs the command, captures output, and closes. Use for single commands like 'dir', 'ls', 'git status'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell command to execute." },
+                    "cwd": { "type": "string", "description": "Working directory for the command (optional)." }
+                },
+                "required": ["command"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_open",
+            "description": "Open a new interactive shell session. Returns a session_id that can be used with gui_shell_write and gui_shell_close. Useful for multi-step operations like 'cd project && npm install'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": { "type": "string", "description": "Initial working directory (optional, defaults to current directory)." },
+                    "cols": { "type": "integer", "description": "Terminal columns (default 80).", "default": 80 },
+                    "rows": { "type": "integer", "description": "Terminal rows (default 24).", "default": 24 }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_shell_write",
+            "description": "Write input to an open shell session. Use the session_id from gui_shell_open. Send commands followed by newline to execute.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." },
+                    "input": { "type": "string", "description": "Input to send to the shell (append newline to execute)." }
+                },
+                "required": ["session_id", "input"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_read",
+            "description": "Read output from an open shell session. Returns any new output since last read. Use in a loop to capture command results.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                },
+                "required": ["session_id"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_close",
+            "description": "Close an open shell session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                },
+                "required": ["session_id"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_list",
+            "description": "List all open shell sessions.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
     ]
 }
