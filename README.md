@@ -34,18 +34,19 @@ The binary is output to `target/release/gui-mcp` (or `gui-mcp.exe` on Windows).
 
 ## Usage
 
-gui-mcp communicates over **stdio** using the MCP JSON-RPC protocol.
+gui-mcp communicates over **HTTP** using the MCP JSON-RPC protocol.
 
-### VS Code / Claude Code
+### OpenCode / VS Code
 
-Add to `.vscode/mcp.json`:
+Add to `opencode.json` or `.vscode/mcp.json`:
 
 ```json
 {
-  "servers": {
+  "mcp": {
     "gui-mcp": {
-      "type": "stdio",
-      "command": "path/to/gui-mcp"
+      "type": "remote",
+      "url": "http://localhost:3000/mcp",
+      "enabled": true
     }
   }
 }
@@ -65,16 +66,19 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-## Optional Features
+## Configuration
 
-| Feature | Default | Description |
+| Option | Default | Description |
 |---|---|---|
-| `ocr` | on | On-device text recognition (downloads ~15MB model on first use) |
-| `clipboard` | on | System clipboard read/write |
-| `web-preview` | on | Live screen viewer via browser (Axum web server) |
-| `opencl` | off | GPU-accelerated template matching |
+| Port | `3000` | HTTP server port |
+| OCR | enabled | On-device text recognition (downloads ~15MB model on first use) |
+| Clipboard | enabled | System clipboard read/write |
+| Web Preview | enabled | Live screen viewer via browser |
 
-Disable defaults: `cargo build --release --no-default-features`
+Configure via environment variables:
+```bash
+PORT=3000 ./target/release/gui-mcp
+```
 
 ## Platforms
 
