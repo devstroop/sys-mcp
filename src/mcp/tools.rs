@@ -293,11 +293,258 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {} }
         }),
 
+        // ── Object Detection ────────────────────────────────────────────
+        json!({
+            "name": "gui_detect_objects",
+            "description": "Detect objects on screen using YOLOv8. Returns bounding boxes with labels for common objects (person, laptop, mouse, keyboard, chair, cup, bottle, etc.). Useful for 'click the laptop' or 'click the cup' automation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "min_confidence": {
+                        "type": "number",
+                        "description": "Minimum confidence threshold (0.0-1.0).",
+                        "default": 0.3
+                    },
+                    "labels": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Filter to only these labels (e.g. [\"laptop\", \"mouse\"]). Omit for all."
+                    }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_click_object",
+            "description": "Click an object by label. Use gui_detect_objects first to see available objects, then specify the label and index (0-based) to click.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Object label (e.g. \"laptop\", \"cup\")" },
+                    "index": { "type": "integer", "description": "Which object to click if multiple match (0 = first).", "default": 0 }
+                },
+                "required": ["label"]
+            }
+        }),
+
         // ── System Info ─────────────────────────────────────────────────
         json!({
             "name": "gui_system_info",
             "description": "Get system information: OS, screen size, and available capabilities. Call this first to understand what the local GUI server supports.",
             "inputSchema": { "type": "object", "properties": {} }
+        }),
+
+        // ── File System ──────────────────────────────────────────────────
+        json!({
+            "name": "gui_read_file",
+            "description": "Read a file and return its contents as base64. Use this to read binary files (images, executables, archives) or large text files. For small text files, gui_get_clipboard may be simpler.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the file to read." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_write_file",
+            "description": "Write base64-encoded content to a file. Use this to write binary files (images, executables, archives) or large text files. The content must be base64-encoded. Creates parent directories if they don't exist.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to write the file to." },
+                    "content": { "type": "string", "description": "Base64-encoded file content." }
+                },
+                "required": ["path", "content"]
+            }
+        }),
+        json!({
+            "name": "gui_list_dir",
+            "description": "List contents of a directory. Returns files and subdirectories with names, sizes, and modification times.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the directory to list.", "default": "." }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_file_exists",
+            "description": "Check if a file or directory exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to check." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_delete_file",
+            "description": "Delete a file. Does not delete directories. Use gui_delete_dir for directories.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path to the file to delete." }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "gui_create_dir",
+            "description": "Create a directory (and parent directories if needed).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Path of the directory to create." }
+                },
+                "required": ["path"]
+            }
+        }),
+
+        // ── Shell/Terminal ─────────────────────────────────────────────────
+        json!({
+            "name": "gui_shell_exec",
+            "description": "Execute a shell command and return its output. Opens a temporary terminal, runs the command, captures output, and closes. Use for single commands like 'dir', 'ls', 'git status'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Shell command to execute." },
+                    "cwd": { "type": "string", "description": "Working directory for the command (optional)." }
+                },
+                "required": ["command"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_open",
+            "description": "Open a new interactive shell session. Returns a session_id that can be used with gui_shell_write and gui_shell_close. Useful for multi-step operations like 'cd project && npm install'.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cwd": { "type": "string", "description": "Initial working directory (optional, defaults to current directory)." },
+                    "cols": { "type": "integer", "description": "Terminal columns (default 80).", "default": 80 },
+                    "rows": { "type": "integer", "description": "Terminal rows (default 24).", "default": 24 }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_shell_write",
+            "description": "Write input to an open shell session. Use the session_id from gui_shell_open. Send commands followed by newline to execute.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." },
+                    "input": { "type": "string", "description": "Input to send to the shell (append newline to execute)." }
+                },
+                "required": ["session_id", "input"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_read",
+            "description": "Read output from an open shell session. Returns any new output since last read. Use in a loop to capture command results.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                },
+                "required": ["session_id"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_close",
+            "description": "Close an open shell session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                },
+                "required": ["session_id"]
+            }
+        }),
+        json!({
+            "name": "gui_shell_list",
+            "description": "List all open shell sessions.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+
+        // ── MCP Hub (MCP Server Passthrough/Tunnel) ──────────────────────────
+        json!({
+            "name": "mcp_discover",
+            "description": "Discover MCP servers on the local machine. Scans ~/.mcp/, .mcp/ directories, and npm global packages for MCP servers. Returns list of available MCP servers that can be registered.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_list",
+            "description": "List all registered MCP servers and their status (discovered, running, stopped). Shows which MCP servers are available and active.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_register",
+            "description": "Register a new MCP server to be managed by this hub. Provide the command and arguments to start the MCP server (e.g., npx, python, node).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Unique name for this MCP server." },
+                    "command": { "type": "string", "description": "Command to run the MCP server (e.g., 'npx', 'python', 'node')." },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments for the command (e.g., ['-y', 'chrome-devtools-mcp@latest'])" }
+                },
+                "required": ["name", "command"]
+            }
+        }),
+        json!({
+            "name": "mcp_unregister",
+            "description": "Unregister an MCP server. Stops it if running and removes it from the registry.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to unregister." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_start",
+            "description": "Start a registered MCP server. This activates the MCP server and loads its tools. Once started, you can use mcp_exec to call tools from this server.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to start." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_stop",
+            "description": "Stop a running MCP server. This deactivates the server but keeps it registered. Use mcp_start to reactivate.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to stop." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_tools",
+            "description": "List all tools available from running MCP servers. Returns tools grouped by category with descriptions and input schemas. Use this to see what's available.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_tool_groups",
+            "description": "Get MCP tools organized by category/groups (like YouTrack pattern). Returns tools grouped by their category (e.g., browser, filesystem, etc.) for easier discovery.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_exec",
+            "description": "Execute a tool from a running MCP server. Specify the server name, tool name, and arguments. This is a passthrough - the request is forwarded to the MCP server and response is returned.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "server": { "type": "string", "description": "Name of the MCP server (from mcp_list)." },
+                    "tool": { "type": "string", "description": "Name of the tool to execute (from mcp_tools)." },
+                    "args": { "type": "object", "description": "Arguments for the tool (optional)." }
+                },
+                "required": ["server", "tool"]
+            }
         }),
     ]
 }
