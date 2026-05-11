@@ -44,6 +44,19 @@ tower-http = { version = "0.6", features = ["cors"], optional = true }
 # Clipboard (cross-platform)
 arboard = { version = "3", optional = true }
 
+# Terminal/PTY
+portable-pty = "0.8"
+
+# Logging
+tracing = "0.1"
+
+# Testing
+tempfile = "3"
+tokio-test = "0.4"
+
+# Object detection (optional) - tract is more Rust-native
+tract-onnx = { version = "0.22", optional = true }
+
 # ── Platform: Windows ──────────────────────────────────────────────
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -67,9 +80,10 @@ cocoa = "0.26"
 objc = "0.2"
 
 [features]
-default = ["ocr", "clipboard", "web-preview"]
+default = ["ocr", "clipboard", "web-preview", "detection"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
 clipboard = ["dep:arboard"]
 web-preview = ["dep:axum", "dep:tower-http"]
+detection = ["dep:tract-onnx"]
 opencl = ["rustautogui/opencl"]
 ml = []
