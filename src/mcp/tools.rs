@@ -465,5 +465,86 @@ pub fn all_tools() -> Vec<Value> {
             "description": "List all open shell sessions.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
+
+        // ── MCP Hub (MCP Server Passthrough/Tunnel) ──────────────────────────
+        json!({
+            "name": "mcp_discover",
+            "description": "Discover MCP servers on the local machine. Scans ~/.mcp/, .mcp/ directories, and npm global packages for MCP servers. Returns list of available MCP servers that can be registered.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_list",
+            "description": "List all registered MCP servers and their status (discovered, running, stopped). Shows which MCP servers are available and active.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_register",
+            "description": "Register a new MCP server to be managed by this hub. Provide the command and arguments to start the MCP server (e.g., npx, python, node).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Unique name for this MCP server." },
+                    "command": { "type": "string", "description": "Command to run the MCP server (e.g., 'npx', 'python', 'node')." },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments for the command (e.g., ['-y', 'chrome-devtools-mcp@latest'])" }
+                },
+                "required": ["name", "command"]
+            }
+        }),
+        json!({
+            "name": "mcp_unregister",
+            "description": "Unregister an MCP server. Stops it if running and removes it from the registry.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to unregister." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_start",
+            "description": "Start a registered MCP server. This activates the MCP server and loads its tools. Once started, you can use mcp_exec to call tools from this server.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to start." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_stop",
+            "description": "Stop a running MCP server. This deactivates the server but keeps it registered. Use mcp_start to reactivate.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Name of the MCP server to stop." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "mcp_tools",
+            "description": "List all tools available from running MCP servers. Returns tools grouped by category with descriptions and input schemas. Use this to see what's available.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_tool_groups",
+            "description": "Get MCP tools organized by category/groups (like YouTrack pattern). Returns tools grouped by their category (e.g., browser, filesystem, etc.) for easier discovery.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "mcp_exec",
+            "description": "Execute a tool from a running MCP server. Specify the server name, tool name, and arguments. This is a passthrough - the request is forwarded to the MCP server and response is returned.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "server": { "type": "string", "description": "Name of the MCP server (from mcp_list)." },
+                    "tool": { "type": "string", "description": "Name of the tool to execute (from mcp_tools)." },
+                    "args": { "type": "object", "description": "Arguments for the tool (optional)." }
+                },
+                "required": ["server", "tool"]
+            }
+        }),
     ]
 }

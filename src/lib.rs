@@ -6,3 +6,5 @@ pub mod platform;
 pub mod protocol;
 pub mod terminal;
 pub mod web;
+
+pub use mcp::hub::McpHub;

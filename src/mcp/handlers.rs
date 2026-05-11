@@ -89,6 +89,17 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "gui_shell_close" => handle_shell_close(client, &args).await,
         "gui_shell_list" => handle_shell_list(client).await,
 
+        // MCP Hub (MCP Server Passthrough)
+        "mcp_discover" => handle_mcp_discover(client).await,
+        "mcp_list" => handle_mcp_list(client).await,
+        "mcp_register" => handle_mcp_register(client, &args).await,
+        "mcp_unregister" => handle_mcp_unregister(client, &args).await,
+        "mcp_start" => handle_mcp_start(client, &args).await,
+        "mcp_stop" => handle_mcp_stop(client, &args).await,
+        "mcp_tools" => handle_mcp_tools(client).await,
+        "mcp_tool_groups" => handle_mcp_tool_groups(client).await,
+        "mcp_exec" => handle_mcp_exec(client, &args).await,
+
         _ => Err(format!("unknown tool: {tool_name}")),
     };
 
@@ -1124,4 +1135,93 @@ fn strip_ansi_codes(s: &str) -> String {
     }
 
     result
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MCP Hub (MCP Server Passthrough/Tunnel)
+// ═══════════════════════════════════════════════════════════════════════════
+
+use crate::mcp::hub::{McpHub, McpServerConfig, McpServerInfo};
+
+static MCP_HUB: std::sync::LazyLock<Arc<McpHub>> =
+    std::sync::LazyLock::new(|| Arc::new(McpHub::new()));
+
+async fn handle_mcp_discover(_client: &GuiClient) -> Result<ToolResult, String> {
+    let file_based = MCP_HUB.discover().await;
+    let npm_based = crate::mcp::hub::discover_npm_mcp_servers().await;
+
+    let mut all_discovered: Vec<McpServerInfo> = file_based;
+    for server in npm_based {
+        if !all_discovered.iter().any(|s| s.name == server.name) {
+            all_discovered.push(server);
+        }
+    }
+
+    Ok(ToolResult::text(serde_json::to_string_pretty(&all_discovered).unwrap_or("[]".to_string())))
+}
+
+async fn handle_mcp_list(_client: &GuiClient) -> Result<ToolResult, String> {
+    let servers = MCP_HUB.list_servers().await;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&servers).unwrap_or("[]".to_string())))
+}
+
+async fn handle_mcp_register(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    let command = str_arg(args, "command")?;
+
+    let args: Vec<String> = args.get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let config = McpServerConfig {
+        command: command.to_string(),
+        args,
+        env: std::collections::HashMap::new(),
+        transport: "stdio".to_string(),
+    };
+
+    let info = MCP_HUB.register(name.to_string(), config).await?;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+}
+
+async fn handle_mcp_unregister(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    MCP_HUB.unregister(&name).await?;
+    Ok(ToolResult::text(format!("Unregistered MCP server: {}", name)))
+}
+
+async fn handle_mcp_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    let tools = MCP_HUB.start_server(&name).await?;
+    Ok(ToolResult::text(serde_json::json!({
+        "message": format!("Started MCP server: {}", name),
+        "tools_count": tools.len(),
+        "tools": tools
+    }).to_string()))
+}
+
+async fn handle_mcp_stop(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    MCP_HUB.stop_server(&name).await?;
+    Ok(ToolResult::text(format!("Stopped MCP server: {}", name)))
+}
+
+async fn handle_mcp_tools(_client: &GuiClient) -> Result<ToolResult, String> {
+    let tools = MCP_HUB.list_all_tools().await;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&tools).unwrap_or("[]".to_string())))
+}
+
+async fn handle_mcp_tool_groups(_client: &GuiClient) -> Result<ToolResult, String> {
+    let groups = MCP_HUB.get_tool_groups().await;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&groups).unwrap_or("[]".to_string())))
+}
+
+async fn handle_mcp_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let server = str_arg(args, "server")?;
+    let tool = str_arg(args, "tool")?;
+    let tool_args = args.get("args").cloned().unwrap_or(Value::Null);
+
+    let result = MCP_HUB.execute_tool(&server, &tool, tool_args).await?;
+    Ok(ToolResult::text(result.to_string()))
 }
