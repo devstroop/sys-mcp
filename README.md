@@ -18,6 +18,7 @@ Built in Rust for performance, powered by [rustautogui](https://gitlab.devstroop
 | **Template Match** | `gui_find_image`, `gui_wait_for_image` |
 | **File System** | `gui_read_file`, `gui_write_file`, `gui_list_dir`, `gui_file_exists`, `gui_delete_file`, `gui_create_dir` |
 | **Shell/Terminal** | `gui_shell_exec`, `gui_shell_open`, `gui_shell_write`, `gui_shell_read`, `gui_shell_close`, `gui_shell_list` |
+| **Process Manager** | `process_list`, `process_kill`, `process_info`, `process_start` |
 | **MCP Hub** | `mcp_discover`, `mcp_list`, `mcp_register`, `mcp_unregister`, `mcp_start`, `mcp_stop`, `mcp_tools`, `mcp_tool_groups`, `mcp_exec` |
 | **Web Preview** | `gui_web_preview` |
 | **System** | `gui_system_info` |

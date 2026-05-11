@@ -100,6 +100,12 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "mcp_tool_groups" => handle_mcp_tool_groups(client).await,
         "mcp_exec" => handle_mcp_exec(client, &args).await,
 
+        // Process Manager
+        "process_list" => handle_process_list(client, &args).await,
+        "process_kill" => handle_process_kill(client, &args).await,
+        "process_info" => handle_process_info(client, &args).await,
+        "process_start" => handle_process_start(client, &args).await,
+
         _ => Err(format!("unknown tool: {tool_name}")),
     };
 
@@ -1224,4 +1230,50 @@ async fn handle_mcp_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult
 
     let result = MCP_HUB.execute_tool(&server, &tool, tool_args).await?;
     Ok(ToolResult::text(result.to_string()))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Process Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+use crate::sysinfo::ProcessManager;
+
+async fn handle_process_list(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+    let mut processes = ProcessManager::list_processes();
+    processes.truncate(limit);
+
+    Ok(ToolResult::text(serde_json::to_string_pretty(&processes).unwrap_or("[]".to_string())))
+}
+
+async fn handle_process_kill(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let pid = u64_arg(args, "pid")? as u32;
+
+    ProcessManager::kill_process(pid).map_err(|e| e)?;
+
+    Ok(ToolResult::text(format!("Killed process {}", pid)))
+}
+
+async fn handle_process_info(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let pid = u64_arg(args, "pid")? as u32;
+
+    let info = ProcessManager::get_process_info(pid).map_err(|e| e)?;
+
+    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+}
+
+async fn handle_process_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let command = str_arg(args, "command")?;
+    let args: Vec<String> = args.get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let pid = ProcessManager::start_process(&command, args).map_err(|e| e)?;
+
+    Ok(ToolResult::text(serde_json::json!({
+        "message": format!("Started process {}", command),
+        "pid": pid
+    }).to_string()))
 }

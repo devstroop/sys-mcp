@@ -4,6 +4,7 @@ pub mod gui;
 pub mod mcp;
 pub mod platform;
 pub mod protocol;
+pub mod sysinfo;
 pub mod terminal;
 pub mod web;
 

@@ -546,5 +546,51 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["server", "tool"]
             }
         }),
+
+        // ── Process Manager ───────────────────────────────────────────────────
+        json!({
+            "name": "process_list",
+            "description": "List running processes on the system. Returns top processes sorted by CPU usage (up to 100). Shows PID, name, CPU%, memory, and status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Maximum number of processes to return (default 50).", "default": 50 }
+                }
+            }
+        }),
+        json!({
+            "name": "process_kill",
+            "description": "Kill a process by its PID. Use process_list to find the PID first. Force kills the process immediately.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Process ID to kill." }
+                },
+                "required": ["pid"]
+            }
+        }),
+        json!({
+            "name": "process_info",
+            "description": "Get detailed information about a specific process by PID. Returns process name, CPU usage, memory usage, and status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pid": { "type": "integer", "description": "Process ID to get info for." }
+                },
+                "required": ["pid"]
+            }
+        }),
+        json!({
+            "name": "process_start",
+            "description": "Start a new process. Provide the command and optional arguments. Returns the PID of the started process.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "Command to execute." },
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments for the command (optional)." }
+                },
+                "required": ["command"]
+            }
+        }),
     ]
 }
