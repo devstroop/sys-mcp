@@ -106,6 +106,23 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "process_info" => handle_process_info(client, &args).await,
         "process_start" => handle_process_start(client, &args).await,
 
+        // Service Manager
+        "service_list" => handle_service_list(client).await,
+        "service_start" => handle_service_start(client, &args).await,
+        "service_stop" => handle_service_stop(client, &args).await,
+        "service_status" => handle_service_status(client, &args).await,
+
+        // Network Tools
+        "network_info" => handle_network_info(client).await,
+        "network_connections" => handle_network_connections(client, &args).await,
+
+        // System Monitoring
+        "system_stats" => handle_system_stats(client).await,
+        "disk_usage" => handle_disk_usage(client).await,
+
+        // Log Viewer
+        "system_logs" => handle_system_logs(client, &args).await,
+
         _ => Err(format!("unknown tool: {tool_name}")),
     };
 
@@ -1276,4 +1293,74 @@ async fn handle_process_start(_client: &GuiClient, args: &Value) -> Result<ToolR
         "message": format!("Started process {}", command),
         "pid": pid
     }).to_string()))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Service Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+use crate::system::{ServiceManager, NetworkManager, SystemMonitor, LogViewer};
+
+async fn handle_service_list(_client: &GuiClient) -> Result<ToolResult, String> {
+    let services = ServiceManager::list_services();
+    Ok(ToolResult::text(serde_json::to_string_pretty(&services).unwrap_or("[]".to_string())))
+}
+
+async fn handle_service_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    ServiceManager::start_service(&name).map_err(|e| e)?;
+    Ok(ToolResult::text(format!("Started service: {}", name)))
+}
+
+async fn handle_service_stop(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    ServiceManager::stop_service(&name).map_err(|e| e)?;
+    Ok(ToolResult::text(format!("Stopped service: {}", name)))
+}
+
+async fn handle_service_status(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let name = str_arg(args, "name")?;
+    let status = ServiceManager::service_status(&name).map_err(|e| e)?;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&status).unwrap_or("{}".to_string())))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Network Tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+async fn handle_network_info(_client: &GuiClient) -> Result<ToolResult, String> {
+    let info = NetworkManager::get_info().map_err(|e| e)?;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+}
+
+async fn handle_network_connections(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let _limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let connections = NetworkManager::list_connections();
+    Ok(ToolResult::text(serde_json::to_string_pretty(&connections).unwrap_or("[]".to_string())))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// System Monitoring
+// ═══════════════════════════════════════════════════════════════════════════
+
+async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResult, String> {
+    let stats = SystemMonitor::get_stats().map_err(|e| e)?;
+    Ok(ToolResult::text(serde_json::to_string_pretty(&stats).unwrap_or("{}".to_string())))
+}
+
+async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult, String> {
+    let usage = SystemMonitor::get_disk_usage();
+    Ok(ToolResult::text(serde_json::to_string_pretty(&usage).unwrap_or("[]".to_string())))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Log Viewer
+// ═══════════════════════════════════════════════════════════════════════════
+
+async fn handle_system_logs(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+    let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+    let level = args.get("level").and_then(|v| v.as_str()).map(String::from);
+
+    let logs = LogViewer::get_system_logs(count, level);
+    Ok(ToolResult::text(serde_json::to_string_pretty(&logs).unwrap_or("[]".to_string())))
 }

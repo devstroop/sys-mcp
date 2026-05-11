@@ -5,6 +5,7 @@ pub mod mcp;
 pub mod platform;
 pub mod protocol;
 pub mod sysinfo;
+pub mod system;
 pub mod terminal;
 pub mod web;
 

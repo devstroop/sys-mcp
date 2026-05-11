@@ -592,5 +592,87 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["command"]
             }
         }),
+
+        // ── Service Manager ───────────────────────────────────────────────────
+        json!({
+            "name": "service_list",
+            "description": "List all system services/daemons. Shows name, display name, status, and start type for each service.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "service_start",
+            "description": "Start a system service/daemon by name.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Service name to start." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "service_stop",
+            "description": "Stop a system service/daemon by name.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Service name to stop." }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "service_status",
+            "description": "Get detailed status of a specific service.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Service name to query." }
+                },
+                "required": ["name"]
+            }
+        }),
+
+        // ── Network Tools ─────────────────────────────────────────────────────
+        json!({
+            "name": "network_info",
+            "description": "Get network configuration information including hostname, IP addresses, default gateway, and DNS servers.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "network_connections",
+            "description": "List active network connections (TCP/UDP). Shows protocol, local address, remote address, state, and process ID.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Maximum connections to return (default 50).", "default": 50 }
+                }
+            }
+        }),
+
+        // ── System Monitoring ─────────────────────────────────────────────────
+        json!({
+            "name": "system_stats",
+            "description": "Get current system resource usage: CPU percentage, memory total/used/percent, disk total/used/percent.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+        json!({
+            "name": "disk_usage",
+            "description": "Get disk space information for all drives/mount points. Shows total, used, free space and percentage for each.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }),
+
+        // ── Log Viewer ──────────────────────────────────────────────────────
+        json!({
+            "name": "system_logs",
+            "description": "Read system/event logs. Shows recent log entries with timestamp, source, level, and message. Filter by level (Error, Warning, Information).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "count": { "type": "integer", "description": "Number of log entries to return (default 50).", "default": 50 },
+                    "level": { "type": "string", "enum": ["Error", "Warning", "Information"], "description": "Filter by log level (optional)." }
+                }
+            }
+        }),
     ]
 }
