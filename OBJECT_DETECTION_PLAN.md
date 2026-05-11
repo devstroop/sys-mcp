@@ -1,6 +1,7 @@
 # UI Element Detection Plan
 
 ## Goal
+
 Add on-device object detection using YOLO to detect common UI elements (buttons, icons, menus, etc.)
 
 ## Architecture
@@ -16,8 +17,8 @@ Screen → YOLO Model → Detections → MCP Tools
 ## Implementation Steps
 
 ### 1. Add Dependencies
-- `ort` — ONNX Runtime for Rust (YOLO inference)
-- or `tract` — alternative ONNX runtime
+- `tract` — ONNX runtime for Rust (YOLO inference)
+- Used `tract-onnx` for ONNX model loading
 
 ### 2. Model
 - Use **YOLOv8n** (nano) — ~6MB, fast on CPU
@@ -37,11 +38,18 @@ Map COCO classes to UI-relevant ones:
 - `src/web/server.rs` — add overlay toggle for detections
 
 ## Implementation Status
-- [x] Add dependency to Cargo.toml (ort added, switching to tract)
-- [x] Create src/gui/detection.rs — stub with mock data
+
+- [x] Add dependency to Cargo.toml (tract-onnx)
+- [x] Create src/gui/detection.rs — YOLO model loading + inference
 - [x] Add detect_objects to GuiClient
 - [x] Add MCP tools: gui_detect_objects, gui_click_object
-- [ ] Implement real YOLO inference with tract
+- [x] Implement real YOLO inference with tract-onnx
 - [ ] Add web preview overlay for detections
+- [ ] Add custom UI element classes to detection
 
-## Current: Using tract ONNX runtime (more Rust-native)
+## Current Implementation
+
+Uses `tract-onnx` for ONNX runtime with YOLOv8n model:
+- Model auto-downloads on first use (~6MB)
+- Returns detections with labels and confidence scores
+- Integrated into MCP tools via `gui_detect_objects` and `gui_click_object`
