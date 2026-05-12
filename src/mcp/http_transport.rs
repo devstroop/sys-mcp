@@ -94,10 +94,7 @@ async fn mcp_get_handler() -> Response<Body> {
         .unwrap()
 }
 
-async fn mcp_delete_handler(
-    State(state): State<HttpState>,
-    headers: HeaderMap,
-) -> Response<Body> {
+async fn mcp_delete_handler(State(state): State<HttpState>, headers: HeaderMap) -> Response<Body> {
     let session_id = match headers.get("mcp-session-id") {
         Some(v) => v.to_str().ok(),
         None => {
@@ -141,7 +138,11 @@ async fn mcp_handler(
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
-        .or_else(|| body.get("session_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+        .or_else(|| {
+            body.get("session_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
 
     let session = {
         let mut mgr = state.session_mgr.lock().await;
@@ -160,7 +161,12 @@ async fn mcp_handler(
     };
 
     // Handle MCP request
-    let response = state.mcp_handler.lock().await.handle_request(&mcp_request).await;
+    let response = state
+        .mcp_handler
+        .lock()
+        .await
+        .handle_request(&mcp_request)
+        .await;
 
     // Serialize response
     let response_json = match serde_json::to_string(&response) {
@@ -168,7 +174,10 @@ async fn mcp_handler(
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!(r#"{{"error":"serialization error: {}"}}"#, e)))
+                .body(Body::from(format!(
+                    r#"{{"error":"serialization error: {}"}}"#,
+                    e
+                )))
                 .unwrap();
         }
     };
