@@ -547,14 +547,15 @@ impl LogViewer {
 
         #[cfg(not(windows))]
         {
+            let count_str = count.to_string();
             let journal_args = if let Ok(level_num) = match level_filter.as_str() {
                 "Error" => Ok::<&str, ()>("err"),
                 "Warning" => Ok("warning"),
                 _ => Ok("info")
             } {
-                vec!["-p", level_num, "-n", &count.to_string()]
+                vec!["-p", level_num, "-n", &count_str]
             } else {
-                vec!["-n", &count.to_string()]
+                vec!["-n", &count_str]
             };
 
             if let Ok(output) = Command::new("journalctl")

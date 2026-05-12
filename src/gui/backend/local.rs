@@ -76,7 +76,7 @@ async fn screenshot(&self) -> Result<Screenshot, GuiError> {
         let tmp = std::env::temp_dir().join(format!("gui-mcp-{}.png", uuid::Uuid::new_v4()));
         let tmp_path = tmp.to_string_lossy().to_string();
 
-        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui
             .save_screenshot(&tmp_path)
             .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;

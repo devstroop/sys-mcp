@@ -178,15 +178,10 @@ async fn mcp_handler(
         StatusCode::OK
     };
 
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
-        axum::http::HeaderValue::from_static("mcp-session-id"),
-        session.id.to_string().parse().unwrap_or_default(),
-    );
-
-    Ok((status, headers, Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default())))
+    let body = Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default());
+    let mut response = body.into_response();
+    response
+        .headers_mut()
+        .insert("mcp-session-id", session.id.to_string().parse().unwrap_or_default());
+    response
 }
