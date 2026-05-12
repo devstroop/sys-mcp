@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
+    body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
     response::IntoResponse,
@@ -128,7 +129,7 @@ async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Response<Body> {
     // Cleanup expired sessions periodically
     {
         let mut mgr = state.session_mgr.lock().await;
@@ -150,11 +151,11 @@ async fn mcp_handler(
     let mcp_request: McpRequest = match serde_json::from_value(body) {
         Ok(req) => req,
         Err(e) => {
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                HeaderMap::new(),
-                Json(json!({"error": format!("parse error: {e}")})),
-            ));
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"error": format!("parse error: {e}")}).to_string()))
+                .unwrap();
         }
     };
 
@@ -166,11 +167,11 @@ async fn mcp_handler(
     let response_json = match serde_json::to_string(&response) {
         Ok(json) => json,
         Err(e) => {
-            return Ok((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                HeaderMap::new(),
-                Json(json!({"error": format!("serialization error: {e}")})),
-            ));
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"error": format!("serialization error: {e}")}).to_string()))
+                .unwrap();
         }
     };
 
@@ -180,15 +181,10 @@ async fn mcp_handler(
         StatusCode::OK
     };
 
-    let mut resp_headers = HeaderMap::new();
-    resp_headers.insert(
-        "mcp-session-id",
-        session.id.to_string().parse().unwrap(),
-    );
-
-    Ok((
-        status,
-        resp_headers,
-        Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default()),
-    ))
+    Response::builder()
+        .status(status)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header("mcp-session-id", &session.id.to_string())
+        .body(Body::from(response_json))
+        .unwrap()
 }
