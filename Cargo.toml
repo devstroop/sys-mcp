@@ -1,13 +1,13 @@
 [package]
-name = "gui-mcp"
+name = "sys-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "MCP server for local GUI automation — screen capture, OCR, mouse/keyboard, window management, accessibility, and template matching"
+description = "MCP server for local system automation — screen capture, OCR, input, window management, accessibility, shell/terminal, file system, process/service/network management, MCP Hub, and system monitoring"
 license = "MIT"
 authors = ["Devstroop"]
 
 [[bin]]
-name = "gui-mcp"
+name = "sys-mcp"
 path = "src/main.rs"
 
 [dependencies]

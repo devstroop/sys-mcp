@@ -1,11 +1,11 @@
-# Contributing to gui-mcp
+# Contributing to sys-mcp
 
 ## Getting Started
 
 ```bash
 # Clone with submodules
 git clone --recurse-submodules <repo-url>
-cd gui-mcp
+cd sys-mcp
 
 # Build
 cargo build
@@ -73,7 +73,7 @@ src/
 
 ## Adding a New MCP Hub Tool
 
-MCP Hub tools allow gui-mcp to manage other MCP servers:
+MCP Hub tools allow sys-mcp to manage other MCP servers:
 
 1. **Define schema** in `src/mcp/tools.rs` — add MCP Hub tool definitions.
 

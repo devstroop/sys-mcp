@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to gui-mcp will be documented in this file.
+All notable changes to sys-mcp will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP Hub** module:
   - `src/mcp/hub.rs` — New module for MCP server discovery and passthrough
-  - Enables gui-mcp to tunnel to local MCP servers when running remotely
+  - Enables sys-mcp to tunnel to local MCP servers when running remotely
 
 ### Changed
 

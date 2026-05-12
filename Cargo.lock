@@ -1253,45 +1253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gui-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "async-trait",
- "axum",
- "base64",
- "cocoa",
- "core-foundation 0.10.1",
- "core-graphics 0.24.0",
- "dirs-next",
- "env_logger",
- "hostname",
- "image",
- "log",
- "objc",
- "ocrs",
- "portable-pty",
- "rten",
- "rten-tensor",
- "rustautogui",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tower-http",
- "tracing",
- "tract-onnx",
- "ureq",
- "uuid",
- "windows",
- "x11rb",
- "zbus",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3182,6 +3143,45 @@ name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
+
+[[package]]
+name = "sys-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "async-trait",
+ "axum",
+ "base64",
+ "cocoa",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "dirs-next",
+ "env_logger",
+ "hostname",
+ "image",
+ "log",
+ "objc",
+ "ocrs",
+ "portable-pty",
+ "rten",
+ "rten-tensor",
+ "rustautogui",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tower-http",
+ "tracing",
+ "tract-onnx",
+ "ureq",
+ "uuid",
+ "windows",
+ "x11rb",
+ "zbus",
+]
 
 [[package]]
 name = "tar"

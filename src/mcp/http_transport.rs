@@ -59,7 +59,7 @@ impl HttpServer {
             .layer(cors)
             .with_state(state);
 
-        log::info!("gui-mcp HTTP server listening on http://{}", addr);
+        log::info!("sys-mcp HTTP server listening on http://{}", addr);
         log::info!("MCP endpoint: http://{}/mcp", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -82,7 +82,7 @@ struct HttpState {
 async fn health_handler() -> Json<Value> {
     Json(json!({
         "status": "ok",
-        "server": "gui-mcp",
+        "server": "sys-mcp",
         "version": env!("CARGO_PKG_VERSION")
     }))
 }

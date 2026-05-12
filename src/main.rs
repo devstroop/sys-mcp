@@ -1,7 +1,7 @@
-use gui_mcp::config::ServerConfig;
-use gui_mcp::gui::backend::local::LocalBackend;
-use gui_mcp::gui::GuiClient;
-use gui_mcp::mcp::server::GuiMcpServer;
+use sys_mcp::config::ServerConfig;
+use sys_mcp::gui::backend::local::LocalBackend;
+use sys_mcp::gui::GuiClient;
+use sys_mcp::mcp::server::GuiMcpServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

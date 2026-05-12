@@ -133,10 +133,10 @@ impl ServerConfig {
 
 fn print_help() {
     println!(
-        r#"gui-mcp {} — GUI Automation MCP Server
+        r#"sys-mcp {} — GUI Automation MCP Server
 
 USAGE:
-    gui-mcp [OPTIONS]
+    sys-mcp [OPTIONS]
 
 OPTIONS:
     --host, --hostname <HOST>    Bind address (default: 0.0.0.0)

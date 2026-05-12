@@ -1,4 +1,4 @@
-# gui-mcp
+# sys-mcp
 
 MCP server for local GUI automation — screen capture, OCR, mouse/keyboard control, window management, file system, shell/terminal, and MCP server passthrough/tunnel.
 
@@ -29,7 +29,7 @@ Built in Rust for performance, powered by [rustautogui](https://gitlab.devstroop
 
 ## MCP Hub (MCP Server Passthrough/Tunnel)
 
-gui-mcp can discover, register, and tunnel to other MCP servers on the same machine. This enables:
+sys-mcp can discover, register, and tunnel to other MCP servers on the same machine. This enables:
 
 - **Auto-discovery** of MCP servers from `~/.mcp/`, `.mcp/` directories, and npm global packages
 - **Registration** of any MCP server (npx, python, node, etc.)
@@ -60,17 +60,17 @@ gui-mcp can discover, register, and tunnel to other MCP servers on the same mach
 ```bash
 # Clone with submodules
 git clone --recurse-submodules <repo-url>
-cd gui-mcp
+cd sys-mcp
 
 # Build release
 cargo build --release
 ```
 
-The binary is output to `target/release/gui-mcp` (or `gui-mcp.exe` on Windows).
+The binary is output to `target/release/sys-mcp` (or `sys-mcp.exe` on Windows).
 
 ## Usage
 
-gui-mcp communicates over **HTTP** using the MCP JSON-RPC protocol.
+sys-mcp communicates over **HTTP** using the MCP JSON-RPC protocol.
 
 ### OpenCode / VS Code
 
@@ -79,7 +79,7 @@ Add to `opencode.json` or `.vscode/mcp.json`:
 ```json
 {
   "mcp": {
-    "gui-mcp": {
+    "sys-mcp": {
       "type": "remote",
       "url": "http://localhost:3000/mcp",
       "enabled": true
@@ -90,21 +90,21 @@ Add to `opencode.json` or `.vscode/mcp.json`:
 
 ### Remote Usage (via RDP)
 
-When running gui-mcp on a remote machine accessed via RDP, you can use the local machine's MCP servers by running gui-mcp locally and tunneling:
+When running sys-mcp on a remote machine accessed via RDP, you can use the local machine's MCP servers by running sys-mcp locally and tunneling:
 
 ```json
 {
   "mcp": {
-    "gui-mcp": {
+    "sys-mcp": {
       "type": "local",
-      "command": ["path/to/gui-mcp"],
+      "command": ["path/to/sys-mcp"],
       "enabled": true
     }
   }
 }
 ```
 
-This allows gui-mcp to access MCP servers on your local machine while you're controlling a remote desktop.
+This allows sys-mcp to access MCP servers on your local machine while you're controlling a remote desktop.
 
 ### Claude Desktop
 
@@ -113,8 +113,8 @@ Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "gui-mcp": {
-      "command": "path/to/gui-mcp"
+    "sys-mcp": {
+      "command": "path/to/sys-mcp"
     }
   }
 }
@@ -131,7 +131,7 @@ Add to `claude_desktop_config.json`:
 
 Configure via environment variables:
 ```bash
-PORT=3000 ./target/release/gui-mcp
+PORT=3000 ./target/release/sys-mcp
 ```
 
 ## Platforms

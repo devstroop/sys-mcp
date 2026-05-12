@@ -2,7 +2,7 @@
 
 ## Overview
 
-gui-mcp is an MCP (Model Context Protocol) server that bridges AI agents to the local desktop. It reads JSON-RPC 2.0 requests from stdin/HTTP, performs GUI operations, and writes responses to stdout.
+sys-mcp is an MCP (Model Context Protocol) server that bridges AI agents to the local desktop. It reads JSON-RPC 2.0 requests from stdin/HTTP, performs GUI operations, and writes responses to stdout.
 
 ```
 AI Agent (Claude, OpenCode, etc.)
@@ -116,7 +116,7 @@ Instead of a monolithic backend interface, capabilities are split into independe
 
 ### OCR Model Management
 
-OCR models (~15MB total) are downloaded on first use from S3 and cached in the user's cache directory (`%LOCALAPPDATA%/gui-mcp/models/` on Windows). The `OcrEngine` is initialized once via `OnceLock` for the process lifetime.
+OCR models (~15MB total) are downloaded on first use from S3 and cached in the user's cache directory (`%LOCALAPPDATA%/sys-mcp/models/` on Windows). The `OcrEngine` is initialized once via `OnceLock` for the process lifetime.
 
 ### Screenshot Pipeline
 
@@ -124,7 +124,7 @@ Screenshots flow through: `RustAutoGui.save_screenshot()` → temp PNG file → 
 
 ### MCP Hub for Server Passthrough
 
-The MCP Hub enables gui-mcp to act as a central hub for multiple MCP servers on the same machine. When running locally, it can discover and forward tool calls to other MCP servers. When running remotely via RDP, it can tunnel back to local MCP servers on the machine where the user is sitting.
+The MCP Hub enables sys-mcp to act as a central hub for multiple MCP servers on the same machine. When running locally, it can discover and forward tool calls to other MCP servers. When running remotely via RDP, it can tunnel back to local MCP servers on the machine where the user is sitting.
 
 ### Feature Flags
 
@@ -137,7 +137,7 @@ Optional capabilities are compile-time gated:
 
 ## MCP Protocol
 
-gui-mcp implements MCP protocol version `2024-11-05`:
+sys-mcp implements MCP protocol version `2024-11-05`:
 
 - **Transport**: stdio (newline-delimited JSON) or HTTP
 - **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `ping`
@@ -155,4 +155,4 @@ When using MCP Hub tools, the flow is:
 4. `mcp_exec` — Forward tool call to the MCP server
 5. `mcp_stop` — Stop the MCP server when done
 
-This enables gui-mcp to proxy any MCP server without the client needing to know the server details.
+This enables sys-mcp to proxy any MCP server without the client needing to know the server details.

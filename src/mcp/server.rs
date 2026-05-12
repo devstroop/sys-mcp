@@ -67,7 +67,7 @@ impl McpRequestHandler {
                     "tools": {}
                 },
                 "serverInfo": {
-                    "name": "gui-mcp",
+                    "name": "sys-mcp",
                     "version": env!("CARGO_PKG_VERSION")
                 }
             }),

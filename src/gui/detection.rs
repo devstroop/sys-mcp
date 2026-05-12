@@ -116,7 +116,7 @@ const NMS_THRESHOLD: f32 = 0.45;
 
 fn models_dir() -> PathBuf {
     let mut dir = dirs_next::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-    dir.push("gui-mcp");
+    dir.push("sys-mcp");
     dir.push("models");
     dir
 }

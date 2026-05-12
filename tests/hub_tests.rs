@@ -1,6 +1,6 @@
-use gui_mcp::mcp::hub::McpServerConfig;
-use gui_mcp::McpHub;
 use std::collections::HashMap;
+use sys_mcp::mcp::hub::McpServerConfig;
+use sys_mcp::McpHub;
 
 #[test]
 fn test_mcp_hub_new() {

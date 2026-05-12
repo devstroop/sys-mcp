@@ -66,7 +66,7 @@ static OCR_ENGINE: OnceLock<Result<OcrEngine, String>> = OnceLock::new();
 
 fn models_dir() -> PathBuf {
     let mut dir = dirs_next::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-    dir.push("gui-mcp");
+    dir.push("sys-mcp");
     dir.push("models");
     dir
 }

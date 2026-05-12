@@ -1,4 +1,4 @@
-# Issues & Next-Phase Development Gaps
+# Issues & Next-Phase Development Gaps (sys-mcp)
 
 ## Priority Legend
 
@@ -19,7 +19,7 @@
 | 2 | macOS system monitoring uses Linux-only commands | ✅ Fixed |
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | 🟡 Open |
-| 5 | Object detection is a stub | 🟡 Open |
+| 5 | Object detection is a stub | ✅ Fixed |
 | 6 | Test coverage is critically low | 🟡 Open |
 | 7 | `handlers.rs` is too large (1546 lines) | 🟢 Open |
 | 8 | CLI argument parsing is fragile | 🟢 Open |
