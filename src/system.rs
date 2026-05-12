@@ -303,10 +303,7 @@ impl NetworkManager {
 
         #[cfg(target_os = "macos")]
         {
-            if let Ok(output) = Command::new("ipconfig")
-                .args(["getifaddr", "en0"])
-                .output()
-            {
+            if let Ok(output) = Command::new("ipconfig").args(["getifaddr", "en0"]).output() {
                 if let Ok(text) = String::from_utf8(output.stdout) {
                     let ip = text.trim().to_string();
                     if !ip.is_empty() {
@@ -531,10 +528,7 @@ impl SystemMonitor {
 
         #[cfg(target_os = "macos")]
         {
-            if let Ok(output) = Command::new("top")
-                .args(["-l", "1", "-n", "0"])
-                .output()
-            {
+            if let Ok(output) = Command::new("top").args(["-l", "1", "-n", "0"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if line.contains("CPU usage:") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -551,10 +545,7 @@ impl SystemMonitor {
                 }
             }
 
-            if let Ok(output) = Command::new("sysctl")
-                .args(["-n", "hw.memsize"])
-                .output()
-            {
+            if let Ok(output) = Command::new("sysctl").args(["-n", "hw.memsize"]).output() {
                 if let Ok(text) = String::from_utf8(output.stdout) {
                     stats.memory_total_bytes = text.trim().parse().unwrap_or(0);
                 }
@@ -811,13 +802,12 @@ impl LogViewer {
             };
 
             if let Ok(output) = Command::new("log")
-                .args(["show", "--last", "1h", "--level", level_flag, "--style", "compact"])
+                .args([
+                    "show", "--last", "1h", "--level", level_flag, "--style", "compact",
+                ])
                 .output()
             {
-                for line in String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .take(count)
-                {
+                for line in String::from_utf8_lossy(&output.stdout).lines().take(count) {
                     let line = line.trim();
                     if line.is_empty() {
                         continue;
