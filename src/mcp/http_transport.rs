@@ -184,5 +184,5 @@ async fn mcp_handler(
         "mcp-session-id",
         session.id.to_string().parse().unwrap(),
     );
-    response
+    Ok(response)
 }
