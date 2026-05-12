@@ -38,7 +38,7 @@ ureq = { version = "3", optional = true }
 dirs-next = { version = "2", optional = true }
 
 # Web preview (optional, on by default)
-axum = { version = "0.8", features = ["macros"], optional = true }
+axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
 
 # Clipboard (cross-platform)

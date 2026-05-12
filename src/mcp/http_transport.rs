@@ -125,7 +125,6 @@ async fn mcp_delete_handler(
         .unwrap()
 }
 
-#[axum::debug_handler]
 async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
@@ -137,11 +136,12 @@ async fn mcp_handler(
         mgr.cleanup_expired();
     }
 
-    // Get or create session
+    // Get or create session (session ID may come from header or body)
     let session_id = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(|s| s.to_string())
+        .or_else(|| body.get("session_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
 
     let session = {
         let mut mgr = state.session_mgr.lock().await;
@@ -160,8 +160,7 @@ async fn mcp_handler(
     };
 
     // Handle MCP request
-    let mut handler = state.mcp_handler.lock().await;
-    let response = handler.handle_request(&mcp_request).await;
+    let response = state.mcp_handler.lock().await.handle_request(&mcp_request).await;
 
     // Serialize response
     let response_json = match serde_json::to_string(&response) {
