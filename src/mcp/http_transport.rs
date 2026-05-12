@@ -125,6 +125,7 @@ async fn mcp_delete_handler(
         .unwrap()
 }
 
+#[axum::debug_handler]
 async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
