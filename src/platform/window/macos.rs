@@ -5,8 +5,13 @@ use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use core_foundation::url::CFURL;
 use core_graphics::display::{CGPoint, CGRect, CGSize};
-use core_graphics::window::{CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID};
-use core_graphics::window::{kCGWindowName, kCGWindowOwnerName, kCGWindowNumber, kCGWindowBounds, kCGWindowOwnerPID, kCGWindowLayer};
+use core_graphics::window::{
+    kCGNullWindowID, kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo,
+};
+use core_graphics::window::{
+    kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
+    kCGWindowOwnerPID,
+};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -22,10 +27,8 @@ impl PlatformWindowManager {
         let mut windows = Vec::new();
 
         unsafe {
-            let list_ref = CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly,
-                kCGNullWindowID,
-            );
+            let list_ref =
+                CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
 
             if list_ref.is_null() {
                 return Err(GuiError::PlatformError(
@@ -120,7 +123,10 @@ impl PlatformWindowManager {
         // Mark the frontmost application's window as focused
         if let Ok(focused_pid) = self.get_frontmost_pid() {
             // On macOS, we mark the first window matching the frontmost PID
-            if let Some(pos) = windows.iter().position(|w| w.process_id == Some(focused_pid)) {
+            if let Some(pos) = windows
+                .iter()
+                .position(|w| w.process_id == Some(focused_pid))
+            {
                 windows[pos].is_focused = true;
             }
         }
@@ -130,10 +136,7 @@ impl PlatformWindowManager {
 
     fn get_frontmost_pid(&self) -> Result<u32, GuiError> {
         unsafe {
-            let workspace = objc::msg_send![
-                objc::class!(NSWorkspace),
-                alloc
-            ];
+            let workspace = objc::msg_send![objc::class!(NSWorkspace), alloc];
             let workspace: *mut objc::runtime::Object = objc::msg_send![workspace, init];
             let app: *mut objc::runtime::Object = objc::msg_send![workspace, frontmostApplication];
             let pid: i32 = objc::msg_send![app, processIdentifier];
@@ -147,9 +150,9 @@ impl PlatformWindowManager {
         unsafe {
             let app_ref = AXUIElementCreateApplication(wid);
             if app_ref.is_null() {
-                return Err(GuiError::PlatformError(
-                    format!("AXUIElementCreateApplication failed for PID {wid}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AXUIElementCreateApplication failed for PID {wid}"
+                )));
             }
             Ok(app_ref)
         }
@@ -231,9 +234,9 @@ impl PlatformWindowManager {
                 num.as_concrete_TypeRef(),
             );
             if result != 0 {
-                return Err(GuiError::PlatformError(
-                    format!("AX set attribute failed: {result}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AX set attribute failed: {result}"
+                )));
             }
             Ok(())
         }
@@ -255,9 +258,9 @@ impl PlatformWindowManager {
                 dict.as_concrete_TypeRef(),
             );
             if result != 0 {
-                return Err(GuiError::PlatformError(
-                    format!("AX set point failed: {result}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AX set point failed: {result}"
+                )));
             }
             Ok(())
         }
@@ -279,9 +282,9 @@ impl PlatformWindowManager {
                 dict.as_concrete_TypeRef(),
             );
             if result != 0 {
-                return Err(GuiError::PlatformError(
-                    format!("AX set size failed: {result}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AX set size failed: {result}"
+                )));
             }
             Ok(())
         }
@@ -293,12 +296,11 @@ impl PlatformWindowManager {
         action: &CFString,
     ) -> Result<(), GuiError> {
         unsafe {
-            let result =
-                AXUIElementPerformAction(ax_window, action.as_concrete_TypeRef());
+            let result = AXUIElementPerformAction(ax_window, action.as_concrete_TypeRef());
             if result != 0 {
-                return Err(GuiError::PlatformError(
-                    format!("AX perform action failed: {result}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AX perform action failed: {result}"
+                )));
             }
             Ok(())
         }
@@ -325,9 +327,9 @@ impl PlatformWindowManager {
         unsafe {
             let app = AXUIElementCreateApplication(pid);
             if app.is_null() {
-                return Err(GuiError::PlatformError(
-                    format!("AXUIElementCreateApplication failed for PID {pid}"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AXUIElementCreateApplication failed for PID {pid}"
+                )));
             }
 
             let ax_windows = CFString::new("AXWindows");
@@ -366,9 +368,9 @@ impl PlatformWindowManager {
             CFRelease(windows_ref as *mut _);
 
             if !found {
-                return Err(GuiError::PlatformError(
-                    format!("AX window {window_id} not found"),
-                ));
+                return Err(GuiError::PlatformError(format!(
+                    "AX window {window_id} not found"
+                )));
             }
 
             Ok(())
@@ -447,9 +449,7 @@ impl PlatformWindowManager {
     pub fn restore_window(&self, window_id: u64) -> Result<(), GuiError> {
         // On macOS, restore = deminiaturize + unzoom
         let demini = CFString::new("AXDeminiaturize");
-        let _ = self.with_window_ax(window_id, |ax_win| {
-            self.ax_perform_action(ax_win, &demini)
-        });
+        let _ = self.with_window_ax(window_id, |ax_win| self.ax_perform_action(ax_win, &demini));
         // Also unzoom if maximized
         let zoom = CFString::new("AXZoom");
         self.with_window_ax(window_id, |ax_win| self.ax_perform_action(ax_win, &zoom))

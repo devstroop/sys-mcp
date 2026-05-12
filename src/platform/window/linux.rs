@@ -40,7 +40,7 @@ pub struct PlatformWindowManager {
     atoms: AtomCollection,
 }
 
-    impl PlatformWindowManager {
+impl PlatformWindowManager {
     pub fn new() -> Result<Self, GuiError> {
         let (conn, screen_num) = RustConnection::connect(None)
             .map_err(|e| GuiError::PlatformError(format!("X11 connection failed: {e}")))?;
@@ -150,9 +150,7 @@ pub struct PlatformWindowManager {
 
     fn get_process_name(&self, window_id: u32) -> Option<String> {
         // Try WM_CLASS first (common for X11 apps)
-        if let Ok(Some(class)) =
-            self.read_string_property(window_id, AtomEnum::WM_CLASS.into())
-        {
+        if let Ok(Some(class)) = self.read_string_property(window_id, AtomEnum::WM_CLASS.into()) {
             // WM_CLASS is "instance\0class" -- take the second part
             let parts: Vec<&str> = class.split('\0').collect();
             let name = parts.last().unwrap_or(&"").to_string();
@@ -200,7 +198,12 @@ pub struct PlatformWindowManager {
         );
 
         self.conn
-            .send_event(false, self.root(), xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY, event)
+            .send_event(
+                false,
+                self.root(),
+                xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+                event,
+            )
             .map_err(|e| GuiError::PlatformError(format!("X11 send_event failed: {e}")))?
             .check()
             .map_err(|e| GuiError::PlatformError(format!("X11 send_event check failed: {e}")))?;
@@ -253,9 +256,7 @@ pub struct PlatformWindowManager {
             let is_minimized = self
                 .read_card32_property(wid, self.atoms.NET_WM_STATE)
                 .ok()
-                .map(|states| {
-                    states.contains(&self.atoms.NET_WM_STATE_HIDDEN)
-                })
+                .map(|states| states.contains(&self.atoms.NET_WM_STATE_HIDDEN))
                 .unwrap_or(false);
 
             let is_maximized = self
@@ -273,7 +274,8 @@ pub struct PlatformWindowManager {
                     .read_property(wid, self.atoms.WM_STATE)
                     .ok()
                     .map(|data| {
-                        data.len() >= 4 && u32::from_ne_bytes([data[0], data[1], data[2], data[3]]) == 3
+                        data.len() >= 4
+                            && u32::from_ne_bytes([data[0], data[1], data[2], data[3]]) == 3
                     })
                     .unwrap_or(false);
 
@@ -315,7 +317,9 @@ pub struct PlatformWindowManager {
         let all = self.list_windows()?;
         all.into_iter()
             .find(|w| w.id == active as u64)
-            .ok_or(GuiError::PlatformError("Active window not found in client list".into()))
+            .ok_or(GuiError::PlatformError(
+                "Active window not found in client list".into(),
+            ))
     }
 
     pub fn focus_window(&self, window_id: u64) -> Result<(), GuiError> {
@@ -394,13 +398,7 @@ pub struct PlatformWindowManager {
         self.send_ewmh_message(
             wid,
             self.atoms.NET_WM_STATE,
-            [
-                0,
-                self.atoms.NET_WM_STATE_MAXIMIZED_HORZ,
-                0,
-                0,
-                1,
-            ],
+            [0, self.atoms.NET_WM_STATE_MAXIMIZED_HORZ, 0, 0, 1],
         )
     }
 
@@ -436,17 +434,15 @@ pub struct PlatformWindowManager {
                         | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
                     event,
                 )
-                .map_err(|e| {
-                    GuiError::PlatformError(format!("X11 close window failed: {e}"))
-                })?
+                .map_err(|e| GuiError::PlatformError(format!("X11 close window failed: {e}")))?
                 .check()
                 .map_err(|e| {
                     GuiError::PlatformError(format!("X11 close window check failed: {e}"))
                 })?;
 
-            self.conn.flush().map_err(|e| {
-                GuiError::PlatformError(format!("X11 flush failed: {e}"))
-            })
+            self.conn
+                .flush()
+                .map_err(|e| GuiError::PlatformError(format!("X11 flush failed: {e}")))
         })
     }
 

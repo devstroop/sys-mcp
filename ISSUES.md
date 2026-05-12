@@ -11,33 +11,40 @@
 
 ---
 
-## 🔴 Critical Bugs
+## Status
 
-### 1. `send_jsonrpc()` truncates multi-line responses
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | `send_jsonrpc()` truncates multi-line responses | ✅ Fixed |
+| 2 | macOS system monitoring uses Linux-only commands | ✅ Fixed |
+| 3 | Linux & macOS window management are stubs | ✅ Fixed |
+| 4 | Accessibility — all platforms are stubs | 🟡 Open |
+| 5 | Object detection is a stub | 🟡 Open |
+| 6 | Test coverage is critically low | 🟡 Open |
+| 7 | `handlers.rs` is too large (1546 lines) | 🟢 Open |
+| 8 | CLI argument parsing is fragile | 🟢 Open |
+| 9 | MCP Hub JSON-RPC I/O framing | 🟢 Open |
+| 10 | ANSI escape stripping is heuristic | 🟢 Open |
+| 11 | Multi-monitor support is incomplete | 🟢 Open |
+| 12 | No rate limiting on web preview | 🟢 Open |
+| 13 | CORS is overly permissive | 🟢 Open |
+| 14 | CI only runs on Linux | 🟢 Open |
+| 15 | No resource or prompt support in MCP protocol | 🟢 Open |
+| 16 | Template matching (Phase 7) | 🔵 Open |
+| 17 | Key combo duplication | 🔵 Open |
+| 18 | No connection pooling for model downloads | 🔵 Open |
+| 19 | `Box::leak` in PTY default shell resolution | 🔵 Open |
+| 20 | No graceful shutdown for child processes in MCP Hub | 🔵 Open |
 
-**File:** `src/mcp/hub.rs:302-322`
-**Problem:** `reader.read_line(&mut response)` only reads a single line from the child process. JSON-RPC responses often span multiple lines (e.g. pretty-printed or containing embedded objects). This will cause truncated/corrupted responses in the MCP Hub passthrough.
-**Fix:** Read until a complete JSON value is received, or use a delimited protocol.
-**Severity:** 🔴 Critical
+---
 
-### 2. macOS system monitoring uses Linux-only commands
+## 🔴 Critical Bugs (None remaining)
 
-**Files:** `src/system.rs`, `src/sysinfo.rs`
-**Problem:** All non-Windows branches use `#[cfg(not(windows))]` which applies to both Linux and macOS. Commands like `systemctl`, `journalctl`, `top`, `free`, `df`, `ss`, `ps` are Linux-specific and will fail on macOS.
-**Impact:** Service manager, system monitor, process manager, network info, and log viewer all broken on macOS.
-**Fix:** Add `#[cfg(target_os = "macos")]` branches with macOS-equivalent commands (e.g., `launchctl`, `log show`, `vm_stat`, `diskutil`, `netstat`, `lsof`).
-**Severity:** 🔴 Critical
+All critical bugs have been resolved.
 
 ---
 
 ## 🟡 High-Priority Gaps
-
-### 3. Linux & macOS window management are stubs
-
-**Files:** `src/platform/window/linux.rs`, `src/platform/window/macos.rs`
-**Problem:** All methods return `Err(GuiError::PlatformError("...not yet implemented"))`. Tools like `gui_list_windows`, `gui_focus_window`, `gui_move_resize_window`, `gui_window_action` only work on Windows.
-**Resources:** `x11rb` is already a dependency for Linux; `core-foundation`, `core-graphics`, `cocoa`, `objc` are available for macOS.
-**Severity:** 🟡 High
 
 ### 4. Accessibility — all platforms are stubs
 
