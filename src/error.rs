@@ -1,4 +1,7 @@
-use thiserror::Error;
+//! Application error types.
+//!
+//! Defines the [`GuiError`] enum covering screenshot, input, window, clipboard,
+//! accessibility, OCR, detection, template matching, platform, and backend errors.
 
 #[derive(Debug, Error)]
 pub enum GuiError {

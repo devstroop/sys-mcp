@@ -17,11 +17,14 @@ use crate::platform::window::PlatformWindowManager;
 /// Wrapper around `RustAutoGui` to implement `Send + Sync`.
 ///
 /// `RustAutoGui` contains raw pointers (e.g. HDC / HBITMAP on Windows) which
-/// make it `!Send + !Sync`.  We always access it through a `Mutex`, so sending
-/// the *wrapper* across threads is safe.
+/// make it `!Send + !Sync`.  Access is serialised by the `Mutex` in `LocalBackend`,
+/// and this type is **never** exposed outside that Mutex, so sending the wrapper
+/// across threads is sound.
 struct AutoGuiWrapper(RustAutoGui);
 
-// SAFETY: Access is serialised by the `Mutex` in `LocalBackend`.
+// SAFETY: AutoGuiWrapper is always accessed through the Mutex in LocalBackend.
+// The type is never constructed or accessed outside of the Mutex lock, so
+// there is no way to violate aliasing rules.
 unsafe impl Send for AutoGuiWrapper {}
 unsafe impl Sync for AutoGuiWrapper {}
 
@@ -68,21 +71,20 @@ impl LocalBackend {
 
 #[async_trait]
 impl DisplayCapability for LocalBackend {
-    async fn screenshot(&self) -> Result<Screenshot, GuiError> {
+async fn screenshot(&self) -> Result<Screenshot, GuiError> {
         // Capture to temp file via RustAutoGui, then read back
         let tmp = std::env::temp_dir().join(format!("gui-mcp-{}.png", uuid::Uuid::new_v4()));
         let tmp_path = tmp.to_string_lossy().to_string();
 
-        {
-            let mut autogui = self.autogui.lock().unwrap();
-            autogui
-                .save_screenshot(&tmp_path)
-                .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
-        }
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        autogui
+            .save_screenshot(&tmp_path)
+            .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
+        drop(autogui);
 
         let data =
             std::fs::read(&tmp).map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
-        let _ = std::fs::remove_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
 
         let img = image::load_from_memory(&data)
             .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
@@ -100,14 +102,13 @@ impl DisplayCapability for LocalBackend {
         let img = image::load_from_memory(&full.data)
             .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
 
-        let cropped = image::imageops::crop_imm(
-            &img,
-            region.x,
-            region.y,
+        let (x, y, w, h) = (
+            region.x as u32,
+            region.y as u32,
             region.width,
             region.height,
-        )
-        .to_image();
+        );
+        let cropped = image::imageops::crop_imm(&img, x, y, w, h).to_image();
 
         let mut buf = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut buf);
@@ -128,7 +129,7 @@ impl DisplayCapability for LocalBackend {
     }
 
     async fn get_screen_size(&self) -> Result<Resolution, GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         let (w, h) = autogui.get_screen_size();
         Ok(Resolution {
             width: w as u32,
@@ -138,7 +139,7 @@ impl DisplayCapability for LocalBackend {
 
     async fn list_monitors(&self) -> Result<Vec<MonitorInfo>, GuiError> {
         let (w, h) = {
-            let autogui = self.autogui.lock().unwrap();
+            let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
             autogui.get_screen_size()
         };
         Ok(vec![MonitorInfo {
@@ -159,7 +160,7 @@ impl DisplayCapability for LocalBackend {
 #[async_trait]
 impl InputCapability for LocalBackend {
     async fn mouse_click(&self, x: u32, y: u32, button: MouseButton) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         match button {
@@ -172,7 +173,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_double_click(&self, x: u32, y: u32, button: MouseButton) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         match button {
@@ -193,14 +194,14 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_move(&self, x: u32, y: u32) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn mouse_position(&self) -> Result<Point, GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         let (x, y) = autogui
             .get_mouse_position()
             .map_err(|e| GuiError::InputError(e.to_string()))?;
@@ -211,7 +212,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_drag(&self, from: Point, to: Point, _button: MouseButton) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(from.x, from.y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         autogui.drag_mouse_to_pos(to.x, to.y, 0.15)
@@ -220,7 +221,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_scroll(&self, x: u32, y: u32, direction: ScrollDirection, amount: i32) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         let amt = amount.unsigned_abs();
@@ -235,42 +236,42 @@ impl InputCapability for LocalBackend {
     }
 
     async fn type_text(&self, text: &str) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.keyboard_input(text)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_press(&self, key: &str) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.keyboard_command(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_down(&self, key: &str) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.key_down(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_up(&self, key: &str) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.key_up(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_combo(&self, keys: &[String]) -> Result<(), GuiError> {
-        let autogui = self.autogui.lock().unwrap();
-        match keys.len() {
-            2 => autogui.keyboard_multi_key(&keys[0], &keys[1], None),
-            3 => autogui.keyboard_multi_key(&keys[0], &keys[1], Some(&keys[2])),
+        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        match keys.as_slice() {
+            [a, b] => autogui.keyboard_multi_key(a, b, None),
+            [a, b, c] => autogui.keyboard_multi_key(a, b, Some(c)),
             _ => {
                 return Err(GuiError::InputError(
                     "key_combo requires 2 or 3 keys".to_string(),
-                ));
+                ))
             }
         }
         .map_err(|e| GuiError::InputError(e.to_string()))?;
@@ -326,19 +327,19 @@ impl WindowCapability for LocalBackend {
 #[async_trait]
 impl ClipboardCapability for LocalBackend {
     async fn get_text(&self) -> Result<String, GuiError> {
-        let mut cb = self.clipboard.lock().unwrap();
+        let mut cb = self.clipboard.lock().map_err(|e| GuiError::ClipboardError(e.to_string()))?;
         cb.get_text()
             .map_err(|e| GuiError::ClipboardError(e.to_string()))
     }
 
     async fn set_text(&self, text: &str) -> Result<(), GuiError> {
-        let mut cb = self.clipboard.lock().unwrap();
+        let mut cb = self.clipboard.lock().map_err(|e| GuiError::ClipboardError(e.to_string()))?;
         cb.set_text(text.to_string())
             .map_err(|e| GuiError::ClipboardError(e.to_string()))
     }
 
     async fn clear(&self) -> Result<(), GuiError> {
-        let mut cb = self.clipboard.lock().unwrap();
+        let mut cb = self.clipboard.lock().map_err(|e| GuiError::ClipboardError(e.to_string()))?;
         cb.clear()
             .map_err(|e| GuiError::ClipboardError(e.to_string()))
     }

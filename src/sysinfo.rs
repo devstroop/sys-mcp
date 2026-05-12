@@ -1,3 +1,7 @@
+//! System process and resource information utilities.
+//!
+//! Provides [`ProcessManager`] for listing running processes with CPU and memory usage.
+
 use std::process::Command;
 
 #[cfg(windows)]
@@ -80,7 +84,15 @@ impl ProcessManager {
             }
         }
 
-        processes.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+        processes.sort_by(|a, b| {
+        match (a.cpu_usage.is_nan(), b.cpu_usage.is_nan()) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => b.cpu_usage.partial_cmp(&a.cpu_usage)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        }
+    });
         processes.truncate(100);
         processes
     }
@@ -127,8 +139,8 @@ impl ProcessManager {
     pub fn start_process(command: &str, args: Vec<String>) -> Result<u32, String> {
         #[cfg(windows)]
         {
-            let mut cmd = Command::new("cmd");
-            cmd.args(["/C", &format!("{} {}", command, args.join(" "))]);
+            let mut cmd = Command::new(command);
+            cmd.args(&args);
 
             let child = cmd.spawn().map_err(|e| format!("Failed to spawn: {}", e))?;
             Ok(child.id())

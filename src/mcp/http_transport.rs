@@ -4,11 +4,12 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
-    response::Response,
+    response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -36,9 +37,9 @@ impl HttpServer {
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
-        let addr: std::net::SocketAddr = format!("{}:{}", self.config.host, self.config.port)
+        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
             .parse()
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("failed to parse socket address: {e}"))?;
 
         let cors = CorsLayer::new()
             .allow_origin(Any)
@@ -87,49 +88,48 @@ async fn health_handler() -> Json<Value> {
     }))
 }
 
-async fn mcp_get_handler() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .body(Body::from(r#"{"error":"Use POST for MCP requests"}"#))
-        .unwrap()
+async fn mcp_get_handler() -> impl IntoResponse {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(json!({"error":"Use POST for MCP requests"})),
+    )
 }
 
 async fn mcp_delete_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, StatusCode> {
     let session_id = match headers.get("mcp-session-id") {
         Some(v) => v.to_str().ok(),
         None => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(r#"{"error":"Missing Mcp-Session-Id header"}"#))
-                .unwrap();
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "Missing Mcp-Session-Id header"})),
+            ));
         }
     };
 
     if let Some(sid) = session_id {
         let mut mgr = state.session_mgr.lock().await;
         if mgr.remove(sid) {
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"message":"Session terminated"}"#))
-                .unwrap();
+            return Ok((
+                StatusCode::OK,
+                Json(json!({"message": "Session terminated"})),
+            ));
         }
     }
 
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Body::from(r#"{"error":"Session not found"}"#))
-        .unwrap()
+    Ok((
+        StatusCode::NOT_FOUND,
+        Json(json!({"error": "Session not found"})),
+    ))
 }
 
 async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, StatusCode> {
     // Cleanup expired sessions periodically
     {
         let mut mgr = state.session_mgr.lock().await;
@@ -151,10 +151,10 @@ async fn mcp_handler(
     let mcp_request: McpRequest = match serde_json::from_value(body) {
         Ok(req) => req,
         Err(e) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::from(format!(r#"{{"error":"parse error: {}"}}"#, e)))
-                .unwrap();
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": format!("parse error: {e}")})),
+            ));
         }
     };
 
@@ -166,10 +166,10 @@ async fn mcp_handler(
     let response_json = match serde_json::to_string(&response) {
         Ok(json) => json,
         Err(e) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(format!(r#"{{"error":"serialization error: {}"}}"#, e)))
-                .unwrap();
+            return Ok((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("serialization error: {e}")})),
+            ));
         }
     };
 
@@ -179,10 +179,15 @@ async fn mcp_handler(
         StatusCode::OK
     };
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .header("mcp-session-id", session.id)
-        .body(Body::from(response_json))
-        .unwrap()
+    Ok((
+        status,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        )]
+        .into_iter()
+        .collect::<HeaderMap>()
+        .with_header("mcp-session-id", session.id.to_string()),
+        Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default()),
+    ))
 }

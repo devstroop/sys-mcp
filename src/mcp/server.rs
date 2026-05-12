@@ -31,8 +31,8 @@ impl McpRequestHandler {
     }
 
     #[cfg(feature = "web-preview")]
-    pub async fn start_web_preview(&mut self) {
-        match WebServer::start(Arc::clone(&self.client)).await {
+    pub async fn start_web_preview(&mut self, host: &str) {
+        match WebServer::start(Arc::clone(&self.client), host).await {
             Ok(ws) => {
                 log::info!("web preview: {}", ws.url());
                 self.web_server = Some(ws);
@@ -151,7 +151,7 @@ impl GuiMcpServer {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         #[cfg(feature = "web-preview")]
         if self.config.web_preview {
-            self.handler.lock().await.start_web_preview().await;
+            self.handler.lock().await.start_web_preview(&self.config.host).await;
         }
 
         match self.config.transport {
@@ -207,8 +207,15 @@ impl GuiMcpServer {
 }
 
 fn write_response(stdout: &mut impl Write, resp: &McpResponse) {
-    if let Ok(json) = serde_json::to_string(resp) {
-        let _ = writeln!(stdout, "{json}");
-        let _ = stdout.flush();
+    match serde_json::to_string(resp) {
+        Ok(json) => {
+            if let Err(e) = writeln!(stdout, "{json}") {
+                log::error!("failed to write response: {e}");
+            }
+            if let Err(e) = stdout.flush() {
+                log::error!("failed to flush stdout: {e}");
+            }
+        }
+        Err(e) => log::error!("failed to serialize response: {e}"),
     }
 }

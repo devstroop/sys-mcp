@@ -10,6 +10,70 @@ pub mod window;
 #[cfg(feature = "detection")]
 pub mod detection;
 
+fn get_os_version() -> String {
+    #[cfg(windows)]
+    {
+        use std::mem;
+        use windows::Win32::System::SystemInformation::OSVERSIONINFOW;
+        unsafe {
+            let mut info: OSVERSIONINFOW = mem::zeroed();
+            info.dwOSVersionInfoSize = mem::size_of::<OSVERSIONINFOW>() as u32;
+            if windows::Win32::System::SystemInformation::GetVersionExW(
+                &mut info as *mut _ as *mut OSVERSIONINFOW,
+            )
+            .as_bool()
+            {
+                return format!("{}.{}.{}", info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber);
+            }
+        }
+        "unknown".to_string()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("sw_vers").output() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut version = String::new();
+            for line in text.lines() {
+                if line.starts_with("ProductVersion:") {
+                    version = line
+                        .split(':')
+                        .nth(1)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    break;
+                }
+            }
+            if !version.is_empty() {
+                return version;
+            }
+        }
+        "unknown".to_string()
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(content) = std::fs::read_to_string("/etc/os-release") {
+            for line in content.lines() {
+                if line.starts_with("PRETTY_NAME=") {
+                    let val = line
+                        .split('=')
+                        .nth(1)
+                        .unwrap_or("")
+                        .trim()
+                        .trim_matches('"')
+                        .to_string();
+                    if !val.is_empty() {
+                        return val;
+                    }
+                }
+            }
+        }
+        "unknown".to_string()
+    }
+}
+
 use crate::error::GuiError;
 use crate::gui::backend::GuiBackend;
 use crate::gui::types::*;
@@ -211,9 +275,11 @@ impl GuiClient {
 
         capabilities.push("template_matching".to_string());
 
+        let os_version = get_os_version();
+
         Ok(SystemInfo {
             os: std::env::consts::OS.to_string(),
-            os_version: String::new(),
+            os_version,
             hostname: hostname::get()
                 .map(|h| h.to_string_lossy().to_string())
                 .unwrap_or_default(),

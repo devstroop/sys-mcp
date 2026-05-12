@@ -1,3 +1,8 @@
+//! Server configuration and CLI argument parsing.
+///
+//! Parses command-line arguments into a [`ServerConfig`] struct.
+//! Supports `--host`, `--hostname`, `--port`, `--transport`, and other flags.
+
 /// Transport mode for MCP server
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransportMode {
@@ -50,12 +55,24 @@ impl ServerConfig {
 
         while i < args.len() {
             match args[i].as_str() {
+                "--help" | "-h" => {
+                    print_help();
+                    std::process::exit(0);
+                }
+                "--version" | "-V" => {
+                    println!("gui-mcp {}", env!("CARGO_PKG_VERSION"));
+                    std::process::exit(0);
+                }
                 "--no-web-preview" => config.web_preview = false,
                 "--debug" => config.debug = true,
                 "--transport" => {
                     if i + 1 < args.len() {
                         if let Some(mode) = TransportMode::from_str(&args[i + 1]) {
                             config.transport = mode;
+                        } else {
+                            eprintln!("Unknown transport mode: '{}'", args[i + 1]);
+                            eprintln!("Valid options: stdio, http");
+                            std::process::exit(1);
                         }
                         i += 1;
                     }
@@ -64,11 +81,14 @@ impl ServerConfig {
                     if i + 1 < args.len() {
                         if let Ok(port) = args[i + 1].parse() {
                             config.port = port;
+                        } else {
+                            eprintln!("Invalid port: '{}'", args[i + 1]);
+                            std::process::exit(1);
                         }
                         i += 1;
                     }
                 }
-                "--host" => {
+                "--host" | "--hostname" => {
                     if i + 1 < args.len() {
                         config.host = args[i + 1].clone();
                         i += 1;
@@ -78,6 +98,9 @@ impl ServerConfig {
                     if i + 1 < args.len() {
                         if let Ok(max) = args[i + 1].parse() {
                             config.max_sessions = max;
+                        } else {
+                            eprintln!("Invalid max-sessions: '{}'", args[i + 1]);
+                            std::process::exit(1);
                         }
                         i += 1;
                     }
@@ -86,15 +109,47 @@ impl ServerConfig {
                     if i + 1 < args.len() {
                         if let Ok(ttl) = args[i + 1].parse() {
                             config.session_ttl_secs = ttl;
+                        } else {
+                            eprintln!("Invalid session-ttl: '{}'", args[i + 1]);
+                            std::process::exit(1);
                         }
                         i += 1;
                     }
                 }
-                _ => {} // silently ignore unknown args
+                unknown => {
+                    eprintln!("Unknown argument: '{}'", unknown);
+                    eprintln!("Run with --help for usage information.");
+                    std::process::exit(1);
+                }
             }
             i += 1;
         }
 
         config
     }
+}
+
+fn print_help() {
+    println!(
+        r#"gui-mcp {} — GUI Automation MCP Server
+
+USAGE:
+    gui-mcp [OPTIONS]
+
+OPTIONS:
+    --host, --hostname <HOST>    Bind address (default: 0.0.0.0)
+    --port <PORT>                MCP HTTP port (default: 3000)
+    --transport <stdio|http>     Transport mode (default: stdio)
+    --no-web-preview             Disable web preview server
+    --max-sessions <N>           Max concurrent sessions (default: 100)
+    --session-ttl <SECONDS>      Session timeout in seconds (default: 1800)
+    --debug                      Enable debug logging
+    --help, -h                   Print this help message
+    --version, -V                Print version information
+
+ENVIRONMENT:
+    RUST_LOG                     Override log level (e.g. RUST_LOG=trace)
+"#,
+        env!("CARGO_PKG_VERSION")
+    );
 }

@@ -1,3 +1,7 @@
+//! Windows system service management utilities.
+//!
+//! Provides [`ServiceManager`] for querying and managing Windows services.
+
 use std::process::Command;
 use serde::{Deserialize, Serialize};
 
@@ -350,11 +354,19 @@ impl SystemMonitor {
                         stats.memory_total_bytes = json.get("MemTotal").and_then(|v| v.as_u64()).unwrap_or(0);
                         let mem_free = json.get("MemFree").and_then(|v| v.as_u64()).unwrap_or(0);
                         stats.memory_used_bytes = stats.memory_total_bytes - mem_free;
-                        stats.memory_percent = (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32) * 100.0;
+                        stats.memory_percent = if stats.memory_total_bytes > 0 {
+                            (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
                         stats.disk_total_bytes = json.get("DiskTotal").and_then(|v| v.as_u64()).unwrap_or(0);
                         let disk_free = json.get("DiskFree").and_then(|v| v.as_u64()).unwrap_or(0);
                         stats.disk_used_bytes = stats.disk_total_bytes - disk_free;
-                        stats.disk_percent = (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0;
+                        stats.disk_percent = if stats.disk_total_bytes > 0 {
+                            (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
                     }
                 }
             }
@@ -387,7 +399,11 @@ impl SystemMonitor {
                     if parts[0] == "Mem:" {
                         stats.memory_total_bytes = parts[1].parse().unwrap_or(0);
                         stats.memory_used_bytes = parts[2].parse().unwrap_or(0);
-                        stats.memory_percent = (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32) * 100.0;
+                        stats.memory_percent = if stats.memory_total_bytes > 0 {
+                            (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
                     }
                 }
             }
@@ -401,7 +417,11 @@ impl SystemMonitor {
                     if parts.len() >= 4 {
                         stats.disk_total_bytes = parts[1].parse().unwrap_or(0);
                         stats.disk_used_bytes = parts[2].parse().unwrap_or(0);
-                        stats.disk_percent = (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0;
+                        stats.disk_percent = if stats.disk_total_bytes > 0 {
+                            (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
                     }
                 }
             }

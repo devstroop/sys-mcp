@@ -5,8 +5,8 @@ use crate::gui::types::*;
 use crate::protocol::mcp::{ContentItem, ToolResult};
 use crate::terminal::{PtyManager, TerminalHandle};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::io::Write;
+use std::sync::{Arc, Mutex, RwLock};
 use uuid::Uuid;
 
 #[cfg(feature = "ocr")]
@@ -776,7 +776,7 @@ async fn handle_click_object(client: &GuiClient, args: &Value) -> Result<ToolRes
     )))
 }
 
-#[cfg(feature = "detection")]
+#[cfg(not(feature = "detection"))]
 mod detection_disabled {
     use super::*;
     pub async fn handle_detect_objects(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
@@ -939,7 +939,7 @@ async fn handle_delete_file(_client: &GuiClient, args: &Value) -> Result<ToolRes
     }
 
     if path.is_dir() {
-        return Err(format!("Cannot delete directory with gui_delete_file: {}. Use gui_delete_dir instead.", path.display()));
+        return Err("Path is a directory, not a file.".to_string());
     }
 
     fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))?;
@@ -982,7 +982,7 @@ static PTY_MANAGER: std::sync::LazyLock<Arc<PtyManager>> =
 
 struct SessionState {
     handle: TerminalHandle,
-    output_buffer: Arc<RwLock<Vec<u8>>>,
+    output_buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
@@ -990,7 +990,7 @@ async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResu
     let cwd = args.get("cwd").and_then(Value::as_str);
 
     let session_id = format!("exec_{}", Uuid::new_v4());
-    let output_buffer = Arc::new(RwLock::new(Vec::new()));
+    let output_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let output_buffer_clone = output_buffer.clone();
 
     let handle = PTY_MANAGER
@@ -1001,11 +1001,8 @@ async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResu
             cwd.map(String::from),
             vec![],
             move |data| {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut buf = output_buffer_clone.write().await;
-                    buf.extend(data);
-                });
+                let mut buf = output_buffer_clone.lock().unwrap();
+                buf.extend(data);
             },
         )
         .await
@@ -1018,14 +1015,14 @@ async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResu
         .await
         .map_err(|e| format!("Failed to send command: {}", e))?;
 
-    // Wait a bit for output
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-    // Close the terminal
+    // Close the terminal (signals EOF to the process)
     let _ = PTY_MANAGER.close(&session_id).await;
 
+    // Give the process a moment to finish and flush output
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
     // Get output
-    let output = output_buffer.read().await.clone();
+    let output = spawn_blocking_get_buffer(output_buffer).await;
     let output_str = String::from_utf8(output).unwrap_or_default();
 
     // Clean up ANSI escape codes for display
@@ -1038,17 +1035,16 @@ async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResu
     let cwd = args.get("cwd").and_then(Value::as_str).map(String::from);
     let cols = args
         .get("cols")
-        .and_then(Value::as_u64)
+        .and_then(|v| v.as_u64())
         .unwrap_or(80) as u16;
     let rows = args
         .get("rows")
-        .and_then(Value::as_u64)
+        .and_then(|v| v.as_u64())
         .unwrap_or(24) as u16;
 
     let session_id = Uuid::new_v4().to_string();
-    let output_buffer = Arc::new(RwLock::new(Vec::new()));
+    let output_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let output_buffer_clone = output_buffer.clone();
-    let session_id_clone = session_id.clone();
 
     let handle = PTY_MANAGER
         .spawn(
@@ -1058,11 +1054,8 @@ async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResu
             cwd,
             vec![],
             move |data| {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    let mut buf = output_buffer_clone.write().await;
-                    buf.extend(data);
-                });
+                let mut buf = output_buffer_clone.lock().unwrap();
+                buf.extend(data);
             },
         )
         .await
@@ -1111,10 +1104,7 @@ async fn handle_shell_read(_client: &GuiClient, args: &Value) -> Result<ToolResu
         .get(session_id)
         .ok_or_else(|| format!("Session not found: {}", session_id))?;
 
-    let mut buffer = session.output_buffer.write().await;
-    let output = buffer.clone();
-    buffer.clear();
-
+    let output = spawn_blocking_get_buffer(session.output_buffer.clone()).await;
     let output_str = String::from_utf8(output).unwrap_or_default();
     let cleaned = strip_ansi_codes(&output_str);
 
@@ -1134,6 +1124,17 @@ async fn handle_shell_close(_client: &GuiClient, args: &Value) -> Result<ToolRes
     Ok(ToolResult::text(format!("Closed session {}", session_id)))
 }
 
+/// Helper to read a buffer from a std::sync::Mutex inside an async context.
+async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
+    let buf_clone = buf.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut guard = buf_clone.lock().unwrap();
+        std::mem::take(&mut *guard)
+    })
+    .await
+    .unwrap_or_default()
+}
+
 async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult, String> {
     let sessions = SHELL_SESSIONS.read().await;
     let ids: Vec<String> = sessions.keys().cloned().collect();
@@ -1142,15 +1143,24 @@ async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult, String> {
 }
 
 fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::new();
+    // Remove ANSI escape sequences using a simple state machine.
+    // Handles CSI sequences (most common), and strips everything from ESC
+    // until a known terminator letter.
+    let mut result = String::with_capacity(s.len());
     let mut skip = false;
 
     for c in s.chars() {
         if c == '\u{1B}' {
             skip = true;
         } else if skip {
-            if c == 'm' || c == 'H' || c == 'J' || c == 'K' || c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'P' || c == 'S' || c == 'T' {
-                skip = false;
+            // Terminator bytes for CSI and other escape sequences
+            if c.is_ascii_alphabetic() || c == '@' || c == '`' {
+                if c == 'm' || c == 'H' || c == 'J' || c == 'K' || c == 'A'
+                    || c == 'B' || c == 'C' || c == 'D' || c == 'P'
+                    || c == 'S' || c == 'T' || c == 'f'
+                {
+                    skip = false;
+                }
             }
         } else {
             result.push(c);

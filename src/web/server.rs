@@ -53,13 +53,14 @@ fn check_token(state: &WebState, query: &TokenQuery) -> Result<(), Response> {
 #[cfg(feature = "web-preview")]
 pub struct WebServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    pub host: String,
     pub port: u16,
     pub token: String,
 }
 
 #[cfg(feature = "web-preview")]
 impl WebServer {
-    pub async fn start(client: Arc<GuiClient>) -> anyhow::Result<Self> {
+    pub async fn start(client: Arc<GuiClient>, host: &str) -> anyhow::Result<Self> {
         let token = uuid::Uuid::new_v4().to_string();
         let state = Arc::new(WebState {
             client,
@@ -77,9 +78,11 @@ impl WebServer {
             .route("/api/scroll", get(api_scroll))
             .with_state(state);
 
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr_str = format!("{host}:0");
+        let listener = TcpListener::bind(&addr_str).await?;
         let addr = listener.local_addr()?;
         let port = addr.port();
+        let host = host.to_string();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -92,17 +95,18 @@ impl WebServer {
                 .ok();
         });
 
-        log::info!("web preview server started on http://127.0.0.1:{port}/?token={token}");
+        log::info!("web preview server started on http://{host}:{port}/?token={token}");
 
         Ok(Self {
             shutdown_tx: Some(shutdown_tx),
+            host,
             port,
             token,
         })
     }
 
     pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/?token={}", self.port, self.token)
+        format!("http://{}:{}/?token={}", self.host, self.port, self.token)
     }
 
     pub fn stop(&mut self) {
