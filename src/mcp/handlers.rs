@@ -5,15 +5,11 @@ use crate::gui::types::*;
 use crate::protocol::mcp::{ContentItem, ToolResult};
 use crate::terminal::{PtyManager, TerminalHandle};
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::{Arc, Mutex, RwLock};
 use uuid::Uuid;
 
 #[cfg(feature = "ocr")]
 use crate::gui::ocr;
-
-#[cfg(feature = "detection")]
-use crate::gui::detection;
 
 /// Dispatch a tool call to the appropriate handler.
 pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) -> ToolResult {
@@ -1068,7 +1064,7 @@ async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResu
 
     SHELL_SESSIONS
         .write()
-        .await
+        .map_err(|e| format!("sessions poisoned: {}", e))?
         .insert(session_id.clone(), state);
 
     Ok(ToolResult::text(serde_json::json!({
@@ -1081,7 +1077,7 @@ async fn handle_shell_write(_client: &GuiClient, args: &Value) -> Result<ToolRes
     let session_id = str_arg(args, "session_id")?;
     let input = str_arg(args, "input")?;
 
-    let sessions = SHELL_SESSIONS.read().await;
+    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
     let session = sessions
         .get(session_id)
         .ok_or_else(|| format!("Session not found: {}", session_id))?;
@@ -1099,7 +1095,7 @@ async fn handle_shell_write(_client: &GuiClient, args: &Value) -> Result<ToolRes
 async fn handle_shell_read(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let session_id = str_arg(args, "session_id")?;
 
-    let sessions = SHELL_SESSIONS.read().await;
+    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
     let session = sessions
         .get(session_id)
         .ok_or_else(|| format!("Session not found: {}", session_id))?;
@@ -1119,7 +1115,7 @@ async fn handle_shell_close(_client: &GuiClient, args: &Value) -> Result<ToolRes
         .await
         .map_err(|e| format!("Failed to close shell: {}", e))?;
 
-    SHELL_SESSIONS.write().await.remove(session_id);
+    SHELL_SESSIONS.write().map_err(|e| format!("sessions poisoned: {}", e))?.remove(session_id);
 
     Ok(ToolResult::text(format!("Closed session {}", session_id)))
 }
@@ -1136,7 +1132,7 @@ async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
 }
 
 async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult, String> {
-    let sessions = SHELL_SESSIONS.read().await;
+    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
     let ids: Vec<String> = sessions.keys().cloned().collect();
 
     Ok(ToolResult::text(serde_json::to_string_pretty(&ids).unwrap_or("[]".to_string())))

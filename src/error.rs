@@ -3,6 +3,8 @@
 //! Defines the [`GuiError`] enum covering screenshot, input, window, clipboard,
 //! accessibility, OCR, detection, template matching, platform, and backend errors.
 
+use thiserror::Error;
+
 #[derive(Debug, Error)]
 pub enum GuiError {
     #[error("screenshot failed: {0}")]

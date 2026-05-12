@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use axum::{
-    body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
     response::IntoResponse,
@@ -179,15 +178,15 @@ async fn mcp_handler(
         StatusCode::OK
     };
 
-    Ok((
-        status,
-        [(
-            axum::http::header::CONTENT_TYPE,
-            axum::http::HeaderValue::from_static("application/json"),
-        )]
-        .into_iter()
-        .collect::<HeaderMap>()
-        .with_header("mcp-session-id", session.id.to_string()),
-        Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default()),
-    ))
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        axum::http::HeaderValue::from_static("mcp-session-id"),
+        session.id.to_string().parse().unwrap_or_default(),
+    );
+
+    Ok((status, headers, Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default())))
 }

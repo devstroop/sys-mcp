@@ -548,7 +548,7 @@ impl LogViewer {
         #[cfg(not(windows))]
         {
             let journal_args = if let Ok(level_num) = match level_filter.as_str() {
-                "Error" => Ok("err"),
+                "Error" => Ok::<&str, ()>("err"),
                 "Warning" => Ok("warning"),
                 _ => Ok("info")
             } {

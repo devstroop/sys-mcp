@@ -76,7 +76,7 @@ async fn screenshot(&self) -> Result<Screenshot, GuiError> {
         let tmp = std::env::temp_dir().join(format!("gui-mcp-{}.png", uuid::Uuid::new_v4()));
         let tmp_path = tmp.to_string_lossy().to_string();
 
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui
             .save_screenshot(&tmp_path)
             .map_err(|e| GuiError::ScreenshotFailed(e.to_string()))?;
@@ -160,7 +160,7 @@ async fn screenshot(&self) -> Result<Screenshot, GuiError> {
 #[async_trait]
 impl InputCapability for LocalBackend {
     async fn mouse_click(&self, x: u32, y: u32, button: MouseButton) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         match button {
@@ -173,7 +173,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_double_click(&self, x: u32, y: u32, button: MouseButton) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         match button {
@@ -194,7 +194,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_move(&self, x: u32, y: u32) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
@@ -212,7 +212,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_drag(&self, from: Point, to: Point, _button: MouseButton) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(from.x, from.y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         autogui.drag_mouse_to_pos(to.x, to.y, 0.15)
@@ -221,7 +221,7 @@ impl InputCapability for LocalBackend {
     }
 
     async fn mouse_scroll(&self, x: u32, y: u32, direction: ScrollDirection, amount: i32) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.move_mouse_to_pos(x, y, 0.0)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         let amt = amount.unsigned_abs();
@@ -236,36 +236,36 @@ impl InputCapability for LocalBackend {
     }
 
     async fn type_text(&self, text: &str) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.keyboard_input(text)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_press(&self, key: &str) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.keyboard_command(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_down(&self, key: &str) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.key_down(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_up(&self, key: &str) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
         autogui.key_up(key)
             .map_err(|e| GuiError::InputError(e.to_string()))?;
         Ok(())
     }
 
     async fn key_combo(&self, keys: &[String]) -> Result<(), GuiError> {
-        let mut autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
-        match keys.as_slice() {
+        let autogui = self.autogui.lock().map_err(|e| GuiError::BackendError(e.to_string()))?;
+        match keys {
             [a, b] => autogui.keyboard_multi_key(a, b, None),
             [a, b, c] => autogui.keyboard_multi_key(a, b, Some(c)),
             _ => {

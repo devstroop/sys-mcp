@@ -1,5 +1,5 @@
 //! Server configuration and CLI argument parsing.
-///
+//!
 //! Parses command-line arguments into a [`ServerConfig`] struct.
 //! Supports `--host`, `--hostname`, `--port`, `--transport`, and other flags.
 
