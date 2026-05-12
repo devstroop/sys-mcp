@@ -4,12 +4,11 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{delete, get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
-use std::net::SocketAddr;
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -37,9 +36,9 @@ impl HttpServer {
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
-        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
+        let addr: std::net::SocketAddr = format!("{}:{}", self.config.host, self.config.port)
             .parse()
-            .map_err(|e| anyhow::anyhow!("failed to parse socket address: {e}"))?;
+            .unwrap();
 
         let cors = CorsLayer::new()
             .allow_origin(Any)
@@ -88,41 +87,42 @@ async fn health_handler() -> Json<Value> {
     }))
 }
 
-async fn mcp_get_handler() -> impl IntoResponse {
-    (
-        StatusCode::METHOD_NOT_ALLOWED,
-        Json(json!({"error":"Use POST for MCP requests"})),
-    )
+async fn mcp_get_handler() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .body(Body::from(r#"{"error":"Use POST for MCP requests"}"#))
+        .unwrap()
 }
 
 async fn mcp_delete_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Response<Body> {
     let session_id = match headers.get("mcp-session-id") {
         Some(v) => v.to_str().ok(),
         None => {
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Missing Mcp-Session-Id header"})),
-            ));
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::from(r#"{"error":"Missing Mcp-Session-Id header"}"#))
+                .unwrap();
         }
     };
 
     if let Some(sid) = session_id {
         let mut mgr = state.session_mgr.lock().await;
         if mgr.remove(sid) {
-            return Ok((
-                StatusCode::OK,
-                Json(json!({"message": "Session terminated"})),
-            ));
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"message":"Session terminated"}"#))
+                .unwrap();
         }
     }
 
-    Ok((
-        StatusCode::NOT_FOUND,
-        Json(json!({"error": "Session not found"})),
-    ))
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::from(r#"{"error":"Session not found"}"#))
+        .unwrap()
 }
 
 async fn mcp_handler(
@@ -153,8 +153,7 @@ async fn mcp_handler(
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"error": format!("parse error: {e}")}).to_string()))
+                .body(Body::from(format!(r#"{{"error":"parse error: {}"}}"#, e)))
                 .unwrap();
         }
     };
@@ -169,8 +168,7 @@ async fn mcp_handler(
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"error": format!("serialization error: {e}")}).to_string()))
+                .body(Body::from(format!(r#"{{"error":"serialization error: {}"}}"#, e)))
                 .unwrap();
         }
     };
@@ -183,8 +181,8 @@ async fn mcp_handler(
 
     Response::builder()
         .status(status)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .header("mcp-session-id", &session.id.to_string())
+        .header("Content-Type", "application/json")
+        .header("mcp-session-id", session.id)
         .body(Body::from(response_json))
         .unwrap()
 }
