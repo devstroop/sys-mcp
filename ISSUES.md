@@ -18,11 +18,11 @@
 | 1 | `send_jsonrpc()` truncates multi-line responses | ✅ Fixed |
 | 2 | macOS system monitoring uses Linux-only commands | ✅ Fixed |
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
-| 4 | Accessibility — all platforms are stubs | 🟡 Open |
+| 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
 | 6 | Test coverage is critically low | ✅ Fixed (66 tests) |
-| 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed (split into 10 files) |
-| 8 | CLI argument parsing is fragile | 🟢 Open |
+| 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
+| 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | 🟢 Open |
 | 10 | ANSI escape stripping is heuristic | 🟢 Open |
 | 11 | Multi-monitor support is incomplete | 🟢 Open |
