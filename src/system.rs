@@ -55,7 +55,7 @@ impl ServiceManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("systemctl")
                 .args([
@@ -76,6 +76,30 @@ impl ServiceManager {
                                 display_name: parts[0].to_string(),
                                 status: parts[3].to_string(),
                                 start_type: parts[1].to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("launchctl").args(["list"]).output() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    for line in text.lines().skip(1) {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 3 {
+                            let status = match parts[0] {
+                                "-" => "Running".to_string(),
+                                "1" => "Error".to_string(),
+                                _ => "Running".to_string(),
+                            };
+                            services.push(ServiceInfo {
+                                name: parts[2].to_string(),
+                                display_name: parts[2].to_string(),
+                                status,
+                                start_type: "N/A".to_string(),
                             });
                         }
                     }
@@ -105,9 +129,23 @@ impl ServiceManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             let output = Command::new("systemctl")
+                .args(["start", name])
+                .output()
+                .map_err(|e| e.to_string())?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).to_string())
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let output = Command::new("launchctl")
                 .args(["start", name])
                 .output()
                 .map_err(|e| e.to_string())?;
@@ -139,9 +177,23 @@ impl ServiceManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             let output = Command::new("systemctl")
+                .args(["stop", name])
+                .output()
+                .map_err(|e| e.to_string())?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).to_string())
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let output = Command::new("launchctl")
                 .args(["stop", name])
                 .output()
                 .map_err(|e| e.to_string())?;
@@ -229,7 +281,7 @@ impl NetworkManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("hostname").args(["-I"]).output() {
                 if let Ok(text) = String::from_utf8(output.stdout) {
@@ -247,7 +299,36 @@ impl NetworkManager {
                     }
                 }
             }
+        }
 
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("ipconfig")
+                .args(["getifaddr", "en0"])
+                .output()
+            {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    let ip = text.trim().to_string();
+                    if !ip.is_empty() {
+                        info.ip_addresses.push(ip);
+                    }
+                }
+            }
+
+            if let Ok(output) = Command::new("netstat").args(["-rn"]).output() {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    if line.starts_with("default") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            info.default_gateway = Some(parts[1].to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
             if let Ok(output) = Command::new("cat").args(["/etc/resolv.conf"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if line.starts_with("nameserver") {
@@ -294,7 +375,7 @@ impl NetworkManager {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("ss").args(["-tunap"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
@@ -306,6 +387,31 @@ impl NetworkManager {
                             "peer_address": parts[5],
                             "state": parts[1]
                         }));
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("netstat")
+                .args(["-an", "-p", "tcp", "-p", "udp"])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 5 {
+                        let proto = parts[0].to_string();
+                        if (proto == "tcp" || proto == "tcp4" || proto == "tcp6")
+                            || (proto == "udp" || proto == "udp4" || proto == "udp6")
+                        {
+                            connections.push(serde_json::json!({
+                                "protocol": proto,
+                                "local_address": parts[3],
+                                "peer_address": parts[4],
+                                "state": if proto.starts_with("tcp") { parts[5].to_string() } else { "-".to_string() }
+                            }));
+                        }
                     }
                 }
             }
@@ -376,7 +482,7 @@ impl SystemMonitor {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("top").args(["-bn1"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -413,6 +519,92 @@ impl SystemMonitor {
                     if parts.len() >= 4 {
                         stats.disk_total_bytes = parts[1].parse().unwrap_or(0);
                         stats.disk_used_bytes = parts[2].parse().unwrap_or(0);
+                        stats.disk_percent = if stats.disk_total_bytes > 0 {
+                            (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("top")
+                .args(["-l", "1", "-n", "0"])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    if line.contains("CPU usage:") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        for (i, part) in parts.iter().enumerate() {
+                            if part.ends_with("%user") || part == "%user" {
+                                if let Some(pct) = parts.get(i.saturating_sub(1)) {
+                                    stats.cpu_usage_percent =
+                                        pct.trim_end_matches('%').parse().unwrap_or(0.0);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Ok(output) = Command::new("sysctl")
+                .args(["-n", "hw.memsize"])
+                .output()
+            {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    stats.memory_total_bytes = text.trim().parse().unwrap_or(0);
+                }
+            }
+
+            if let Ok(output) = Command::new("vm_stat").output() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    let page_size: u64 = 4096;
+                    let mut pages_active: u64 = 0;
+                    let mut pages_wired: u64 = 0;
+                    let mut pages_compressed: u64 = 0;
+                    for line in text.lines() {
+                        if let Some(val) = line
+                            .strip_prefix("Pages active:")
+                            .or_else(|| line.strip_prefix("Pages active:"))
+                        {
+                            pages_active = val.trim().trim_end_matches('.').parse().unwrap_or(0);
+                        }
+                        if let Some(val) = line
+                            .strip_prefix("Pages wired down:")
+                            .or_else(|| line.strip_prefix("Pages wired down:"))
+                        {
+                            pages_wired = val.trim().trim_end_matches('.').parse().unwrap_or(0);
+                        }
+                        if let Some(val) = line
+                            .strip_prefix("Pages occupied by compressor:")
+                            .or_else(|| line.strip_prefix("Pages occupied by compressor:"))
+                        {
+                            pages_compressed =
+                                val.trim().trim_end_matches('.').parse().unwrap_or(0);
+                        }
+                    }
+                    stats.memory_used_bytes =
+                        (pages_active + pages_wired + pages_compressed) * page_size;
+                    if stats.memory_total_bytes > 0 {
+                        stats.memory_percent = (stats.memory_used_bytes as f32
+                            / stats.memory_total_bytes as f32)
+                            * 100.0;
+                    }
+                }
+            }
+
+            if let Ok(output) = Command::new("df").args(["-k", "/"]).output() {
+                for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 4 {
+                        let total_kb: u64 = parts[1].parse().unwrap_or(0);
+                        let used_kb: u64 = parts[2].parse().unwrap_or(0);
+                        stats.disk_total_bytes = total_kb * 1024;
+                        stats.disk_used_bytes = used_kb * 1024;
                         stats.disk_percent = if stats.disk_total_bytes > 0 {
                             (stats.disk_used_bytes as f32 / stats.disk_total_bytes as f32) * 100.0
                         } else {
@@ -462,7 +654,7 @@ impl SystemMonitor {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             if let Ok(output) = Command::new("df").args(["-B1"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
@@ -479,6 +671,29 @@ impl SystemMonitor {
                             "used_bytes": used,
                             "free_bytes": free,
                             "percent": if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 }
+                        }));
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(output) = Command::new("df").args(["-k"]).output() {
+                for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 6 {
+                        let total_kb: u64 = parts[1].parse().unwrap_or(0);
+                        let used_kb: u64 = parts[2].parse().unwrap_or(0);
+                        let free_kb: u64 = parts[3].parse().unwrap_or(0);
+                        let mount = parts[5].to_string();
+
+                        drives.push(serde_json::json!({
+                            "mount": mount,
+                            "total_bytes": total_kb * 1024,
+                            "used_bytes": used_kb * 1024,
+                            "free_bytes": free_kb * 1024,
+                            "percent": if total_kb > 0 { (used_kb as f64 / total_kb as f64) * 100.0 } else { 0.0 }
                         }));
                     }
                 }
@@ -558,7 +773,7 @@ impl LogViewer {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             let count_str = count.to_string();
             let journal_args = if let Ok(level_num) = match level_filter.as_str() {
@@ -580,6 +795,40 @@ impl LogViewer {
                             source: parts.get(1).unwrap_or(&"").to_string(),
                             level: "Info".to_string(),
                             message: parts[2..].join(" "),
+                        });
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let count_str = count.to_string();
+            let level_flag = match level_filter.as_str() {
+                "Error" => "error",
+                "Warning" => "warning",
+                _ => "info",
+            };
+
+            if let Ok(output) = Command::new("log")
+                .args(["show", "--last", "1h", "--level", level_flag, "--style", "compact"])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .take(count)
+                {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.splitn(4, ' ').collect();
+                    if parts.len() >= 4 {
+                        entries.push(LogEntry {
+                            timestamp: parts[0].to_string(),
+                            source: parts[2].to_string(),
+                            level: level_filter.clone(),
+                            message: parts[3..].join(" "),
                         });
                     }
                 }

@@ -361,12 +361,20 @@ impl McpHub {
         stdin.flush().await.map_err(|e| e.to_string())?;
 
         let mut response = String::new();
-        reader
-            .read_line(&mut response)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        serde_json::from_str(&response).map_err(|e| format!("Invalid JSON response: {}", e))
+        loop {
+            let n = reader
+                .read_line(&mut response)
+                .await
+                .map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("Connection closed by MCP server".to_string());
+            }
+            match serde_json::from_str::<serde_json::Value>(&response) {
+                Ok(value) => return Ok(value),
+                Err(ref e) if e.is_eof() => continue,
+                Err(e) => return Err(format!("Invalid JSON response: {}", e)),
+            }
+        }
     }
 }
 
