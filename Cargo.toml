@@ -50,13 +50,13 @@ portable-pty = "0.8"
 # Logging
 tracing = "0.1"
 
+# Object detection (optional)
+tract-onnx = { version = "0.22", optional = true }
+
 # Testing
 [dev-dependencies]
 tempfile = "3"
 tokio-test = "0.4"
-
-# Object detection (optional) - tract is more Rust-native
-tract-onnx = { version = "0.22", optional = true }
 
 # ── Platform: Windows ──────────────────────────────────────────────
 [target.'cfg(windows)'.dependencies]
