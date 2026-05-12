@@ -21,7 +21,7 @@
 | 4 | Accessibility — all platforms are stubs | 🟡 Open |
 | 5 | Object detection is a stub | ✅ Fixed |
 | 6 | Test coverage is critically low | ✅ Fixed (66 tests) |
-| 7 | `handlers.rs` is too large (1546 lines) | 🟢 Open |
+| 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed (split into 10 files) |
 | 8 | CLI argument parsing is fragile | 🟢 Open |
 | 9 | MCP Hub JSON-RPC I/O framing | 🟢 Open |
 | 10 | ANSI escape stripping is heuristic | 🟢 Open |
