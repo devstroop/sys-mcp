@@ -15,75 +15,75 @@ use crate::gui::ocr;
 pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) -> ToolResult {
     let result = match tool_name {
         // Display
-        "gui_screenshot" => handle_screenshot(client).await,
-        "gui_screenshot_region" => handle_screenshot_region(client, &args).await,
-        "gui_get_screen_size" => handle_get_screen_size(client).await,
-        "gui_list_monitors" => handle_list_monitors(client).await,
+        "screen_capture" => handle_screenshot(client).await,
+        "screen_capture_region" => handle_screenshot_region(client, &args).await,
+        "screen_size" => handle_get_screen_size(client).await,
+        "screen_list_monitors" => handle_list_monitors(client).await,
 
         // OCR
-        "gui_read_screen" => handle_read_screen(client, &args).await,
-        "gui_find_text" => handle_find_text(client, &args).await,
+        "screen_read" => handle_read_screen(client, &args).await,
+        "screen_find_text" => handle_find_text(client, &args).await,
 
         // Mouse
-        "gui_click" => handle_click(client, &args).await,
-        "gui_double_click" => handle_double_click(client, &args).await,
-        "gui_mouse_move" => handle_mouse_move(client, &args).await,
-        "gui_mouse_position" => handle_mouse_position(client).await,
-        "gui_drag" => handle_drag(client, &args).await,
-        "gui_scroll" => handle_scroll(client, &args).await,
+        "mouse_click" => handle_click(client, &args).await,
+        "mouse_double_click" => handle_double_click(client, &args).await,
+        "mouse_move" => handle_mouse_move(client, &args).await,
+        "mouse_position" => handle_mouse_position(client).await,
+        "mouse_drag" => handle_drag(client, &args).await,
+        "mouse_scroll" => handle_scroll(client, &args).await,
 
         // Keyboard
-        "gui_type_text" => handle_type_text(client, &args).await,
-        "gui_press_key" => handle_press_key(client, &args).await,
+        "keyboard_type" => handle_type_text(client, &args).await,
+        "keyboard_press" => handle_press_key(client, &args).await,
 
         // Clipboard
-        "gui_get_clipboard" => handle_get_clipboard(client).await,
-        "gui_set_clipboard" => handle_set_clipboard(client, &args).await,
+        "clipboard_get" => handle_get_clipboard(client).await,
+        "clipboard_set" => handle_set_clipboard(client, &args).await,
 
         // Window Management
-        "gui_list_windows" => handle_list_windows(client).await,
-        "gui_get_active_window" => handle_get_active_window(client).await,
-        "gui_focus_window" => handle_focus_window(client, &args).await,
-        "gui_move_resize_window" => handle_move_resize_window(client, &args).await,
-        "gui_window_action" => handle_window_action(client, &args).await,
-        "gui_find_windows" => handle_find_windows(client, &args).await,
+        "window_list" => handle_list_windows(client).await,
+        "window_active" => handle_get_active_window(client).await,
+        "window_focus" => handle_focus_window(client, &args).await,
+        "window_move_resize" => handle_move_resize_window(client, &args).await,
+        "window_action" => handle_window_action(client, &args).await,
+        "window_find" => handle_find_windows(client, &args).await,
 
         // Accessibility
-        "gui_accessibility_tree" => handle_accessibility_tree(client, &args).await,
-        "gui_find_ui_element" => handle_find_ui_element(client, &args).await,
+        "accessibility_tree" => handle_accessibility_tree(client, &args).await,
+        "accessibility_find" => handle_find_ui_element(client, &args).await,
 
         // Template matching
-        "gui_find_image" => handle_find_image(client, &args).await,
-        "gui_wait_for_image" => handle_wait_for_image(client, &args).await,
+        "vision_find_image" => handle_find_image(client, &args).await,
+        "vision_wait_for_image" => handle_wait_for_image(client, &args).await,
 
         // Object detection
         #[cfg(feature = "detection")]
-        "gui_detect_objects" => handle_detect_objects(client, &args).await,
+        "detect_objects" => handle_detect_objects(client, &args).await,
         #[cfg(feature = "detection")]
-        "gui_click_object" => handle_click_object(client, &args).await,
+        "detect_click_object" => handle_click_object(client, &args).await,
 
         // Utility
-        "gui_wait" => handle_wait(&args).await,
-        "gui_scroll_to_text" => handle_scroll_to_text(client, &args).await,
+        "system_wait" => handle_wait(&args).await,
+        "screen_scroll_to_text" => handle_scroll_to_text(client, &args).await,
 
         // System
-        "gui_system_info" => handle_system_info(client).await,
+        "system_info" => handle_system_info(client).await,
 
         // File System
-        "gui_read_file" => handle_read_file(client, &args).await,
-        "gui_write_file" => handle_write_file(client, &args).await,
-        "gui_list_dir" => handle_list_dir(client, &args).await,
-        "gui_file_exists" => handle_file_exists(client, &args).await,
-        "gui_delete_file" => handle_delete_file(client, &args).await,
-        "gui_create_dir" => handle_create_dir(client, &args).await,
+        "fs_read" => handle_read_file(client, &args).await,
+        "fs_write" => handle_write_file(client, &args).await,
+        "fs_list" => handle_list_dir(client, &args).await,
+        "fs_exists" => handle_file_exists(client, &args).await,
+        "fs_delete" => handle_delete_file(client, &args).await,
+        "fs_create_dir" => handle_create_dir(client, &args).await,
 
         // Shell/Terminal
-        "gui_shell_exec" => handle_shell_exec(client, &args).await,
-        "gui_shell_open" => handle_shell_open(client, &args).await,
-        "gui_shell_write" => handle_shell_write(client, &args).await,
-        "gui_shell_read" => handle_shell_read(client, &args).await,
-        "gui_shell_close" => handle_shell_close(client, &args).await,
-        "gui_shell_list" => handle_shell_list(client).await,
+        "shell_exec" => handle_shell_exec(client, &args).await,
+        "shell_open" => handle_shell_open(client, &args).await,
+        "shell_write" => handle_shell_write(client, &args).await,
+        "shell_read" => handle_shell_read(client, &args).await,
+        "shell_close" => handle_shell_close(client, &args).await,
+        "shell_list" => handle_shell_list(client).await,
 
         // MCP Hub (MCP Server Passthrough)
         "mcp_discover" => handle_mcp_discover(client).await,
@@ -856,23 +856,6 @@ async fn handle_click_object(client: &GuiClient, args: &Value) -> Result<ToolRes
         "Clicked {} at ({}, {})",
         target.label, target.cx, target.cy
     )))
-}
-
-#[cfg(not(feature = "detection"))]
-mod detection_disabled {
-    use super::*;
-    pub async fn handle_detect_objects(
-        _client: &GuiClient,
-        _args: &Value,
-    ) -> Result<ToolResult, String> {
-        Err("Detection not available — build with 'detection' feature enabled.".to_string())
-    }
-    pub async fn handle_click_object(
-        _client: &GuiClient,
-        _args: &Value,
-    ) -> Result<ToolResult, String> {
-        Err("Detection not available — build with 'detection' feature enabled.".to_string())
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

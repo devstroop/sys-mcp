@@ -7,7 +7,7 @@ fn test_config_defaults() {
     assert!(!config.debug);
     assert_eq!(config.transport, TransportMode::Stdio);
     assert_eq!(config.port, 3000);
-    assert_eq!(config.host, "0.0.0.0");
+    assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.max_sessions, 100);
     assert_eq!(config.session_ttl_secs, 1800);
 }

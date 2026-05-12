@@ -41,7 +41,7 @@ impl Default for ServerConfig {
             debug: false,
             transport: TransportMode::Stdio,
             port: 3000,
-            host: "0.0.0.0".to_string(),
+            host: "127.0.0.1".to_string(),
             max_sessions: 100,
             session_ttl_secs: 1800,
         }

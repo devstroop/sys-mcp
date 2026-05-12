@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, HeaderName, Method, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     response::Response,
     routing::{delete, get, post},
     Json, Router,
@@ -40,11 +40,29 @@ impl HttpServer {
             .parse()
             .unwrap();
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-            .allow_headers(Any)
-            .expose_headers([HeaderName::from_static("mcp-session-id")]);
+        let cors = if self.config.host == "0.0.0.0" || self.config.host == "::" {
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+                .allow_headers(Any)
+                .expose_headers([HeaderName::from_static("mcp-session-id")])
+        } else {
+            let origin = format!(
+                "{}://{}:{}",
+                if self.config.port == 443 {
+                    "https"
+                } else {
+                    "http"
+                },
+                self.config.host,
+                self.config.port,
+            );
+            CorsLayer::new()
+                .allow_origin(origin.parse::<HeaderValue>().expect("valid CORS origin"))
+                .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+                .allow_headers(Any)
+                .expose_headers([HeaderName::from_static("mcp-session-id")])
+        };
 
         let state = HttpState {
             session_mgr: self.session_mgr.clone(),

@@ -1,6 +1,6 @@
 # sys-mcp
 
-MCP server for local GUI automation — screen capture, OCR, mouse/keyboard control, window management, file system, shell/terminal, and MCP server passthrough/tunnel.
+MCP server for system automation — screen capture, OCR, mouse/keyboard control, window management, file system, shell/terminal, and MCP server passthrough/tunnel.
 
 Built in Rust for performance, powered by [rustautogui](https://gitlab.devstroop.com/devstroop/rustautogui) for cross-platform GUI automation and [ocrs](https://github.com/robertknight/ocrs) for on-device OCR.
 

@@ -113,12 +113,8 @@ impl ServiceManager {
     pub fn start_service(name: &str) -> Result<(), String> {
         #[cfg(windows)]
         {
-            let output = Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!("Start-Service -Name '{}'", name),
-                ])
+            let output = Command::new("sc")
+                .args(["start", name])
                 .output()
                 .map_err(|e| e.to_string())?;
 
@@ -161,12 +157,8 @@ impl ServiceManager {
     pub fn stop_service(name: &str) -> Result<(), String> {
         #[cfg(windows)]
         {
-            let output = Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-Command",
-                    &format!("Stop-Service -Name '{}'", name),
-                ])
+            let output = Command::new("sc")
+                .args(["stop", name])
                 .output()
                 .map_err(|e| e.to_string())?;
 

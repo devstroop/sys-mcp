@@ -295,8 +295,6 @@ impl GuiClient {
         #[cfg(feature = "ocr")]
         capabilities.push("ocr".to_string());
 
-        capabilities.push("template_matching".to_string());
-
         let os_version = get_os_version();
 
         Ok(SystemInfo {
