@@ -12,6 +12,7 @@ use crate::gui::display::DisplayCapability;
 use crate::gui::input::InputCapability;
 use crate::gui::types::*;
 use crate::gui::window::WindowCapability;
+use crate::platform::accessibility::PlatformAccessibility;
 use crate::platform::window::PlatformWindowManager;
 
 /// Wrapper around `RustAutoGui` to implement `Send + Sync`.
@@ -47,6 +48,7 @@ pub struct LocalBackend {
     window_manager: PlatformWindowManager,
     #[cfg(feature = "clipboard")]
     clipboard: Mutex<arboard::Clipboard>,
+    accessibility_manager: PlatformAccessibility,
 }
 
 impl LocalBackend {
@@ -65,6 +67,7 @@ impl LocalBackend {
             window_manager: PlatformWindowManager::new()?,
             #[cfg(feature = "clipboard")]
             clipboard: Mutex::new(clipboard),
+            accessibility_manager: PlatformAccessibility::new()?,
         })
     }
 }
@@ -422,6 +425,39 @@ impl ClipboardCapability for LocalBackend {
     }
 }
 
+// ─── AccessibilityCapability ───────────────────────────────────────────────
+
+#[async_trait]
+impl AccessibilityCapability for LocalBackend {
+    async fn get_tree(
+        &self,
+        window_id: Option<u64>,
+        max_depth: Option<u32>,
+    ) -> Result<AccessibilityNode, GuiError> {
+        self.accessibility_manager.get_tree(window_id, max_depth)
+    }
+
+    async fn find_elements(
+        &self,
+        query: AccessibilityQuery,
+    ) -> Result<Vec<AccessibilityNode>, GuiError> {
+        self.accessibility_manager.find_elements(query)
+    }
+
+    async fn get_element_properties(
+        &self,
+        element_id: &str,
+    ) -> Result<AccessibilityNode, GuiError> {
+        self.accessibility_manager
+            .get_element_properties(element_id)
+    }
+
+    async fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+        self.accessibility_manager
+            .invoke_element_action(element_id, action)
+    }
+}
+
 // ─── GuiBackend trait ──────────────────────────────────────────────────────
 
 impl GuiBackend for LocalBackend {
@@ -440,6 +476,6 @@ impl GuiBackend for LocalBackend {
     }
 
     fn as_accessibility(&self) -> Option<&dyn AccessibilityCapability> {
-        None // Phase 6
+        Some(self)
     }
 }

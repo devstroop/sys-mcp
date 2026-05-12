@@ -69,6 +69,7 @@ windows = { version = "0.58", features = [
 # ── Platform: Linux ────────────────────────────────────────────────
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+zbus = { version = "5", features = ["blocking-api"] }
 
 # ── Platform: macOS ────────────────────────────────────────────────
 [target.'cfg(target_os = "macos")'.dependencies]

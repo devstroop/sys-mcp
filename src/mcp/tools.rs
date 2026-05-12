@@ -244,10 +244,30 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["query"]
             }
         }),
-        // ── Accessibility (Phase 6 — not yet wired up) ────────────────
-        // gui_accessibility_tree and gui_find_ui_element are kept in
-        // handlers.rs but hidden from tools/list until backend is ready.
-
+        // ── Accessibility ────────────────────────────────────────────────
+        json!({
+            "name": "gui_accessibility_tree",
+            "description": "Get the accessibility tree for the focused window or a specific window. Returns a hierarchical tree of UI elements with roles, names, positions, and states. Useful for understanding what's on screen when OCR is insufficient.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "window_id": { "type": "integer", "description": "Window ID from gui_list_windows (optional — defaults to focused window)." },
+                    "max_depth": { "type": "integer", "description": "Maximum depth of the tree to explore (default 10).", "default": 10 }
+                }
+            }
+        }),
+        json!({
+            "name": "gui_find_ui_element",
+            "description": "Search the accessibility tree for elements matching a query by name and/or role. Returns matching elements with positions and click coordinates.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Element name/role to search for (case-insensitive substring match)." },
+                    "role": { "type": "string", "description": "Filter by accessibility role (e.g. 'button', 'text', 'checkbox')." },
+                    "window_id": { "type": "integer", "description": "Window ID to search in (optional — uses focused window)." }
+                }
+            }
+        }),
         // ── Template Matching (Phase 7 — not yet implemented) ──────────
         // gui_find_image and gui_wait_for_image are kept in handlers.rs
         // but hidden from tools/list until handlers are wired up.
