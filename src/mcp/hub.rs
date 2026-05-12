@@ -53,6 +53,7 @@ pub struct ToolGroup {
 
 pub struct McpHub {
     servers: Arc<RwLock<HashMap<String, McpServerInfo>>>,
+    #[allow(clippy::type_complexity)]
     processes: Arc<RwLock<HashMap<String, Arc<Mutex<Option<Child>>>>>>,
     discovery_paths: Vec<PathBuf>,
 }
@@ -103,18 +104,26 @@ impl McpHub {
 
             for entry in entries.flatten() {
                 let file_path = entry.path();
-                if file_path.extension().map_or(false, |e| e == "json") {
+                if file_path.extension().is_some_and(|e| e == "json") {
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(mcp_servers) = config.get("mcpServers").and_then(|v| v.as_object()) {
+                            if let Some(mcp_servers) =
+                                config.get("mcpServers").and_then(|v| v.as_object())
+                            {
                                 for (name, server_config) in mcp_servers {
-                                    let cmd = server_config.get("command")
+                                    let cmd = server_config
+                                        .get("command")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
-                                    let args: Vec<String> = server_config.get("args")
+                                    let args: Vec<String> = server_config
+                                        .get("args")
                                         .and_then(|v| v.as_array())
-                                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|v| v.as_str().map(String::from))
+                                                .collect()
+                                        })
                                         .unwrap_or_default();
 
                                     if !cmd.is_empty() {
@@ -142,7 +151,11 @@ impl McpHub {
         discovered
     }
 
-    pub async fn register(&self, name: String, config: McpServerConfig) -> Result<McpServerInfo, String> {
+    pub async fn register(
+        &self,
+        name: String,
+        config: McpServerConfig,
+    ) -> Result<McpServerInfo, String> {
         let mut servers = self.servers.write().await;
 
         let info = McpServerInfo {
@@ -187,7 +200,9 @@ impl McpHub {
             cmd.env(key, value);
         }
 
-        let child = cmd.spawn().map_err(|e| format!("Failed to spawn {}: {}", config.config.command, e))?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn {}: {}", config.config.command, e))?;
 
         let child_lock = Arc::new(Mutex::new(Some(child)));
         processes.insert(name.to_string(), child_lock);
@@ -230,7 +245,9 @@ impl McpHub {
 
     pub async fn list_tools(&self, name: &str) -> Result<Vec<McpTool>, String> {
         let servers = self.servers.read().await;
-        let server = servers.get(name).ok_or_else(|| format!("Server not found: {}", name))?;
+        let server = servers
+            .get(name)
+            .ok_or_else(|| format!("Server not found: {}", name))?;
 
         if server.status != McpServerStatus::Running {
             return Ok(vec![]);
@@ -262,11 +279,15 @@ impl McpHub {
             }
 
             for tool in &server.tools {
-                groups.entry(tool.category.clone()).or_default().push(tool.clone());
+                groups
+                    .entry(tool.category.clone())
+                    .or_default()
+                    .push(tool.clone());
             }
         }
 
-        groups.into_iter()
+        groups
+            .into_iter()
             .map(|(name, tools)| ToolGroup {
                 name: name.clone(),
                 description: format!("Tools from {}", name),
@@ -275,9 +296,16 @@ impl McpHub {
             .collect()
     }
 
-    pub async fn execute_tool(&self, server_name: &str, tool_name: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn execute_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let servers = self.servers.read().await;
-        let server = servers.get(server_name).ok_or_else(|| format!("Server not found: {}", server_name))?;
+        let server = servers
+            .get(server_name)
+            .ok_or_else(|| format!("Server not found: {}", server_name))?;
 
         if server.status != McpServerStatus::Running {
             return Err(format!("Server not running: {}", server_name));
@@ -299,24 +327,44 @@ impl McpHub {
         Ok(response)
     }
 
-    async fn send_jsonrpc(&self, server_name: &str, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    async fn send_jsonrpc(
+        &self,
+        server_name: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let processes = self.processes.read().await;
-        let child_lock = processes.get(server_name).ok_or_else(|| format!("No process for: {}", server_name))?;
+        let child_lock = processes
+            .get(server_name)
+            .ok_or_else(|| format!("No process for: {}", server_name))?;
 
         let mut child_guard = child_lock.lock().await;
-        let child = child_guard.as_mut().ok_or_else(|| format!("Process died: {}", server_name))?;
+        let child = child_guard
+            .as_mut()
+            .ok_or_else(|| format!("Process died: {}", server_name))?;
 
-        let stdin = child.stdin.as_mut().ok_or_else(|| format!("No stdin for: {}", server_name))?;
-        let stdout = child.stdout.as_mut().ok_or_else(|| format!("No stdout for: {}", server_name))?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| format!("No stdin for: {}", server_name))?;
+        let stdout = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| format!("No stdout for: {}", server_name))?;
 
         let request_str = serde_json::to_string(&request).map_err(|e| e.to_string())?;
         let mut reader = BufReader::new(stdout);
 
-        stdin.write_all(format!("{}\n", request_str).as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin
+            .write_all(format!("{}\n", request_str).as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
         stdin.flush().await.map_err(|e| e.to_string())?;
 
         let mut response = String::new();
-        reader.read_line(&mut response).await.map_err(|e| e.to_string())?;
+        reader
+            .read_line(&mut response)
+            .await
+            .map_err(|e| e.to_string())?;
 
         serde_json::from_str(&response).map_err(|e| format!("Invalid JSON response: {}", e))
     }
@@ -328,36 +376,35 @@ pub async fn discover_npm_mcp_servers() -> Vec<McpServerInfo> {
         .output()
         .await;
 
-    match output {
-        Ok(output) => {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout)) {
-                    let mut servers = Vec::new();
+    if let Ok(output) = output {
+        if output.status.success() {
+            if let Ok(json) =
+                serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&output.stdout))
+            {
+                let mut servers = Vec::new();
 
-                    if let Some(dependencies) = json.get("dependencies").and_then(|v| v.as_object()) {
-                        for (name, _) in dependencies {
-                            if name.contains("mcp") || name.contains("-mcp") {
-                                servers.push(McpServerInfo {
-                                    name: name.clone(),
-                                    config: McpServerConfig {
-                                        command: "npx".to_string(),
-                                        args: vec!["-y".to_string(), format!("{}@latest", name)],
-                                        env: HashMap::new(),
-                                        transport: "stdio".to_string(),
-                                    },
-                                    status: McpServerStatus::Discovered,
-                                    tools: vec![],
-                                    categories: vec!["npm".to_string()],
-                                });
-                            }
+                if let Some(dependencies) = json.get("dependencies").and_then(|v| v.as_object()) {
+                    for (name, _) in dependencies {
+                        if name.contains("mcp") || name.contains("-mcp") {
+                            servers.push(McpServerInfo {
+                                name: name.clone(),
+                                config: McpServerConfig {
+                                    command: "npx".to_string(),
+                                    args: vec!["-y".to_string(), format!("{}@latest", name)],
+                                    env: HashMap::new(),
+                                    transport: "stdio".to_string(),
+                                },
+                                status: McpServerStatus::Discovered,
+                                tools: vec![],
+                                categories: vec!["npm".to_string()],
+                            });
                         }
                     }
-
-                    return servers;
                 }
+
+                return servers;
             }
         }
-        Err(_) => {}
     }
 
     vec![]

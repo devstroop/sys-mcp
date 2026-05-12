@@ -10,6 +10,12 @@ pub struct Session {
     pub last_active: i64,
 }
 
+impl Default for Session {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Session {
     pub fn new() -> Self {
         let now = std::time::SystemTime::now()
@@ -77,7 +83,9 @@ impl SessionManager {
 
         if self.sessions.len() >= self.max_sessions {
             // Remove oldest session to make room
-            if let Some(oldest) = self.sessions.iter()
+            if let Some(oldest) = self
+                .sessions
+                .iter()
                 .min_by_key(|(_, s)| s.last_active)
                 .map(|(k, _)| k.clone())
             {
@@ -118,7 +126,9 @@ impl SessionManager {
     }
 
     pub fn cleanup_expired(&mut self) -> Vec<String> {
-        let expired: Vec<String> = self.sessions.iter()
+        let expired: Vec<String> = self
+            .sessions
+            .iter()
             .filter(|(_, s)| s.is_expired(self.ttl_secs))
             .map(|(k, _)| k.clone())
             .collect();
@@ -142,22 +152,22 @@ pub fn create_session_manager(max_sessions: usize, ttl_secs: u64) -> SessionMana
 }
 
 #[cfg(test)]
-    mod tests {
-        use super::*;
+mod tests {
+    use super::*;
 
-        #[test]
-        fn test_session_creation() {
-            let session = Session::new();
-            assert!(!session.id.is_empty());
-            assert_eq!(session.created_at, session.last_active);
-        }
-
-        #[test]
-        fn test_session_manager() {
-            let mut mgr = SessionManager::new(10, 60);
-            let session = mgr.create();
-            assert!(mgr.touch(&session.id));
-            assert!(mgr.remove(&session.id));
-            assert!(!mgr.touch(&session.id)); // already removed
-        }
+    #[test]
+    fn test_session_creation() {
+        let session = Session::new();
+        assert!(!session.id.is_empty());
+        assert_eq!(session.created_at, session.last_active);
     }
+
+    #[test]
+    fn test_session_manager() {
+        let mut mgr = SessionManager::new(10, 60);
+        let session = mgr.create();
+        assert!(mgr.touch(&session.id));
+        assert!(mgr.remove(&session.id));
+        assert!(!mgr.touch(&session.id)); // already removed
+    }
+}

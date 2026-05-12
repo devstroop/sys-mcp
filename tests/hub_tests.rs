@@ -1,11 +1,13 @@
-use gui_mcp::McpHub;
 use gui_mcp::mcp::hub::McpServerConfig;
+use gui_mcp::McpHub;
 use std::collections::HashMap;
 
 #[test]
 fn test_mcp_hub_new() {
     let hub = McpHub::new();
-    let servers = tokio::runtime::Runtime::new().unwrap().block_on(hub.list_servers());
+    let servers = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.list_servers());
     assert_eq!(servers.len(), 0);
 }
 
@@ -20,13 +22,15 @@ fn test_mcp_hub_register() {
         transport: "stdio".to_string(),
     };
 
-    let result = tokio::runtime::Runtime::new().unwrap().block_on(
-        hub.register("test-server".to_string(), config)
-    );
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.register("test-server".to_string(), config));
 
     assert!(result.is_ok());
 
-    let servers = tokio::runtime::Runtime::new().unwrap().block_on(hub.list_servers());
+    let servers = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.list_servers());
     assert_eq!(servers.len(), 1);
     assert_eq!(servers[0].name, "test-server");
 }
@@ -42,17 +46,20 @@ fn test_mcp_hub_unregister() {
         transport: "stdio".to_string(),
     };
 
-    tokio::runtime::Runtime::new().unwrap().block_on(
-        hub.register("test-server".to_string(), config)
-    ).unwrap();
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.register("test-server".to_string(), config))
+        .unwrap();
 
-    let result = tokio::runtime::Runtime::new().unwrap().block_on(
-        hub.unregister("test-server")
-    );
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.unregister("test-server"));
 
     assert!(result.is_ok());
 
-    let servers = tokio::runtime::Runtime::new().unwrap().block_on(hub.list_servers());
+    let servers = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(hub.list_servers());
     assert!(servers.is_empty());
 }
 

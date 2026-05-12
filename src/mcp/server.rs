@@ -120,7 +120,9 @@ impl McpRequestHandler {
                 content: vec![ContentItem::text(ws.url())],
                 is_error: None,
             },
-            None => ToolResult::error("web preview is not running — start server with --web-preview flag"),
+            None => ToolResult::error(
+                "web preview is not running — start server with --web-preview flag",
+            ),
         };
 
         McpResponse::success(
@@ -151,7 +153,11 @@ impl GuiMcpServer {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         #[cfg(feature = "web-preview")]
         if self.config.web_preview {
-            self.handler.lock().await.start_web_preview(&self.config.host).await;
+            self.handler
+                .lock()
+                .await
+                .start_web_preview(&self.config.host)
+                .await;
         }
 
         match self.config.transport {
@@ -196,7 +202,8 @@ impl GuiMcpServer {
     }
 
     async fn run_http(&self) -> anyhow::Result<()> {
-        let session_mgr = create_session_manager(self.config.max_sessions, self.config.session_ttl_secs);
+        let session_mgr =
+            create_session_manager(self.config.max_sessions, self.config.session_ttl_secs);
         let http_server = crate::mcp::http_transport::HttpServer::new(
             self.config.clone(),
             session_mgr,

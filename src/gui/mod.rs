@@ -1,14 +1,14 @@
 pub mod accessibility;
 pub mod backend;
 pub mod clipboard;
+#[cfg(feature = "detection")]
+pub mod detection;
 pub mod display;
 pub mod input;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod types;
 pub mod window;
-#[cfg(feature = "detection")]
-pub mod detection;
 
 fn get_os_version() -> String {
     #[cfg(windows)]
@@ -23,7 +23,10 @@ fn get_os_version() -> String {
             )
             .as_bool()
             {
-                return format!("{}.{}.{}", info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber);
+                return format!(
+                    "{}.{}.{}",
+                    info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber
+                );
             }
         }
         "unknown".to_string()
@@ -36,12 +39,7 @@ fn get_os_version() -> String {
             let mut version = String::new();
             for line in text.lines() {
                 if line.starts_with("ProductVersion:") {
-                    version = line
-                        .split(':')
-                        .nth(1)
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
+                    version = line.split(':').nth(1).unwrap_or("").trim().to_string();
                     break;
                 }
             }
@@ -131,7 +129,13 @@ impl GuiClient {
         self.backend.mouse_drag(from, to, button).await
     }
 
-    pub async fn scroll(&self, x: u32, y: u32, direction: ScrollDirection, amount: i32) -> Result<(), GuiError> {
+    pub async fn scroll(
+        &self,
+        x: u32,
+        y: u32,
+        direction: ScrollDirection,
+        amount: i32,
+    ) -> Result<(), GuiError> {
         self.backend.mouse_scroll(x, y, direction, amount).await
     }
 
@@ -171,7 +175,12 @@ impl GuiClient {
         self.window()?.move_window(window_id, x, y).await
     }
 
-    pub async fn resize_window(&self, window_id: u64, width: u32, height: u32) -> Result<(), GuiError> {
+    pub async fn resize_window(
+        &self,
+        window_id: u64,
+        width: u32,
+        height: u32,
+    ) -> Result<(), GuiError> {
         self.window()?.resize_window(window_id, width, height).await
     }
 
@@ -213,24 +222,36 @@ impl GuiClient {
 
     // ── Accessibility ──────────────────────────────────────────────────
 
-    fn accessibility(&self) -> Result<&dyn crate::gui::accessibility::AccessibilityCapability, GuiError> {
+    fn accessibility(
+        &self,
+    ) -> Result<&dyn crate::gui::accessibility::AccessibilityCapability, GuiError> {
         self.backend
             .as_accessibility()
             .ok_or_else(|| GuiError::UnsupportedCapability("accessibility".into()))
     }
 
-    pub async fn get_accessibility_tree(&self, window_id: Option<u64>, max_depth: Option<u32>) -> Result<AccessibilityNode, GuiError> {
+    pub async fn get_accessibility_tree(
+        &self,
+        window_id: Option<u64>,
+        max_depth: Option<u32>,
+    ) -> Result<AccessibilityNode, GuiError> {
         self.accessibility()?.get_tree(window_id, max_depth).await
     }
 
-    pub async fn find_ui_elements(&self, query: AccessibilityQuery) -> Result<Vec<AccessibilityNode>, GuiError> {
+    pub async fn find_ui_elements(
+        &self,
+        query: AccessibilityQuery,
+    ) -> Result<Vec<AccessibilityNode>, GuiError> {
         self.accessibility()?.find_elements(query).await
     }
 
     // ── OCR ─────────────────────────────────────────────────────────
 
     #[cfg(feature = "ocr")]
-    pub async fn read_screen(&self, region: Option<Region>) -> Result<crate::gui::ocr::OcrResult, GuiError> {
+    pub async fn read_screen(
+        &self,
+        region: Option<Region>,
+    ) -> Result<crate::gui::ocr::OcrResult, GuiError> {
         let screenshot = match region {
             Some(r) => self.backend.screenshot_region(r).await?,
             None => self.backend.screenshot().await?,
@@ -245,10 +266,11 @@ impl GuiClient {
     #[cfg(feature = "detection")]
     pub async fn detect_objects(&self) -> Result<crate::gui::detection::DetectionResult, GuiError> {
         let screenshot = self.backend.screenshot().await?;
-        let result = tokio::task::spawn_blocking(move || crate::gui::detection::detect_objects(&screenshot))
-            .await
-            .map_err(|e| GuiError::DetectionError(e.to_string()))?;
-        result.map_err(|e| GuiError::DetectionError(e))
+        let result =
+            tokio::task::spawn_blocking(move || crate::gui::detection::detect_objects(&screenshot))
+                .await
+                .map_err(|e| GuiError::DetectionError(e.to_string()))?;
+        result.map_err(GuiError::DetectionError)
     }
 
     // ── System info ────────────────────────────────────────────────────

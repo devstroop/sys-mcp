@@ -11,12 +11,13 @@ pub enum TransportMode {
     Http,
 }
 
-impl TransportMode {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for TransportMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "stdio" => Some(Self::Stdio),
-            "http" => Some(Self::Http),
-            _ => None,
+            "stdio" => Ok(Self::Stdio),
+            "http" => Ok(Self::Http),
+            _ => Err(format!("unknown transport mode: {s}")),
         }
     }
 }
@@ -67,12 +68,13 @@ impl ServerConfig {
                 "--debug" => config.debug = true,
                 "--transport" => {
                     if i + 1 < args.len() {
-                        if let Some(mode) = TransportMode::from_str(&args[i + 1]) {
-                            config.transport = mode;
-                        } else {
-                            eprintln!("Unknown transport mode: '{}'", args[i + 1]);
-                            eprintln!("Valid options: stdio, http");
-                            std::process::exit(1);
+                        match args[i + 1].parse::<TransportMode>() {
+                            Ok(mode) => config.transport = mode,
+                            Err(_) => {
+                                eprintln!("Unknown transport mode: '{}'", args[i + 1]);
+                                eprintln!("Valid options: stdio, http");
+                                std::process::exit(1);
+                            }
                         }
                         i += 1;
                     }

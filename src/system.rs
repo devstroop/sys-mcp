@@ -2,8 +2,8 @@
 //!
 //! Provides [`ServiceManager`] for querying and managing Windows services.
 
-use std::process::Command;
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 #[cfg(windows)]
 use std::process::Stdio;
@@ -58,7 +58,13 @@ impl ServiceManager {
         #[cfg(not(windows))]
         {
             if let Ok(output) = Command::new("systemctl")
-                .args(["list-units", "--all", "--type=service", "--no-pager", "--no-legend"])
+                .args([
+                    "list-units",
+                    "--all",
+                    "--type=service",
+                    "--no-pager",
+                    "--no-legend",
+                ])
                 .output()
             {
                 if let Ok(text) = String::from_utf8(output.stdout) {
@@ -84,7 +90,11 @@ impl ServiceManager {
         #[cfg(windows)]
         {
             let output = Command::new("powershell")
-                .args(["-NoProfile", "-Command", &format!("Start-Service -Name '{}'", name)])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!("Start-Service -Name '{}'", name),
+                ])
                 .output()
                 .map_err(|e| e.to_string())?;
 
@@ -114,7 +124,11 @@ impl ServiceManager {
         #[cfg(windows)]
         {
             let output = Command::new("powershell")
-                .args(["-NoProfile", "-Command", &format!("Stop-Service -Name '{}'", name)])
+                .args([
+                    "-NoProfile",
+                    "-Command",
+                    &format!("Stop-Service -Name '{}'", name),
+                ])
                 .output()
                 .map_err(|e| e.to_string())?;
 
@@ -142,7 +156,8 @@ impl ServiceManager {
 
     pub fn service_status(name: &str) -> Result<ServiceInfo, String> {
         let services = Self::list_services();
-        services.into_iter()
+        services
+            .into_iter()
             .find(|s| s.name == name)
             .ok_or_else(|| format!("Service not found: {}", name))
     }
@@ -216,19 +231,13 @@ impl NetworkManager {
 
         #[cfg(not(windows))]
         {
-            if let Ok(output) = Command::new("hostname")
-                .args(["-I"])
-                .output()
-            {
+            if let Ok(output) = Command::new("hostname").args(["-I"]).output() {
                 if let Ok(text) = String::from_utf8(output.stdout) {
-                    info.ip_addresses = text.trim().split_whitespace().map(String::from).collect();
+                    info.ip_addresses = text.split_whitespace().map(String::from).collect();
                 }
             }
 
-            if let Ok(output) = Command::new("route")
-                .args(["-n"])
-                .output()
-            {
+            if let Ok(output) = Command::new("route").args(["-n"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if line.starts_with("0.0.0.0") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -239,10 +248,7 @@ impl NetworkManager {
                 }
             }
 
-            if let Ok(output) = Command::new("cat")
-                .args(["/etc/resolv.conf"])
-                .output()
-            {
+            if let Ok(output) = Command::new("cat").args(["/etc/resolv.conf"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if line.starts_with("nameserver") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -262,17 +268,18 @@ impl NetworkManager {
 
         #[cfg(windows)]
         {
-            if let Ok(output) = Command::new("netstat")
-                .args(["-ano"])
-                .output()
-            {
+            if let Ok(output) = Command::new("netstat").args(["-ano"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(4) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 5 {
                         let protocol = parts[0].to_string();
                         if protocol == "TCP" || protocol == "UDP" {
                             let local_addr = parts[1].to_string();
-                            let state = if parts.len() >= 4 { parts[3].to_string() } else { "-".to_string() };
+                            let state = if parts.len() >= 4 {
+                                parts[3].to_string()
+                            } else {
+                                "-".to_string()
+                            };
                             let pid = parts.last().unwrap_or(&"0").parse::<u32>().unwrap_or(0);
 
                             connections.push(serde_json::json!({
@@ -289,10 +296,7 @@ impl NetworkManager {
 
         #[cfg(not(windows))]
         {
-            if let Ok(output) = Command::new("ss")
-                .args(["-tunap"])
-                .output()
-            {
+            if let Ok(output) = Command::new("ss").args(["-tunap"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 6 {
@@ -374,10 +378,7 @@ impl SystemMonitor {
 
         #[cfg(not(windows))]
         {
-            if let Ok(output) = Command::new("top")
-                .args(["-bn1"])
-                .output()
-            {
+            if let Ok(output) = Command::new("top").args(["-bn1"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if line.starts_with("%Cpu(s):") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -390,17 +391,15 @@ impl SystemMonitor {
                 }
             }
 
-            if let Ok(output) = Command::new("free")
-                .args(["-b"])
-                .output()
-            {
+            if let Ok(output) = Command::new("free").args(["-b"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts[0] == "Mem:" {
                         stats.memory_total_bytes = parts[1].parse().unwrap_or(0);
                         stats.memory_used_bytes = parts[2].parse().unwrap_or(0);
                         stats.memory_percent = if stats.memory_total_bytes > 0 {
-                            (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32) * 100.0
+                            (stats.memory_used_bytes as f32 / stats.memory_total_bytes as f32)
+                                * 100.0
                         } else {
                             0.0
                         };
@@ -408,10 +407,7 @@ impl SystemMonitor {
                 }
             }
 
-            if let Ok(output) = Command::new("df")
-                .args(["-B1", "/"])
-                .output()
-            {
+            if let Ok(output) = Command::new("df").args(["-B1", "/"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 4 {
@@ -468,10 +464,7 @@ impl SystemMonitor {
 
         #[cfg(not(windows))]
         {
-            if let Ok(output) = Command::new("df")
-                .args(["-B1"])
-                .output()
-            {
+            if let Ok(output) = Command::new("df").args(["-B1"]).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 6 {
@@ -531,13 +524,33 @@ impl LogViewer {
             {
                 if let Ok(text) = String::from_utf8(output.stdout) {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let arr = if json.is_array() { json.as_array().unwrap().clone() } else { vec![json] };
+                        let arr = if json.is_array() {
+                            json.as_array().unwrap().clone()
+                        } else {
+                            vec![json]
+                        };
                         for item in arr {
                             entries.push(LogEntry {
-                                timestamp: item.get("TimeCreated").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                source: item.get("ProviderName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                level: item.get("LevelDisplayName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                message: item.get("Message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                timestamp: item
+                                    .get("TimeCreated")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                source: item
+                                    .get("ProviderName")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                level: item
+                                    .get("LevelDisplayName")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                message: item
+                                    .get("Message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                             });
                         }
                     }
@@ -551,17 +564,14 @@ impl LogViewer {
             let journal_args = if let Ok(level_num) = match level_filter.as_str() {
                 "Error" => Ok::<&str, ()>("err"),
                 "Warning" => Ok("warning"),
-                _ => Ok("info")
+                _ => Ok("info"),
             } {
                 vec!["-p", level_num, "-n", &count_str]
             } else {
                 vec!["-n", &count_str]
             };
 
-            if let Ok(output) = Command::new("journalctl")
-                .args(&journal_args)
-                .output()
-            {
+            if let Ok(output) = Command::new("journalctl").args(&journal_args).output() {
                 for line in String::from_utf8_lossy(&output.stdout).lines().take(count) {
                     let parts: Vec<&str> = line.splitn(3, ' ').collect();
                     if parts.len() >= 3 {

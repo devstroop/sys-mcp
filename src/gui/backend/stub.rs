@@ -1,14 +1,22 @@
-use async_trait::async_trait;
 use crate::error::GuiError;
 use crate::gui::accessibility::AccessibilityCapability;
 use crate::gui::backend::GuiBackend;
 use crate::gui::clipboard::ClipboardCapability;
 use crate::gui::display::DisplayCapability;
 use crate::gui::input::InputCapability;
-use crate::gui::types::{MonitorInfo, MouseButton, Point, Region, Resolution, ScrollDirection, Screenshot, WindowInfo};
+use crate::gui::types::{
+    MonitorInfo, MouseButton, Point, Region, Resolution, Screenshot, ScrollDirection, WindowInfo,
+};
 use crate::gui::window::WindowCapability;
+use async_trait::async_trait;
 
 pub struct StubBackend;
+
+impl Default for StubBackend {
+    fn default() -> Self {
+        Self
+    }
+}
 
 impl StubBackend {
     pub fn new() -> Self {
@@ -61,7 +69,12 @@ impl InputCapability for StubBackend {
         Ok(())
     }
 
-    async fn mouse_double_click(&self, _x: u32, _y: u32, _button: MouseButton) -> Result<(), GuiError> {
+    async fn mouse_double_click(
+        &self,
+        _x: u32,
+        _y: u32,
+        _button: MouseButton,
+    ) -> Result<(), GuiError> {
         Ok(())
     }
 
@@ -73,11 +86,22 @@ impl InputCapability for StubBackend {
         Ok(Point { x: 0, y: 0 })
     }
 
-    async fn mouse_drag(&self, _from: Point, _to: Point, _button: MouseButton) -> Result<(), GuiError> {
+    async fn mouse_drag(
+        &self,
+        _from: Point,
+        _to: Point,
+        _button: MouseButton,
+    ) -> Result<(), GuiError> {
         Ok(())
     }
 
-    async fn mouse_scroll(&self, _x: u32, _y: u32, _direction: ScrollDirection, _amount: i32) -> Result<(), GuiError> {
+    async fn mouse_scroll(
+        &self,
+        _x: u32,
+        _y: u32,
+        _direction: ScrollDirection,
+        _amount: i32,
+    ) -> Result<(), GuiError> {
         Ok(())
     }
 
@@ -120,7 +144,12 @@ impl WindowCapability for StubBackend {
         Ok(())
     }
 
-    async fn resize_window(&self, _window_id: u64, _width: u32, _height: u32) -> Result<(), GuiError> {
+    async fn resize_window(
+        &self,
+        _window_id: u64,
+        _width: u32,
+        _height: u32,
+    ) -> Result<(), GuiError> {
         Ok(())
     }
 

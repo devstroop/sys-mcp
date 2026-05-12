@@ -8,9 +8,9 @@ use axum::http::StatusCode;
 #[cfg(feature = "web-preview")]
 use axum::response::{Html, IntoResponse, Response};
 #[cfg(feature = "web-preview")]
-use axum::Json;
-#[cfg(feature = "web-preview")]
 use axum::routing::get;
+#[cfg(feature = "web-preview")]
+use axum::Json;
 #[cfg(feature = "web-preview")]
 use axum::Router;
 #[cfg(feature = "web-preview")]
@@ -19,9 +19,9 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 
 #[cfg(feature = "web-preview")]
-use crate::gui::GuiClient;
-#[cfg(feature = "web-preview")]
 use crate::gui::types::*;
+#[cfg(feature = "web-preview")]
+use crate::gui::GuiClient;
 
 // ─── Auth guard ─────────────────────────────────────────────────────────────
 
@@ -41,6 +41,7 @@ pub struct WebState {
 type SharedState = Arc<WebState>;
 
 #[cfg(feature = "web-preview")]
+#[allow(clippy::result_large_err)]
 fn check_token(state: &WebState, query: &TokenQuery) -> Result<(), Response> {
     match &query.token {
         Some(t) if t == &state.token => Ok(()),
@@ -293,7 +294,11 @@ async fn screenshot_png(
     check_token(&state, &q)?;
 
     let screenshot = state.client.screenshot().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("screenshot error: {e}")).into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("screenshot error: {e}"),
+        )
+            .into_response()
     })?;
 
     Ok((
@@ -319,7 +324,11 @@ async fn api_ocr(
     })?;
 
     let json_value = serde_json::to_value(ocr_result).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("JSON error: {e}")).into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("JSON error: {e}"),
+        )
+            .into_response()
     })?;
 
     Ok(Json(json_value))
@@ -362,9 +371,11 @@ async fn api_click(
         Some("middle") => MouseButton::Middle,
         _ => MouseButton::Left,
     };
-    state.client.click(p.x, p.y, button).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-    })?;
+    state
+        .client
+        .click(p.x, p.y, button)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
     Ok("ok")
 }
 
@@ -381,9 +392,11 @@ async fn api_type(
     Query(p): Query<TypeParams>,
 ) -> Result<&'static str, Response> {
     check_token(&state, &TokenQuery { token: p.token })?;
-    state.client.type_text(&p.text).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-    })?;
+    state
+        .client
+        .type_text(&p.text)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
     Ok("ok")
 }
 

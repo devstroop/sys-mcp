@@ -84,15 +84,15 @@ impl ProcessManager {
             }
         }
 
-        processes.sort_by(|a, b| {
-        match (a.cpu_usage.is_nan(), b.cpu_usage.is_nan()) {
+        processes.sort_by(|a, b| match (a.cpu_usage.is_nan(), b.cpu_usage.is_nan()) {
             (true, true) => std::cmp::Ordering::Equal,
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            (false, false) => b.cpu_usage.partial_cmp(&a.cpu_usage)
+            (false, false) => b
+                .cpu_usage
+                .partial_cmp(&a.cpu_usage)
                 .unwrap_or(std::cmp::Ordering::Equal),
-        }
-    });
+        });
         processes.truncate(100);
         processes
     }
@@ -131,7 +131,8 @@ impl ProcessManager {
 
     pub fn get_process_info(pid: u32) -> Result<ProcessInfo, String> {
         let processes = Self::list_processes();
-        processes.into_iter()
+        processes
+            .into_iter()
             .find(|p| p.pid == pid)
             .ok_or_else(|| format!("Process not found: {}", pid))
     }

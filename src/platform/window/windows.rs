@@ -78,7 +78,10 @@ impl PlatformWindowManager {
             let _ = SetWindowPos(
                 hwnd,
                 HWND_TOP,
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
             );
         }
@@ -113,19 +116,25 @@ impl PlatformWindowManager {
 
     pub fn minimize_window(&self, window_id: u64) -> Result<(), GuiError> {
         let hwnd = HWND(window_id as *mut _);
-        unsafe { let _ = ShowWindow(hwnd, SW_MINIMIZE); }
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+        }
         Ok(())
     }
 
     pub fn maximize_window(&self, window_id: u64) -> Result<(), GuiError> {
         let hwnd = HWND(window_id as *mut _);
-        unsafe { let _ = ShowWindow(hwnd, SW_MAXIMIZE); }
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+        }
         Ok(())
     }
 
     pub fn restore_window(&self, window_id: u64) -> Result<(), GuiError> {
         let hwnd = HWND(window_id as *mut _);
-        unsafe { let _ = ShowWindow(hwnd, SW_RESTORE); }
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
         Ok(())
     }
 

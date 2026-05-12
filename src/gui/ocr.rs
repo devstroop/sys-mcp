@@ -89,17 +89,15 @@ fn ensure_model(name: &str) -> Result<PathBuf, GuiError> {
     let url = format!("https://ocrs-models.s3-accelerate.amazonaws.com/{name}");
     log::info!("downloading OCR model: {url} -> {}", path.display());
 
-    let resp = ureq::get(&url).call().map_err(|e| {
-        GuiError::OcrError(format!("failed to download OCR model {name}: {e}"))
-    })?;
+    let resp = ureq::get(&url)
+        .call()
+        .map_err(|e| GuiError::OcrError(format!("failed to download OCR model {name}: {e}")))?;
 
     let mut body = resp.into_body();
-    let mut file = std::fs::File::create(&path).map_err(|e| {
-        GuiError::OcrError(format!("failed to create {}: {e}", path.display()))
-    })?;
-    std::io::copy(&mut body.as_reader(), &mut file).map_err(|e| {
-        GuiError::OcrError(format!("failed to write model {name}: {e}"))
-    })?;
+    let mut file = std::fs::File::create(&path)
+        .map_err(|e| GuiError::OcrError(format!("failed to create {}: {e}", path.display())))?;
+    std::io::copy(&mut body.as_reader(), &mut file)
+        .map_err(|e| GuiError::OcrError(format!("failed to write model {name}: {e}")))?;
 
     log::info!("OCR model downloaded: {}", path.display());
     Ok(path)
@@ -185,10 +183,10 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
                 text: word_text,
                 x: wr.left(),
                 y: wr.top(),
-                width: wr.width() as i32,
-                height: wr.height() as i32,
-                cx: wr.left() + wr.width() as i32 / 2,
-                cy: wr.top() + wr.height() as i32 / 2,
+                width: wr.width(),
+                height: wr.height(),
+                cx: wr.left() + wr.width() / 2,
+                cy: wr.top() + wr.height() / 2,
             });
         }
 
@@ -196,8 +194,8 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
             text,
             x: line_rect.left(),
             y: line_rect.top(),
-            width: line_rect.width() as i32,
-            height: line_rect.height() as i32,
+            width: line_rect.width(),
+            height: line_rect.height(),
             words,
         });
     }
@@ -297,8 +295,7 @@ pub fn compress_screenshot(
     )
     .map_err(|e| GuiError::OcrError(format!("JPEG encode: {e}")))?;
 
-    let base64_data =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_buf);
+    let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_buf);
 
     Ok((base64_data, new_w, new_h))
 }

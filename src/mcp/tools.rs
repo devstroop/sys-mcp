@@ -32,7 +32,6 @@ pub fn all_tools() -> Vec<Value> {
             "description": "List all connected monitors with resolution and position.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
-
         // ── OCR — Screen Reading ────────────────────────────────────────
         json!({
             "name": "gui_read_screen",
@@ -64,7 +63,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["query"]
             }
         }),
-
         // ── Mouse ───────────────────────────────────────────────────────
         json!({
             "name": "gui_click",
@@ -142,7 +140,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["x", "y", "direction"]
             }
         }),
-
         // ── Keyboard ────────────────────────────────────────────────────
         json!({
             "name": "gui_type_text",
@@ -166,7 +163,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["key"]
             }
         }),
-
         // ── Clipboard ───────────────────────────────────────────────────
         json!({
             "name": "gui_get_clipboard",
@@ -184,7 +180,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["text"]
             }
         }),
-
         // ── Window Management ───────────────────────────────────────────
         json!({
             "name": "gui_list_windows",
@@ -249,7 +244,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["query"]
             }
         }),
-
         // ── Accessibility (Phase 6 — not yet wired up) ────────────────
         // gui_accessibility_tree and gui_find_ui_element are kept in
         // handlers.rs but hidden from tools/list until backend is ready.
@@ -285,14 +279,12 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["query"]
             }
         }),
-
         // ── Web Preview ─────────────────────────────────────────────────
         json!({
             "name": "gui_web_preview",
             "description": "Get a live web preview URL for the local screen. Open this in a browser to view and interact with the desktop remotely.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
-
         // ── Object Detection ────────────────────────────────────────────
         json!({
             "name": "gui_detect_objects",
@@ -325,14 +317,12 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["label"]
             }
         }),
-
         // ── System Info ─────────────────────────────────────────────────
         json!({
             "name": "gui_system_info",
             "description": "Get system information: OS, screen size, and available capabilities. Call this first to understand what the local GUI server supports.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
-
         // ── File System ──────────────────────────────────────────────────
         json!({
             "name": "gui_read_file",
@@ -400,7 +390,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["path"]
             }
         }),
-
         // ── Shell/Terminal ─────────────────────────────────────────────────
         json!({
             "name": "gui_shell_exec",
@@ -465,7 +454,6 @@ pub fn all_tools() -> Vec<Value> {
             "description": "List all open shell sessions.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
-
         // ── MCP Hub (MCP Server Passthrough/Tunnel) ──────────────────────────
         json!({
             "name": "mcp_discover",
@@ -546,7 +534,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["server", "tool"]
             }
         }),
-
         // ── Process Manager ───────────────────────────────────────────────────
         json!({
             "name": "process_list",
@@ -592,7 +579,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["command"]
             }
         }),
-
         // ── Service Manager ───────────────────────────────────────────────────
         json!({
             "name": "service_list",
@@ -632,7 +618,6 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["name"]
             }
         }),
-
         // ── Network Tools ─────────────────────────────────────────────────────
         json!({
             "name": "network_info",
@@ -649,7 +634,6 @@ pub fn all_tools() -> Vec<Value> {
                 }
             }
         }),
-
         // ── System Monitoring ─────────────────────────────────────────────────
         json!({
             "name": "system_stats",
@@ -661,7 +645,6 @@ pub fn all_tools() -> Vec<Value> {
             "description": "Get disk space information for all drives/mount points. Shows total, used, free space and percentage for each.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
-
         // ── Log Viewer ──────────────────────────────────────────────────────
         json!({
             "name": "system_logs",

@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::gui::GuiClient;
 use crate::gui::types::*;
+use crate::gui::GuiClient;
 use crate::protocol::mcp::{ContentItem, ToolResult};
 use crate::terminal::{PtyManager, TerminalHandle};
 use std::collections::HashMap;
@@ -127,8 +127,6 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         Err(e) => {
             let msg = if e.contains("not supported") || e.contains("not yet implemented") {
                 format!("{e}. This is a permanent error — do not retry.")
-            } else if e.contains("timed out") {
-                e
             } else {
                 e
             };
@@ -196,10 +194,8 @@ async fn handle_screenshot(client: &GuiClient) -> Result<ToolResult, String> {
                 is_error: None,
             }),
             Err(_) => {
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &shot.data,
-                );
+                let b64 =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &shot.data);
                 Ok(ToolResult {
                     content: vec![
                         ContentItem::image_base64("image/png", &b64),
@@ -213,10 +209,7 @@ async fn handle_screenshot(client: &GuiClient) -> Result<ToolResult, String> {
 
     #[cfg(not(feature = "ocr"))]
     {
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &shot.data,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &shot.data);
         Ok(ToolResult {
             content: vec![
                 ContentItem::image_base64("image/png", &b64),
@@ -250,10 +243,8 @@ async fn handle_screenshot_region(client: &GuiClient, args: &Value) -> Result<To
                 is_error: None,
             }),
             Err(_) => {
-                let b64 = base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &shot.data,
-                );
+                let b64 =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &shot.data);
                 Ok(ToolResult {
                     content: vec![ContentItem::image_base64("image/png", &b64)],
                     is_error: None,
@@ -264,10 +255,7 @@ async fn handle_screenshot_region(client: &GuiClient, args: &Value) -> Result<To
 
     #[cfg(not(feature = "ocr"))]
     {
-        let b64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &shot.data,
-        );
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &shot.data);
         Ok(ToolResult {
             content: vec![ContentItem::image_base64("image/png", &b64)],
             is_error: None,
@@ -302,7 +290,10 @@ async fn handle_read_screen(client: &GuiClient, args: &Value) -> Result<ToolResu
                 width: u32_arg(args, "width")?,
                 height: u32_arg(args, "height")?,
             };
-            client.screenshot_region(region).await.map_err(|e| e.to_string())?
+            client
+                .screenshot_region(region)
+                .await
+                .map_err(|e| e.to_string())?
         } else {
             client.screenshot().await.map_err(|e| e.to_string())?
         };
@@ -402,7 +393,10 @@ async fn handle_click(client: &GuiClient, args: &Value) -> Result<ToolResult, St
     let x = u32_arg(args, "x")?;
     let y = u32_arg(args, "y")?;
     let button = parse_button(args);
-    client.click(x, y, button).await.map_err(|e| e.to_string())?;
+    client
+        .click(x, y, button)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text(format!("Clicked at ({x}, {y}).")))
 }
 
@@ -410,7 +404,10 @@ async fn handle_double_click(client: &GuiClient, args: &Value) -> Result<ToolRes
     let x = u32_arg(args, "x")?;
     let y = u32_arg(args, "y")?;
     let button = parse_button(args);
-    client.double_click(x, y, button).await.map_err(|e| e.to_string())?;
+    client
+        .double_click(x, y, button)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text(format!("Double-clicked at ({x}, {y}).")))
 }
 
@@ -436,7 +433,10 @@ async fn handle_drag(client: &GuiClient, args: &Value) -> Result<ToolResult, Str
         y: u32_arg(args, "to_y")?,
     };
     let button = parse_button(args);
-    client.drag(from, to, button).await.map_err(|e| e.to_string())?;
+    client
+        .drag(from, to, button)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text("Drag complete."))
 }
 
@@ -451,7 +451,10 @@ async fn handle_scroll(client: &GuiClient, args: &Value) -> Result<ToolResult, S
         d => return Err(format!("unknown direction: {d}")),
     };
     let amount = opt_u32(args, "amount", 3) as i32;
-    client.scroll(x, y, direction, amount).await.map_err(|e| e.to_string())?;
+    client
+        .scroll(x, y, direction, amount)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text("Scrolled."))
 }
 
@@ -462,7 +465,10 @@ async fn handle_scroll(client: &GuiClient, args: &Value) -> Result<ToolResult, S
 async fn handle_type_text(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let text = str_arg(args, "text")?;
     client.type_text(text).await.map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(format!("Typed {} characters.", text.len())))
+    Ok(ToolResult::text(format!(
+        "Typed {} characters.",
+        text.len()
+    )))
 }
 
 async fn handle_press_key(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
@@ -483,13 +489,19 @@ async fn handle_press_key(client: &GuiClient, args: &Value) -> Result<ToolResult
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn handle_get_clipboard(client: &GuiClient) -> Result<ToolResult, String> {
-    let text = client.get_clipboard_text().await.map_err(|e| e.to_string())?;
+    let text = client
+        .get_clipboard_text()
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text(text))
 }
 
 async fn handle_set_clipboard(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let text = str_arg(args, "text")?;
-    client.set_clipboard_text(text).await.map_err(|e| e.to_string())?;
+    client
+        .set_clipboard_text(text)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text("Clipboard set."))
 }
 
@@ -505,7 +517,10 @@ async fn handle_list_windows(client: &GuiClient) -> Result<ToolResult, String> {
 }
 
 async fn handle_get_active_window(client: &GuiClient) -> Result<ToolResult, String> {
-    let window = client.get_active_window().await.map_err(|e| e.to_string())?;
+    let window = client
+        .get_active_window()
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&window).unwrap_or_default(),
     ))
@@ -516,7 +531,10 @@ async fn handle_focus_window(client: &GuiClient, args: &Value) -> Result<ToolRes
         client.focus_window(id).await.map_err(|e| e.to_string())?;
         Ok(ToolResult::text(format!("Focused window {id}.")))
     } else if let Some(title) = args.get("title").and_then(Value::as_str) {
-        let matches = client.find_windows_by_title(title).await.map_err(|e| e.to_string())?;
+        let matches = client
+            .find_windows_by_title(title)
+            .await
+            .map_err(|e| e.to_string())?;
         if matches.is_empty() {
             Err(format!("No window found matching '{title}'."))
         } else {
@@ -539,14 +557,20 @@ async fn handle_move_resize_window(client: &GuiClient, args: &Value) -> Result<T
         args.get("x").and_then(Value::as_i64),
         args.get("y").and_then(Value::as_i64),
     ) {
-        client.move_window(wid, x as i32, y as i32).await.map_err(|e| e.to_string())?;
+        client
+            .move_window(wid, x as i32, y as i32)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     if let (Some(w), Some(h)) = (
         args.get("width").and_then(Value::as_u64),
         args.get("height").and_then(Value::as_u64),
     ) {
-        client.resize_window(wid, w as u32, h as u32).await.map_err(|e| e.to_string())?;
+        client
+            .resize_window(wid, w as u32, h as u32)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(ToolResult::text("Window updated."))
@@ -557,9 +581,18 @@ async fn handle_window_action(client: &GuiClient, args: &Value) -> Result<ToolRe
     let action = str_arg(args, "action")?;
 
     match action {
-        "minimize" => client.minimize_window(wid).await.map_err(|e| e.to_string())?,
-        "maximize" => client.maximize_window(wid).await.map_err(|e| e.to_string())?,
-        "restore" => client.restore_window(wid).await.map_err(|e| e.to_string())?,
+        "minimize" => client
+            .minimize_window(wid)
+            .await
+            .map_err(|e| e.to_string())?,
+        "maximize" => client
+            .maximize_window(wid)
+            .await
+            .map_err(|e| e.to_string())?,
+        "restore" => client
+            .restore_window(wid)
+            .await
+            .map_err(|e| e.to_string())?,
         "close" => client.close_window(wid).await.map_err(|e| e.to_string())?,
         _ => return Err(format!("unknown action: {action}")),
     }
@@ -569,7 +602,10 @@ async fn handle_window_action(client: &GuiClient, args: &Value) -> Result<ToolRe
 
 async fn handle_find_windows(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let query = str_arg(args, "query")?;
-    let windows = client.find_windows_by_title(query).await.map_err(|e| e.to_string())?;
+    let windows = client
+        .find_windows_by_title(query)
+        .await
+        .map_err(|e| e.to_string())?;
     if windows.is_empty() {
         Ok(ToolResult::text(format!("No windows matching '{query}'.")))
     } else {
@@ -585,7 +621,10 @@ async fn handle_find_windows(client: &GuiClient, args: &Value) -> Result<ToolRes
 
 async fn handle_accessibility_tree(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let window_id = args.get("window_id").and_then(Value::as_u64);
-    let max_depth = args.get("max_depth").and_then(Value::as_u64).map(|v| v as u32);
+    let max_depth = args
+        .get("max_depth")
+        .and_then(Value::as_u64)
+        .map(|v| v as u32);
     let tree = client
         .get_accessibility_tree(window_id, max_depth)
         .await
@@ -602,7 +641,10 @@ async fn handle_find_ui_element(client: &GuiClient, args: &Value) -> Result<Tool
         window_id: args.get("window_id").and_then(Value::as_u64),
         max_depth: Some(10),
     };
-    let elements = client.find_ui_elements(query).await.map_err(|e| e.to_string())?;
+    let elements = client
+        .find_ui_elements(query)
+        .await
+        .map_err(|e| e.to_string())?;
     if elements.is_empty() {
         Ok(ToolResult::text("No matching UI elements found."))
     } else {
@@ -620,11 +662,17 @@ async fn handle_find_ui_element(client: &GuiClient, args: &Value) -> Result<Tool
 
 async fn handle_find_image(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
     // Phase 7 — Template matching via rustautogui
-    Err("Template matching not yet implemented. This is a permanent error — do not retry.".to_string())
+    Err(
+        "Template matching not yet implemented. This is a permanent error — do not retry."
+            .to_string(),
+    )
 }
 
 async fn handle_wait_for_image(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
-    Err("Template matching not yet implemented. This is a permanent error — do not retry.".to_string())
+    Err(
+        "Template matching not yet implemented. This is a permanent error — do not retry."
+            .to_string(),
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -642,17 +690,35 @@ async fn handle_scroll_to_text(client: &GuiClient, args: &Value) -> Result<ToolR
     #[cfg(feature = "ocr")]
     {
         let query = str_arg(args, "query")?.to_string();
-        let direction = match args.get("direction").and_then(Value::as_str).unwrap_or("down") {
+        let direction = match args
+            .get("direction")
+            .and_then(Value::as_str)
+            .unwrap_or("down")
+        {
             "up" => ScrollDirection::Up,
             _ => ScrollDirection::Down,
         };
-        let max_scrolls = args.get("max_scrolls").and_then(Value::as_u64).unwrap_or(10) as u32;
-        let scroll_amount = args.get("scroll_amount").and_then(Value::as_u64).unwrap_or(3) as i32;
+        let max_scrolls = args
+            .get("max_scrolls")
+            .and_then(Value::as_u64)
+            .unwrap_or(10) as u32;
+        let scroll_amount = args
+            .get("scroll_amount")
+            .and_then(Value::as_u64)
+            .unwrap_or(3) as i32;
 
         // Default scroll position to screen center
         let screen = client.get_screen_size().await.map_err(|e| e.to_string())?;
-        let sx = args.get("x").and_then(Value::as_u64).map(|v| v as u32).unwrap_or(screen.width / 2);
-        let sy = args.get("y").and_then(Value::as_u64).map(|v| v as u32).unwrap_or(screen.height / 2);
+        let sx = args
+            .get("x")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32)
+            .unwrap_or(screen.width / 2);
+        let sy = args
+            .get("y")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32)
+            .unwrap_or(screen.height / 2);
 
         for i in 0..max_scrolls {
             // Take screenshot and OCR
@@ -673,7 +739,10 @@ async fn handle_scroll_to_text(client: &GuiClient, args: &Value) -> Result<ToolR
             }
 
             // Scroll and wait for content to settle
-            client.scroll(sx, sy, direction, scroll_amount).await.map_err(|e| e.to_string())?;
+            client
+                .scroll(sx, sy, direction, scroll_amount)
+                .await
+                .map_err(|e| e.to_string())?;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
 
@@ -696,13 +765,17 @@ async fn handle_scroll_to_text(client: &GuiClient, args: &Value) -> Result<ToolR
 
 #[cfg(feature = "detection")]
 async fn handle_detect_objects(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
-    let min_confidence = args.get("min_confidence")
+    let min_confidence = args
+        .get("min_confidence")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.3) as f32;
 
-    let filter_labels: Option<Vec<String>> = args.get("labels")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+    let filter_labels: Option<Vec<String>> =
+        args.get("labels").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
 
     let result = client.detect_objects().await.map_err(|e| e.to_string())?;
 
@@ -715,12 +788,16 @@ async fn handle_detect_objects(client: &GuiClient, args: &Value) -> Result<ToolR
     if let Some(labels) = &filter_labels {
         let labels_lower: Vec<String> = labels.iter().map(|l| l.to_lowercase()).collect();
         detections.retain(|d| {
-            labels_lower.iter().any(|l| d.label.to_lowercase().contains(l))
+            labels_lower
+                .iter()
+                .any(|l| d.label.to_lowercase().contains(l))
         });
     }
 
     if detections.is_empty() {
-        return Ok(ToolResult::text("No objects detected. Try lowering min_confidence or checking what's on screen."));
+        return Ok(ToolResult::text(
+            "No objects detected. Try lowering min_confidence or checking what's on screen.",
+        ));
     }
 
     // Format output
@@ -733,23 +810,27 @@ async fn handle_detect_objects(client: &GuiClient, args: &Value) -> Result<ToolR
     }
     output.push_str("\nUse gui_click_object with label and index to click.");
 
-    Ok(ToolResult { content: vec![ContentItem::text(output)], is_error: None })
+    Ok(ToolResult {
+        content: vec![ContentItem::text(output)],
+        is_error: None,
+    })
 }
 
 #[cfg(feature = "detection")]
 async fn handle_click_object(client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
-    let label = args.get("label")
+    let label = args
+        .get("label")
         .and_then(|v| v.as_str())
         .ok_or("missing 'label' argument")?;
 
-    let index = args.get("index")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let index = args.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
     let result = client.detect_objects().await.map_err(|e| e.to_string())?;
 
     // Filter by label
-    let matches: Vec<_> = result.detections.iter()
+    let matches: Vec<_> = result
+        .detections
+        .iter()
         .filter(|d| d.label.to_lowercase().contains(&label.to_lowercase()))
         .collect();
 
@@ -758,11 +839,17 @@ async fn handle_click_object(client: &GuiClient, args: &Value) -> Result<ToolRes
     }
 
     if index >= matches.len() {
-        return Err(format!("Index {} out of range (found {} objects)", index, matches.len()));
+        return Err(format!(
+            "Index {} out of range (found {} objects)",
+            index,
+            matches.len()
+        ));
     }
 
     let target = matches[index];
-    client.click(target.cx as u32, target.cy as u32, MouseButton::Left).await
+    client
+        .click(target.cx as u32, target.cy as u32, MouseButton::Left)
+        .await
         .map_err(|e| e.to_string())?;
 
     Ok(ToolResult::text(format!(
@@ -774,10 +861,16 @@ async fn handle_click_object(client: &GuiClient, args: &Value) -> Result<ToolRes
 #[cfg(not(feature = "detection"))]
 mod detection_disabled {
     use super::*;
-    pub async fn handle_detect_objects(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
+    pub async fn handle_detect_objects(
+        _client: &GuiClient,
+        _args: &Value,
+    ) -> Result<ToolResult, String> {
         Err("Detection not available — build with 'detection' feature enabled.".to_string())
     }
-    pub async fn handle_click_object(_client: &GuiClient, _args: &Value) -> Result<ToolResult, String> {
+    pub async fn handle_click_object(
+        _client: &GuiClient,
+        _args: &Value,
+    ) -> Result<ToolResult, String> {
         Err("Detection not available — build with 'detection' feature enabled.".to_string())
     }
 }
@@ -810,12 +903,18 @@ async fn handle_read_file(_client: &GuiClient, args: &Value) -> Result<ToolResul
 
     let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
     if metadata.is_dir() {
-        return Err(format!("Path is a directory, not a file: {}", path.display()));
+        return Err(format!(
+            "Path is a directory, not a file: {}",
+            path.display()
+        ));
     }
 
     // Limit file size to 10MB to prevent memory issues
     if metadata.len() > 10_000_000 {
-        return Err(format!("File too large ({} bytes). Max size is 10MB.", metadata.len()));
+        return Err(format!(
+            "File too large ({} bytes). Max size is 10MB.",
+            metadata.len()
+        ));
     }
 
     let data = fs::read(path).map_err(|e| e.to_string())?;
@@ -833,7 +932,8 @@ async fn handle_write_file(_client: &GuiClient, args: &Value) -> Result<ToolResu
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {}", e))?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
         }
     }
 
@@ -844,9 +944,7 @@ async fn handle_write_file(_client: &GuiClient, args: &Value) -> Result<ToolResu
 }
 
 async fn handle_list_dir(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
-    let path = args.get("path")
-        .and_then(Value::as_str)
-        .unwrap_or(".");
+    let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
     let path = Path::new(path);
 
     if !path.exists() {
@@ -874,7 +972,8 @@ async fn handle_list_dir(_client: &GuiClient, args: &Value) -> Result<ToolResult
             "other"
         };
 
-        let modified = metadata.modified()
+        let modified = metadata
+            .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
@@ -895,13 +994,16 @@ async fn handle_list_dir(_client: &GuiClient, args: &Value) -> Result<ToolResult
         if a_is_dir != b_is_dir {
             b_is_dir.cmp(&a_is_dir)
         } else {
-            a.get("name").and_then(|n| n.as_str()).unwrap_or("").cmp(
-                b.get("name").and_then(|n| n.as_str()).unwrap_or("")
-            )
+            a.get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .cmp(b.get("name").and_then(|n| n.as_str()).unwrap_or(""))
         }
     });
 
-    Ok(ToolResult::text(serde_json::to_string_pretty(&entries).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&entries).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_file_exists(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
@@ -919,10 +1021,13 @@ async fn handle_file_exists(_client: &GuiClient, args: &Value) -> Result<ToolRes
         "other"
     };
 
-    Ok(ToolResult::text(serde_json::json!({
-        "exists": exists,
-        "type": file_type
-    }).to_string()))
+    Ok(ToolResult::text(
+        serde_json::json!({
+            "exists": exists,
+            "type": file_type
+        })
+        .to_string(),
+    ))
 }
 
 async fn handle_delete_file(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
@@ -962,7 +1067,9 @@ fn base64_encode(data: &[u8]) -> String {
 
 fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    STANDARD.decode(input).map_err(|e| format!("Invalid base64: {}", e))
+    STANDARD
+        .decode(input)
+        .map_err(|e| format!("Invalid base64: {}", e))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1028,31 +1135,18 @@ async fn handle_shell_exec(_client: &GuiClient, args: &Value) -> Result<ToolResu
 
 async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let cwd = args.get("cwd").and_then(Value::as_str).map(String::from);
-    let cols = args
-        .get("cols")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(80) as u16;
-    let rows = args
-        .get("rows")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(24) as u16;
+    let cols = args.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+    let rows = args.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
 
     let session_id = Uuid::new_v4().to_string();
     let output_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let output_buffer_clone = output_buffer.clone();
 
     let handle = PTY_MANAGER
-        .spawn(
-            session_id.clone(),
-            cols,
-            rows,
-            cwd,
-            vec![],
-            move |data| {
-                let mut buf = output_buffer_clone.lock().unwrap();
-                buf.extend(data);
-            },
-        )
+        .spawn(session_id.clone(), cols, rows, cwd, vec![], move |data| {
+            let mut buf = output_buffer_clone.lock().unwrap();
+            buf.extend(data);
+        })
         .await
         .map_err(|e| format!("Failed to open shell: {}", e))?;
 
@@ -1075,31 +1169,47 @@ async fn handle_shell_open(_client: &GuiClient, args: &Value) -> Result<ToolResu
 async fn handle_shell_write(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let session_id = str_arg(args, "session_id")?;
     let input = str_arg(args, "input")?;
+    let data = input.as_bytes().to_vec();
+    let len = data.len();
 
-    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
-    let session = sessions
-        .get(session_id)
-        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+    let input_tx = {
+        let sessions = SHELL_SESSIONS
+            .read()
+            .map_err(|e| format!("sessions poisoned: {}", e))?;
+        sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Session not found: {}", session_id))?
+            .handle
+            .input_tx
+            .clone()
+    };
 
-    session
-        .handle
-        .input_tx
-        .send(input.as_bytes().to_vec())
+    input_tx
+        .send(data)
         .await
         .map_err(|e| format!("Failed to write to shell: {}", e))?;
 
-    Ok(ToolResult::text(format!("Sent {} bytes to session {}", input.len(), session_id)))
+    Ok(ToolResult::text(format!(
+        "Sent {} bytes to session {}",
+        len, session_id
+    )))
 }
 
 async fn handle_shell_read(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let session_id = str_arg(args, "session_id")?;
 
-    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
-    let session = sessions
-        .get(session_id)
-        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+    let output_buffer = {
+        let sessions = SHELL_SESSIONS
+            .read()
+            .map_err(|e| format!("sessions poisoned: {}", e))?;
+        sessions
+            .get(session_id)
+            .ok_or_else(|| format!("Session not found: {}", session_id))?
+            .output_buffer
+            .clone()
+    };
 
-    let output = spawn_blocking_get_buffer(session.output_buffer.clone()).await;
+    let output = spawn_blocking_get_buffer(output_buffer).await;
     let output_str = String::from_utf8(output).unwrap_or_default();
     let cleaned = strip_ansi_codes(&output_str);
 
@@ -1110,11 +1220,14 @@ async fn handle_shell_close(_client: &GuiClient, args: &Value) -> Result<ToolRes
     let session_id = str_arg(args, "session_id")?;
 
     PTY_MANAGER
-        .close(&session_id)
+        .close(session_id)
         .await
         .map_err(|e| format!("Failed to close shell: {}", e))?;
 
-    SHELL_SESSIONS.write().map_err(|e| format!("sessions poisoned: {}", e))?.remove(session_id);
+    SHELL_SESSIONS
+        .write()
+        .map_err(|e| format!("sessions poisoned: {}", e))?
+        .remove(session_id);
 
     Ok(ToolResult::text(format!("Closed session {}", session_id)))
 }
@@ -1131,10 +1244,14 @@ async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
 }
 
 async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult, String> {
-    let sessions = SHELL_SESSIONS.read().map_err(|e| format!("sessions poisoned: {}", e))?;
+    let sessions = SHELL_SESSIONS
+        .read()
+        .map_err(|e| format!("sessions poisoned: {}", e))?;
     let ids: Vec<String> = sessions.keys().cloned().collect();
 
-    Ok(ToolResult::text(serde_json::to_string_pretty(&ids).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&ids).unwrap_or("[]".to_string()),
+    ))
 }
 
 fn strip_ansi_codes(s: &str) -> String {
@@ -1149,13 +1266,21 @@ fn strip_ansi_codes(s: &str) -> String {
             skip = true;
         } else if skip {
             // Terminator bytes for CSI and other escape sequences
-            if c.is_ascii_alphabetic() || c == '@' || c == '`' {
-                if c == 'm' || c == 'H' || c == 'J' || c == 'K' || c == 'A'
-                    || c == 'B' || c == 'C' || c == 'D' || c == 'P'
-                    || c == 'S' || c == 'T' || c == 'f'
-                {
-                    skip = false;
-                }
+            if (c.is_ascii_alphabetic() || c == '@' || c == '`')
+                && (c == 'm'
+                    || c == 'H'
+                    || c == 'J'
+                    || c == 'K'
+                    || c == 'A'
+                    || c == 'B'
+                    || c == 'C'
+                    || c == 'D'
+                    || c == 'P'
+                    || c == 'S'
+                    || c == 'T'
+                    || c == 'f')
+            {
+                skip = false;
             }
         } else {
             result.push(c);
@@ -1185,21 +1310,30 @@ async fn handle_mcp_discover(_client: &GuiClient) -> Result<ToolResult, String> 
         }
     }
 
-    Ok(ToolResult::text(serde_json::to_string_pretty(&all_discovered).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&all_discovered).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_mcp_list(_client: &GuiClient) -> Result<ToolResult, String> {
     let servers = MCP_HUB.list_servers().await;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&servers).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&servers).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_mcp_register(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
     let command = str_arg(args, "command")?;
 
-    let args: Vec<String> = args.get("args")
+    let args: Vec<String> = args
+        .get("args")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let config = McpServerConfig {
@@ -1210,39 +1344,51 @@ async fn handle_mcp_register(_client: &GuiClient, args: &Value) -> Result<ToolRe
     };
 
     let info = MCP_HUB.register(name.to_string(), config).await?;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
+    ))
 }
 
 async fn handle_mcp_unregister(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    MCP_HUB.unregister(&name).await?;
-    Ok(ToolResult::text(format!("Unregistered MCP server: {}", name)))
+    MCP_HUB.unregister(name).await?;
+    Ok(ToolResult::text(format!(
+        "Unregistered MCP server: {}",
+        name
+    )))
 }
 
 async fn handle_mcp_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    let tools = MCP_HUB.start_server(&name).await?;
-    Ok(ToolResult::text(serde_json::json!({
-        "message": format!("Started MCP server: {}", name),
-        "tools_count": tools.len(),
-        "tools": tools
-    }).to_string()))
+    let tools = MCP_HUB.start_server(name).await?;
+    Ok(ToolResult::text(
+        serde_json::json!({
+            "message": format!("Started MCP server: {}", name),
+            "tools_count": tools.len(),
+            "tools": tools
+        })
+        .to_string(),
+    ))
 }
 
 async fn handle_mcp_stop(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    MCP_HUB.stop_server(&name).await?;
+    MCP_HUB.stop_server(name).await?;
     Ok(ToolResult::text(format!("Stopped MCP server: {}", name)))
 }
 
 async fn handle_mcp_tools(_client: &GuiClient) -> Result<ToolResult, String> {
     let tools = MCP_HUB.list_all_tools().await;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&tools).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&tools).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_mcp_tool_groups(_client: &GuiClient) -> Result<ToolResult, String> {
     let groups = MCP_HUB.get_tool_groups().await;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&groups).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&groups).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_mcp_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
@@ -1250,7 +1396,7 @@ async fn handle_mcp_exec(_client: &GuiClient, args: &Value) -> Result<ToolResult
     let tool = str_arg(args, "tool")?;
     let tool_args = args.get("args").cloned().unwrap_or(Value::Null);
 
-    let result = MCP_HUB.execute_tool(&server, &tool, tool_args).await?;
+    let result = MCP_HUB.execute_tool(server, tool, tool_args).await?;
     Ok(ToolResult::text(result.to_string()))
 }
 
@@ -1266,13 +1412,15 @@ async fn handle_process_list(_client: &GuiClient, args: &Value) -> Result<ToolRe
     let mut processes = ProcessManager::list_processes();
     processes.truncate(limit);
 
-    Ok(ToolResult::text(serde_json::to_string_pretty(&processes).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&processes).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_process_kill(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let pid = u64_arg(args, "pid")? as u32;
 
-    ProcessManager::kill_process(pid).map_err(|e| e)?;
+    ProcessManager::kill_process(pid)?;
 
     Ok(ToolResult::text(format!("Killed process {}", pid)))
 }
@@ -1280,53 +1428,67 @@ async fn handle_process_kill(_client: &GuiClient, args: &Value) -> Result<ToolRe
 async fn handle_process_info(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let pid = u64_arg(args, "pid")? as u32;
 
-    let info = ProcessManager::get_process_info(pid).map_err(|e| e)?;
+    let info = ProcessManager::get_process_info(pid)?;
 
-    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
+    ))
 }
 
 async fn handle_process_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let command = str_arg(args, "command")?;
-    let args: Vec<String> = args.get("args")
+    let args: Vec<String> = args
+        .get("args")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    let pid = ProcessManager::start_process(&command, args).map_err(|e| e)?;
+    let pid = ProcessManager::start_process(command, args)?;
 
-    Ok(ToolResult::text(serde_json::json!({
-        "message": format!("Started process {}", command),
-        "pid": pid
-    }).to_string()))
+    Ok(ToolResult::text(
+        serde_json::json!({
+            "message": format!("Started process {}", command),
+            "pid": pid
+        })
+        .to_string(),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Service Manager
 // ═══════════════════════════════════════════════════════════════════════════
 
-use crate::system::{ServiceManager, NetworkManager, SystemMonitor, LogViewer};
+use crate::system::{LogViewer, NetworkManager, ServiceManager, SystemMonitor};
 
 async fn handle_service_list(_client: &GuiClient) -> Result<ToolResult, String> {
     let services = ServiceManager::list_services();
-    Ok(ToolResult::text(serde_json::to_string_pretty(&services).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&services).unwrap_or("[]".to_string()),
+    ))
 }
 
 async fn handle_service_start(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    ServiceManager::start_service(&name).map_err(|e| e)?;
+    ServiceManager::start_service(name)?;
     Ok(ToolResult::text(format!("Started service: {}", name)))
 }
 
 async fn handle_service_stop(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    ServiceManager::stop_service(&name).map_err(|e| e)?;
+    ServiceManager::stop_service(name)?;
     Ok(ToolResult::text(format!("Stopped service: {}", name)))
 }
 
 async fn handle_service_status(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
     let name = str_arg(args, "name")?;
-    let status = ServiceManager::service_status(&name).map_err(|e| e)?;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&status).unwrap_or("{}".to_string())))
+    let status = ServiceManager::service_status(name)?;
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&status).unwrap_or("{}".to_string()),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1334,14 +1496,21 @@ async fn handle_service_status(_client: &GuiClient, args: &Value) -> Result<Tool
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn handle_network_info(_client: &GuiClient) -> Result<ToolResult, String> {
-    let info = NetworkManager::get_info().map_err(|e| e)?;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&info).unwrap_or("{}".to_string())))
+    let info = NetworkManager::get_info()?;
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
+    ))
 }
 
-async fn handle_network_connections(_client: &GuiClient, args: &Value) -> Result<ToolResult, String> {
+async fn handle_network_connections(
+    _client: &GuiClient,
+    args: &Value,
+) -> Result<ToolResult, String> {
     let _limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
     let connections = NetworkManager::list_connections();
-    Ok(ToolResult::text(serde_json::to_string_pretty(&connections).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&connections).unwrap_or("[]".to_string()),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1349,13 +1518,17 @@ async fn handle_network_connections(_client: &GuiClient, args: &Value) -> Result
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResult, String> {
-    let stats = SystemMonitor::get_stats().map_err(|e| e)?;
-    Ok(ToolResult::text(serde_json::to_string_pretty(&stats).unwrap_or("{}".to_string())))
+    let stats = SystemMonitor::get_stats()?;
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&stats).unwrap_or("{}".to_string()),
+    ))
 }
 
 async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult, String> {
     let usage = SystemMonitor::get_disk_usage();
-    Ok(ToolResult::text(serde_json::to_string_pretty(&usage).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&usage).unwrap_or("[]".to_string()),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1367,5 +1540,7 @@ async fn handle_system_logs(_client: &GuiClient, args: &Value) -> Result<ToolRes
     let level = args.get("level").and_then(|v| v.as_str()).map(String::from);
 
     let logs = LogViewer::get_system_logs(count, level);
-    Ok(ToolResult::text(serde_json::to_string_pretty(&logs).unwrap_or("[]".to_string())))
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&logs).unwrap_or("[]".to_string()),
+    ))
 }
