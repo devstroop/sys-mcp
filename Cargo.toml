@@ -30,6 +30,9 @@ rustautogui = { path = "rustautogui", default-features = false, features = ["ful
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
+# Object detection
+tract-onnx = { version = "0.22", optional = true }
+
 # OCR (optional, on by default)
 ocrs = { version = "0.10", default-features = false, optional = true }
 rten = { version = "0.21", optional = true }
@@ -83,6 +86,6 @@ default = ["ocr", "clipboard", "web-preview", "detection"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
 clipboard = ["dep:arboard"]
 web-preview = ["dep:axum", "dep:tower-http"]
-detection = []
+detection = ["dep:tract-onnx", "dep:ureq", "dep:dirs-next"]
 opencl = ["rustautogui/opencl"]
 ml = []
