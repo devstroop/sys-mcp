@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
