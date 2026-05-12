@@ -1,10 +1,59 @@
-//! Server configuration and CLI argument parsing.
-//!
-//! Parses command-line arguments into a [`ServerConfig`] struct.
-//! Supports `--host`, `--hostname`, `--port`, `--transport`, and other flags.
+use clap::Parser;
+
+/// MCP server for local system automation.
+///
+/// Provides AI agents with access to screen capture, OCR, mouse/keyboard
+/// input, window management, file system, shell, process/service/network
+/// management, and system monitoring tools over the MCP protocol.
+#[derive(Parser, Debug, Clone)]
+#[command(name = "sys-mcp", version, about)]
+pub struct ServerConfig {
+    /// Bind address for the HTTP transport and web preview server
+    #[arg(long, default_value = "127.0.0.1", env = "SYS_MCP_HOST")]
+    pub host: String,
+
+    /// Port for the HTTP transport
+    #[arg(long, default_value_t = 3000, env = "SYS_MCP_PORT")]
+    pub port: u16,
+
+    /// Transport mode (stdio or http)
+    #[arg(long, default_value_t = TransportMode::Stdio, value_enum, env = "SYS_MCP_TRANSPORT")]
+    pub transport: TransportMode,
+
+    /// Disable the web preview server
+    #[arg(long = "no-web-preview", default_value_t = true, action = clap::ArgAction::SetFalse)]
+    pub web_preview: bool,
+
+    /// Maximum concurrent sessions
+    #[arg(long, default_value_t = 100, env = "SYS_MCP_MAX_SESSIONS")]
+    pub max_sessions: usize,
+
+    /// Session timeout in seconds
+    #[arg(long, default_value_t = 1800, env = "SYS_MCP_SESSION_TTL")]
+    pub session_ttl_secs: u64,
+
+    /// Enable debug logging
+    #[arg(long, short)]
+    pub debug: bool,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        // clap's Parser provides defaults via arg attributes,
+        // but we need to parse empty args to get those defaults.
+        Self::try_parse_from(std::iter::once::<String>("".into()))
+            .expect("default config should be valid")
+    }
+}
+
+impl ServerConfig {
+    pub fn from_args() -> Self {
+        Self::parse()
+    }
+}
 
 /// Transport mode for MCP server
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum TransportMode {
     #[default]
     Stdio,
@@ -20,138 +69,4 @@ impl std::str::FromStr for TransportMode {
             _ => Err(format!("unknown transport mode: {s}")),
         }
     }
-}
-
-/// Server configuration parsed from CLI arguments.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ServerConfig {
-    pub web_preview: bool,
-    pub debug: bool,
-    pub transport: TransportMode,
-    pub port: u16,
-    pub host: String,
-    pub max_sessions: usize,
-    pub session_ttl_secs: u64,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            web_preview: true,
-            debug: false,
-            transport: TransportMode::Stdio,
-            port: 3000,
-            host: "127.0.0.1".to_string(),
-            max_sessions: 100,
-            session_ttl_secs: 1800,
-        }
-    }
-}
-
-impl ServerConfig {
-    pub fn from_args() -> Self {
-        let mut config = Self::default();
-        let args: Vec<String> = std::env::args().collect();
-        let mut i = 1;
-
-        while i < args.len() {
-            match args[i].as_str() {
-                "--help" | "-h" => {
-                    print_help();
-                    std::process::exit(0);
-                }
-                "--version" | "-V" => {
-                    println!("gui-mcp {}", env!("CARGO_PKG_VERSION"));
-                    std::process::exit(0);
-                }
-                "--no-web-preview" => config.web_preview = false,
-                "--debug" => config.debug = true,
-                "--transport" => {
-                    if i + 1 < args.len() {
-                        match args[i + 1].parse::<TransportMode>() {
-                            Ok(mode) => config.transport = mode,
-                            Err(_) => {
-                                eprintln!("Unknown transport mode: '{}'", args[i + 1]);
-                                eprintln!("Valid options: stdio, http");
-                                std::process::exit(1);
-                            }
-                        }
-                        i += 1;
-                    }
-                }
-                "--port" => {
-                    if i + 1 < args.len() {
-                        if let Ok(port) = args[i + 1].parse() {
-                            config.port = port;
-                        } else {
-                            eprintln!("Invalid port: '{}'", args[i + 1]);
-                            std::process::exit(1);
-                        }
-                        i += 1;
-                    }
-                }
-                "--host" | "--hostname" => {
-                    if i + 1 < args.len() {
-                        config.host = args[i + 1].clone();
-                        i += 1;
-                    }
-                }
-                "--max-sessions" => {
-                    if i + 1 < args.len() {
-                        if let Ok(max) = args[i + 1].parse() {
-                            config.max_sessions = max;
-                        } else {
-                            eprintln!("Invalid max-sessions: '{}'", args[i + 1]);
-                            std::process::exit(1);
-                        }
-                        i += 1;
-                    }
-                }
-                "--session-ttl" => {
-                    if i + 1 < args.len() {
-                        if let Ok(ttl) = args[i + 1].parse() {
-                            config.session_ttl_secs = ttl;
-                        } else {
-                            eprintln!("Invalid session-ttl: '{}'", args[i + 1]);
-                            std::process::exit(1);
-                        }
-                        i += 1;
-                    }
-                }
-                unknown => {
-                    eprintln!("Unknown argument: '{}'", unknown);
-                    eprintln!("Run with --help for usage information.");
-                    std::process::exit(1);
-                }
-            }
-            i += 1;
-        }
-
-        config
-    }
-}
-
-fn print_help() {
-    println!(
-        r#"sys-mcp {} — GUI Automation MCP Server
-
-USAGE:
-    sys-mcp [OPTIONS]
-
-OPTIONS:
-    --host, --hostname <HOST>    Bind address (default: 0.0.0.0)
-    --port <PORT>                MCP HTTP port (default: 3000)
-    --transport <stdio|http>     Transport mode (default: stdio)
-    --no-web-preview             Disable web preview server
-    --max-sessions <N>           Max concurrent sessions (default: 100)
-    --session-ttl <SECONDS>      Session timeout in seconds (default: 1800)
-    --debug                      Enable debug logging
-    --help, -h                   Print this help message
-    --version, -V                Print version information
-
-ENVIRONMENT:
-    RUST_LOG                     Override log level (e.g. RUST_LOG=trace)
-"#,
-        env!("CARGO_PKG_VERSION")
-    );
 }
