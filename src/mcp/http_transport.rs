@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -128,7 +128,7 @@ async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<Response, StatusCode> {
     // Cleanup expired sessions periodically
     {
         let mut mgr = state.session_mgr.lock().await;
@@ -153,7 +153,7 @@ async fn mcp_handler(
             return Ok((
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": format!("parse error: {e}")})),
-            ));
+            ).into_response());
         }
     };
 
@@ -168,7 +168,7 @@ async fn mcp_handler(
             return Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("serialization error: {e}")})),
-            ));
+            ).into_response());
         }
     };
 
@@ -180,8 +180,9 @@ async fn mcp_handler(
 
     let body = Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default());
     let mut response = body.into_response();
-    response
-        .headers_mut()
-        .insert("mcp-session-id", session.id.to_string().parse().unwrap_or_default());
+    response.headers_mut().insert(
+        "mcp-session-id",
+        session.id.to_string().parse().unwrap(),
+    );
     response
 }

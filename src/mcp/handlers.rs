@@ -733,7 +733,6 @@ async fn handle_detect_objects(client: &GuiClient, args: &Value) -> Result<ToolR
     }
     output.push_str("\nUse gui_click_object with label and index to click.");
 
-    let content = serde_json::to_value(&detections).unwrap_or_default();
     Ok(ToolResult { content: vec![ContentItem::text(output)], is_error: None })
 }
 
