@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     extract::State,
     http::{HeaderMap, HeaderName, Method, StatusCode},
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -128,7 +128,7 @@ async fn mcp_handler(
     State(state): State<HttpState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<Response, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
     // Cleanup expired sessions periodically
     {
         let mut mgr = state.session_mgr.lock().await;
@@ -152,8 +152,9 @@ async fn mcp_handler(
         Err(e) => {
             return Ok((
                 StatusCode::BAD_REQUEST,
+                HeaderMap::new(),
                 Json(json!({"error": format!("parse error: {e}")})),
-            ).into_response());
+            ));
         }
     };
 
@@ -167,8 +168,9 @@ async fn mcp_handler(
         Err(e) => {
             return Ok((
                 StatusCode::INTERNAL_SERVER_ERROR,
+                HeaderMap::new(),
                 Json(json!({"error": format!("serialization error: {e}")})),
-            ).into_response());
+            ));
         }
     };
 
@@ -178,11 +180,15 @@ async fn mcp_handler(
         StatusCode::OK
     };
 
-    let body = Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default());
-    let mut response = body.into_response();
-    response.headers_mut().insert(
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(
         "mcp-session-id",
         session.id.to_string().parse().unwrap(),
     );
-    Ok(response)
+
+    Ok((
+        status,
+        resp_headers,
+        Json(serde_json::from_str::<Value>(&response_json).unwrap_or_default()),
+    ))
 }
