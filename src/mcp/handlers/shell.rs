@@ -202,5 +202,5 @@ async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
 }
 
 fn strip_ansi_codes(s: &str) -> String {
-    String::from_utf8_lossy(&strip_ansi_escapes::strip(s).unwrap_or_else(|_| s.as_bytes().to_vec())).into_owned()
+    String::from_utf8_lossy(&strip_ansi_escapes::strip(s)).into_owned()
 }
