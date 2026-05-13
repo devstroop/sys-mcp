@@ -21,7 +21,7 @@ fn get_os_version() -> String {
             if windows::Win32::System::SystemInformation::GetVersionExW(
                 &mut info as *mut _ as *mut OSVERSIONINFOW,
             )
-            .as_bool()
+            .is_ok()
             {
                 return format!(
                     "{}.{}.{}",

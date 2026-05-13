@@ -4,6 +4,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
+    UIA_CONTROLTYPE_ID,
     UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
     UIA_EditControlTypeId, UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId,
     UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
@@ -20,7 +21,7 @@ use crate::gui::types::*;
 unsafe impl Send for PlatformAccessibility {}
 unsafe impl Sync for PlatformAccessibility {}
 
-fn control_type_to_role(control_type: i32) -> String {
+fn control_type_to_role(control_type: UIA_CONTROLTYPE_ID) -> String {
     match control_type {
         UIA_ButtonControlTypeId => "button".to_string(),
         UIA_CheckBoxControlTypeId => "checkbox".to_string(),
@@ -43,7 +44,7 @@ fn control_type_to_role(control_type: i32) -> String {
         UIA_TreeItemControlTypeId => "tree_item".to_string(),
         UIA_HeaderControlTypeId => "header".to_string(),
         UIA_WindowControlTypeId => "window".to_string(),
-        _ => format!("control_type_{}", control_type),
+        _ => format!("control_type_{}", control_type.0),
     }
 }
 
@@ -78,8 +79,8 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_element_control_type(element: &IUIAutomationElement) -> i32 {
-        unsafe { element.CurrentControlType().unwrap_or(0) }
+    fn get_element_control_type(element: &IUIAutomationElement) -> UIA_CONTROLTYPE_ID {
+        unsafe { element.CurrentControlType().unwrap_or(UIA_CONTROLTYPE_ID(0)) }
     }
 
     fn get_element_bounds(element: &IUIAutomationElement) -> (i32, i32, u32, u32) {
