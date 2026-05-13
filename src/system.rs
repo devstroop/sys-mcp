@@ -786,7 +786,7 @@ impl LogViewer {
 
         #[cfg(target_os = "macos")]
         {
-            let count_str = count.to_string();
+            let _count_str = count.to_string();
             let level_flag = match level_filter.as_str() {
                 "Error" => "error",
                 "Warning" => "warning",

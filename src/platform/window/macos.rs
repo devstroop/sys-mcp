@@ -84,7 +84,7 @@ impl PlatformWindowManager {
 
                     let (x, y, w, h) = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowBounds) })
-                        .and_then(|v| extract_rect_from_dict_value(v))
+                        .and_then(|v| extract_rect_from_dict_value(&*v))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
                     windows.push(WindowInfo {
