@@ -1,10 +1,9 @@
 use core_foundation::array::CFArray;
-use core_foundation::base::{CFIndex, TCFType};
+use core_foundation::base::{CFIndex, CFType, TCFType};
+use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use core_foundation::url::CFURL;
-use core_graphics::display::{CGPoint, CGRect, CGSize};
 use core_graphics::window::{
     kCGNullWindowID, kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo,
 };
@@ -37,30 +36,25 @@ impl PlatformWindowManager {
                 ));
             }
 
-            let array = CFArray::<CFDictionary>::wrap_under_create_rule(list_ref as *mut _);
-            let count = array.len() as CFIndex;
+            let array = CFArray::<CFDictionary<CFString, CFType>>::wrap_under_create_rule(list_ref);
+            let count = array.len();
 
             for i in 0..count {
-                if let Some(dict) = array.get(i as CFIndex) {
+                if let Some(dict_ref) = array.get(i) {
+                    let dict: &CFDictionary<CFString, CFType> = &*dict_ref;
+
                     let window_id = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowNumber) })
                         .and_then(|v| v.downcast::<CFNumber>())
-                        .and_then(|n| {
-                            let mut val: i64 = 0;
-                            n.get_value(&mut val).then_some(val as u64)
-                        })
-                        .unwrap_or(0);
+                        .and_then(|n| n.to_i64())
+                        .unwrap_or(0) as u64;
 
                     let layer = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowLayer) })
                         .and_then(|v| v.downcast::<CFNumber>())
-                        .and_then(|n| {
-                            let mut val: i32 = 0;
-                            n.get_value(&mut val).then_some(val)
-                        })
+                        .and_then(|n| n.to_i32())
                         .unwrap_or(0);
 
-                    // Skip non-normal windows (desktop, dock, menu bar extras)
                     if layer != 0 {
                         continue;
                     }
@@ -83,34 +77,24 @@ impl PlatformWindowManager {
                     let process_id = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowOwnerPID) })
                         .and_then(|v| v.downcast::<CFNumber>())
-                        .and_then(|n| {
-                            let mut val: i32 = 0;
-                            n.get_value(&mut val).then_some(val as u32)
-                        });
+                        .and_then(|n| n.to_i32())
+                        .map(|pid| pid as u32);
 
-                    let bounds = dict
+                    let bounds_dict = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowBounds) })
-                        .and_then(|v| v.downcast::<CFDictionary>());
+                        .and_then(|v| v.downcast::<CFDictionary<CFString, CFType>>());
 
-                    let (x, y, w, h) = bounds
-                        .map(|b| {
-                            let rect = CGRect::from_dict(b);
-                            (
-                                rect.origin.x as i32,
-                                rect.origin.y as i32,
-                                rect.size.width as u32,
-                                rect.size.height as u32,
-                            )
-                        })
-                        .unwrap_or((0, 0, 0, 0));
+                    let (x, y, w, h) = bounds_dict
+                        .and_then(|b| dict_to_rect(&b))
+                        .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
                     windows.push(WindowInfo {
                         id: window_id,
                         title,
-                        x,
-                        y,
-                        width: w,
-                        height: h,
+                        x: x as i32,
+                        y: y as i32,
+                        width: w as u32,
+                        height: h as u32,
                         is_minimized: false,
                         is_maximized: false,
                         is_focused: false,
@@ -121,9 +105,7 @@ impl PlatformWindowManager {
             }
         }
 
-        // Mark the frontmost application's window as focused
         if let Ok(focused_pid) = self.get_frontmost_pid() {
-            // On macOS, we mark the first window matching the frontmost PID
             if let Some(pos) = windows
                 .iter()
                 .position(|w| w.process_id == Some(focused_pid))
@@ -137,11 +119,11 @@ impl PlatformWindowManager {
 
     fn get_frontmost_pid(&self) -> Result<u32, GuiError> {
         unsafe {
-            let workspace = objc::msg_send![objc::class!(NSWorkspace), alloc];
-            let workspace: *mut objc::runtime::Object = objc::msg_send![workspace, init];
-            let app: *mut objc::runtime::Object = objc::msg_send![workspace, frontmostApplication];
-            let pid: i32 = objc::msg_send![app, processIdentifier];
-            let _: () = objc::msg_send![workspace, release];
+            let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
+            let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
+            let app: *mut objc::runtime::Object = msg_send![workspace, frontmostApplication];
+            let pid: i32 = msg_send![app, processIdentifier];
+            let _: () = msg_send![workspace, release];
             Ok(pid as u32)
         }
     }
@@ -212,12 +194,7 @@ impl PlatformWindowManager {
                 return Err(GuiError::PlatformError("AX attribute not found".into()));
             }
             let num = CFNumber::wrap_under_get_rule(val_ref as *mut _);
-            let mut val: i32 = 0;
-            if num.get_value(&mut val) {
-                Ok(val)
-            } else {
-                Err(GuiError::PlatformError("AX attribute not a number".into()))
-            }
+            num.to_i32().ok_or(GuiError::PlatformError("AX attribute not a number".into()))
         }
     }
 
@@ -251,8 +228,7 @@ impl PlatformWindowManager {
         y: f32,
     ) -> Result<(), GuiError> {
         unsafe {
-            let point = CGPoint::new(x as f64, y as f64);
-            let dict = point.to_dict();
+            let dict = create_point_dict(x as f64, y as f64);
             let result = AXUIElementSetAttributeValue(
                 ax_window,
                 attribute.as_concrete_TypeRef(),
@@ -275,8 +251,7 @@ impl PlatformWindowManager {
         h: f32,
     ) -> Result<(), GuiError> {
         unsafe {
-            let size = CGSize::new(w as f64, h as f64);
-            let dict = size.to_dict();
+            let dict = create_size_dict(w as f64, h as f64);
             let result = AXUIElementSetAttributeValue(
                 ax_window,
                 attribute.as_concrete_TypeRef(),
@@ -311,7 +286,6 @@ impl PlatformWindowManager {
     where
         F: Fn(*mut objc::runtime::Object) -> Result<(), GuiError>,
     {
-        // We need the PID to create the AXUIElement
         let windows = self.list_windows()?;
         let win = windows
             .iter()
@@ -388,8 +362,6 @@ impl PlatformWindowManager {
     }
 
     pub fn focus_window(&self, window_id: u64) -> Result<(), GuiError> {
-        use core_foundation::boolean::CFBoolean;
-
         self.with_window_ax(window_id, |ax_win| {
             unsafe {
                 let focused = CFString::new("AXFocused");
@@ -405,7 +377,6 @@ impl PlatformWindowManager {
                     )));
                 }
             }
-            // Also raise the window
             let raise = CFString::new("AXRaise");
             let _ = self.ax_perform_action(ax_win, &raise);
             Ok(())
@@ -430,10 +401,8 @@ impl PlatformWindowManager {
         let minimize = CFString::new("AXPressMiniaturize");
         let mini_button = CFString::new("AXMiniaturizeButton");
         self.with_window_ax(window_id, |ax_win| {
-            // Try pressing the minimize button
             let result = self.ax_perform_action(ax_win, &mini_button);
             if result.is_err() {
-                // Fallback: AXMiniaturize
                 let mini = CFString::new("AXMiniaturize");
                 self.ax_perform_action(ax_win, &mini)
             } else {
@@ -448,10 +417,8 @@ impl PlatformWindowManager {
     }
 
     pub fn restore_window(&self, window_id: u64) -> Result<(), GuiError> {
-        // On macOS, restore = deminiaturize + unzoom
         let demini = CFString::new("AXDeminiaturize");
         let _ = self.with_window_ax(window_id, |ax_win| self.ax_perform_action(ax_win, &demini));
-        // Also unzoom if maximized
         let zoom = CFString::new("AXZoom");
         self.with_window_ax(window_id, |ax_win| self.ax_perform_action(ax_win, &zoom))
     }
@@ -462,7 +429,6 @@ impl PlatformWindowManager {
         self.with_window_ax(window_id, |ax_win| {
             let result = self.ax_perform_action(ax_win, &close_button);
             if result.is_err() {
-                // Fallback: simulate Cmd+W via the close button press
                 self.ax_perform_action(ax_win, &close)
             } else {
                 result
@@ -505,7 +471,6 @@ impl PlatformWindowManager {
 
         self.with_window_ax(window_id, |ax_win| {
             unsafe {
-                // Get position
                 let mut pos_ref: *mut objc::runtime::Object = std::ptr::null_mut();
                 if AXUIElementCopyAttributeValue(
                     ax_win,
@@ -513,13 +478,13 @@ impl PlatformWindowManager {
                     &mut pos_ref as *mut *mut objc::runtime::Object as *mut *mut _,
                 ) == 0
                 {
-                    let pos_dict = CFDictionary::wrap_under_get_rule(pos_ref as *mut _);
-                    let point = CGRect::from_dict(&pos_dict);
-                    region.x = point.origin.x as u32;
-                    region.y = point.origin.y as u32;
+                    let pos_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(pos_ref as *mut _);
+                    if let Some((px, py)) = dict_to_point(&pos_dict) {
+                        region.x = px as u32;
+                        region.y = py as u32;
+                    }
                 }
 
-                // Get size
                 let mut size_ref: *mut objc::runtime::Object = std::ptr::null_mut();
                 if AXUIElementCopyAttributeValue(
                     ax_win,
@@ -527,10 +492,11 @@ impl PlatformWindowManager {
                     &mut size_ref as *mut *mut objc::runtime::Object as *mut *mut _,
                 ) == 0
                 {
-                    let size_dict = CFDictionary::wrap_under_get_rule(size_ref as *mut _);
-                    let cg_size = CGSize::from_dict(&size_dict);
-                    region.width = cg_size.width as u32;
-                    region.height = cg_size.height as u32;
+                    let size_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(size_ref as *mut _);
+                    if let Some((sw, sh)) = dict_to_size(&size_dict) {
+                        region.width = sw as u32;
+                        region.height = sh as u32;
+                    }
                 }
             }
             Ok(())
@@ -549,7 +515,56 @@ impl PlatformWindowManager {
     }
 }
 
-// Replacement for AXUIElementGetWindow (removed from modern macOS)
+fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
+    let x = dict.find(&CFString::new("X"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let y = dict.find(&CFString::new("Y"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    Some((x, y))
+}
+
+fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
+    let w = dict.find(&CFString::new("Width"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let h = dict.find(&CFString::new("Height"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    Some((w, h))
+}
+
+fn dict_to_rect(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64, f64, f64)> {
+    let x = dict.find(&CFString::new("X"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let y = dict.find(&CFString::new("Y"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let w = dict.find(&CFString::new("Width"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let h = dict.find(&CFString::new("Height"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    Some((x, y, w, h))
+}
+
+fn create_point_dict(x: f64, y: f64) -> CFDictionary<CFString, CFType> {
+    CFDictionary::from_CFType_pairs(&[
+        (CFString::new("X"), CFNumber::from(x).as_CFType()),
+        (CFString::new("Y"), CFNumber::from(y).as_CFType()),
+    ])
+}
+
+fn create_size_dict(w: f64, h: f64) -> CFDictionary<CFString, CFType> {
+    CFDictionary::from_CFType_pairs(&[
+        (CFString::new("Width"), CFNumber::from(w).as_CFType()),
+        (CFString::new("Height"), CFNumber::from(h).as_CFType()),
+    ])
+}
+
 fn ax_get_window_id(ax_win: *mut objc::runtime::Object) -> u32 {
     unsafe {
         let attr = CFString::new("AXWindowID");
@@ -561,16 +576,13 @@ fn ax_get_window_id(ax_win: *mut objc::runtime::Object) -> u32 {
         );
         if result == 0 && !wid_ref.is_null() {
             let num = CFNumber::wrap_under_get_rule(wid_ref as *mut _);
-            let mut wid: u32 = 0;
-            num.get_value(&mut wid);
-            wid
+            num.to_i32().unwrap_or(0) as u32
         } else {
             0
         }
     }
 }
 
-// External C functions
 extern "C" {
     fn AXUIElementCreateApplication(pid: u32) -> *mut objc::runtime::Object;
     fn AXUIElementCopyAttributeValue(

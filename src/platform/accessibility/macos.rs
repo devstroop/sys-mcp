@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use core_foundation::array::CFArray;
-use core_foundation::base::{CFIndex, TCFType};
+use core_foundation::base::{CFIndex, CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use core_graphics::display::CGRect;
 use objc::{msg_send, sel, class};
 
 use crate::error::GuiError;
@@ -49,11 +47,11 @@ impl PlatformAccessibility {
 
     fn get_ax_focused_app() -> Result<u32, GuiError> {
         unsafe {
-            let workspace = objc::msg_send![objc::class!(NSWorkspace), alloc];
-            let workspace: *mut objc::runtime::Object = objc::msg_send![workspace, init];
-            let app: *mut objc::runtime::Object = objc::msg_send![workspace, frontmostApplication];
-            let pid: i32 = objc::msg_send![app, processIdentifier];
-            let _: () = objc::msg_send![workspace, release];
+            let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
+            let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
+            let app: *mut objc::runtime::Object = msg_send![workspace, frontmostApplication];
+            let pid: i32 = msg_send![app, processIdentifier];
+            let _: () = msg_send![workspace, release];
             Ok(pid as u32)
         }
     }
@@ -161,12 +159,10 @@ impl PlatformAccessibility {
             );
             if result == 0 && !val_ref.is_null() {
                 let num = CFNumber::wrap_under_get_rule(val_ref as *mut _);
-                let mut val: f64 = 0.0;
-                if num.get_value(&mut val) {
-                    return Some(val);
-                }
+                num.to_f64()
+            } else {
+                None
             }
-            None
         }
     }
 
@@ -196,9 +192,8 @@ impl PlatformAccessibility {
                 &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
             );
             if result == 0 && !val_ref.is_null() {
-                let dict = CFDictionary::wrap_under_get_rule(val_ref as *mut _);
-                let point = CGRect::from_dict(&dict);
-                return Some((point.origin.x, point.origin.y));
+                let dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(val_ref as *mut _);
+                return dict_to_point(&dict);
             }
             None
         }
@@ -214,9 +209,8 @@ impl PlatformAccessibility {
                 &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
             );
             if result == 0 && !val_ref.is_null() {
-                let dict = CFDictionary::wrap_under_get_rule(val_ref as *mut _);
-                let size = CGRect::from_dict(&dict).origin; // abuse CGRect to get CGSize values
-                return Some((size.x, size.y));
+                let dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(val_ref as *mut _);
+                return dict_to_size(&dict);
             }
             None
         }
@@ -265,7 +259,6 @@ impl PlatformAccessibility {
             states.push("expanded".to_string());
         }
 
-        // Check if there's a value that indicates checked state
         let value_attr = CFString::new("AXValue");
         if let Some(val) = Self::get_ax_string_attribute(element, &value_attr) {
             if val == "1" || val.to_lowercase() == "true" {
@@ -301,8 +294,8 @@ impl PlatformAccessibility {
             })
             .unwrap_or((0, 0, 0, 0));
 
-        let cx = if w > 0 { x + w as i32 / 2 } else { None };
-        let cy = if h > 0 { y + h as i32 / 2 } else { None };
+        let cx = if w > 0 { Some(x + w as i32 / 2) } else { None };
+        let cy = if h > 0 { Some(y + h as i32 / 2) } else { None };
 
         let mut children = Vec::new();
         if depth > 0 {
@@ -339,7 +332,6 @@ impl PlatformAccessibility {
         max_depth: Option<u32>,
     ) -> Result<AccessibilityNode, GuiError> {
         let pid = if let Some(wid) = window_id {
-            // Look up the PID for this window from the window manager
             use crate::platform::window::PlatformWindowManager;
             let wm = PlatformWindowManager::new()?;
             let windows = wm.list_windows()?;
@@ -425,4 +417,24 @@ impl PlatformAccessibility {
             "invoke_element_action not yet implemented on macOS".into(),
         ))
     }
+}
+
+fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
+    let x = dict.find(&CFString::new("X"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let y = dict.find(&CFString::new("Y"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    Some((x, y))
+}
+
+fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
+    let w = dict.find(&CFString::new("Width"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    let h = dict.find(&CFString::new("Height"))
+        .and_then(|v| v.downcast::<CFNumber>())
+        .and_then(|n| n.to_f64())?;
+    Some((w, h))
 }

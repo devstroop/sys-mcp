@@ -31,6 +31,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          key: v1
 
       - name: Check
         run: cargo check --all-targets
