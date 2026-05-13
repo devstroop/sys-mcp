@@ -13,7 +13,7 @@ use core_graphics::window::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
     kCGWindowOwnerPID,
 };
-use objc::{msg_send, sel, class};
+use objc::{msg_send, sel, sel_impl, class};
 
 use crate::error::GuiError;
 use crate::gui::types::*;

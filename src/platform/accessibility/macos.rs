@@ -5,7 +5,7 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use objc::{msg_send, sel, class};
+use objc::{msg_send, sel, sel_impl, class};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
