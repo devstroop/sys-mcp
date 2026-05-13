@@ -20,3 +20,6 @@ Desktop.ini
 
 # OCR model cache (downloaded at runtime)
 ocr-models/
+
+# Claude settings
+.claude/
