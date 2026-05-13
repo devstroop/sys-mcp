@@ -3,15 +3,14 @@ use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
-    TreeScope_Children, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
-    UIA_ComboBoxControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
-    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
-    UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TableControlTypeId,
-    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_WindowControlTypeId, UIA_WindowPatternId, UIA_CONTROLTYPE_ID,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
+    UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
+    UIA_EditControlTypeId, UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId,
+    UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId, UIA_StatusBarControlTypeId,
+    UIA_TabControlTypeId, UIA_TableControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_WindowControlTypeId, UIA_WindowPatternId, UIA_CONTROLTYPE_ID,
 };
 
 use crate::error::GuiError;
@@ -20,6 +19,7 @@ use crate::gui::types::*;
 unsafe impl Send for PlatformAccessibility {}
 unsafe impl Sync for PlatformAccessibility {}
 
+#[allow(non_upper_case_globals)]
 fn control_type_to_role(control_type: UIA_CONTROLTYPE_ID) -> String {
     match control_type {
         UIA_ButtonControlTypeId => "button".to_string(),
@@ -221,22 +221,18 @@ impl PlatformAccessibility {
                     .ControlViewWalker()
                     .map_err(|e| GuiError::PlatformError(format!("ControlViewWalker: {e}")))?;
                 let mut current = focused;
-                loop {
-                    if let Ok(parent) = tree_walker.GetParentElement(&current) {
-                        let ct = Self::get_element_control_type(&parent);
-                        if ct == UIA_WindowControlTypeId
-                            || parent
-                                .CurrentName()
-                                .ok()
-                                .map(|n| n.is_empty())
-                                .unwrap_or(true)
-                        {
-                            break;
-                        }
-                        current = parent;
-                    } else {
+                while let Ok(parent) = tree_walker.GetParentElement(&current) {
+                    let ct = Self::get_element_control_type(&parent);
+                    if ct == UIA_WindowControlTypeId
+                        || parent
+                            .CurrentName()
+                            .ok()
+                            .map(|n| n.is_empty())
+                            .unwrap_or(true)
+                    {
                         break;
                     }
+                    current = parent;
                 }
                 current
             };
@@ -286,7 +282,7 @@ impl PlatformAccessibility {
         }
     }
 
-    pub fn get_element_properties(&self, element_id: &str) -> Result<AccessibilityNode, GuiError> {
+    pub fn get_element_properties(&self, _element_id: &str) -> Result<AccessibilityNode, GuiError> {
         Err(GuiError::UnsupportedCapability(
             "get_element_properties by ID not yet implemented on Windows".into(),
         ))

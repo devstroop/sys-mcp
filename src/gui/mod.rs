@@ -18,10 +18,7 @@ fn get_os_version() -> String {
         unsafe {
             let mut info: OSVERSIONINFOW = mem::zeroed();
             info.dwOSVersionInfoSize = mem::size_of::<OSVERSIONINFOW>() as u32;
-            if windows::Win32::System::SystemInformation::GetVersionExW(
-                &mut info as *mut _ as *mut OSVERSIONINFOW,
-            )
-            .is_ok()
+            if windows::Win32::System::SystemInformation::GetVersionExW(&mut info as *mut _).is_ok()
             {
                 return format!(
                     "{}.{}.{}",
