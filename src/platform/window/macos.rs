@@ -1,3 +1,5 @@
+use std::ffi::c_void;
+
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFIndex, CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -128,19 +130,6 @@ impl PlatformWindowManager {
         }
     }
 
-    fn ax_window_ref(&self, window_id: u64) -> Result<*mut objc::runtime::Object, GuiError> {
-        let wid = window_id as u32;
-        unsafe {
-            let app_ref = AXUIElementCreateApplication(wid);
-            if app_ref.is_null() {
-                return Err(GuiError::PlatformError(format!(
-                    "AXUIElementCreateApplication failed for PID {wid}"
-                )));
-            }
-            Ok(app_ref)
-        }
-    }
-
     fn ax_get_window_list(&self, pid: u32) -> Result<Vec<u64>, GuiError> {
         unsafe {
             let app = AXUIElementCreateApplication(pid);
@@ -149,46 +138,46 @@ impl PlatformWindowManager {
             }
 
             let cf_string = CFString::new("AXWindows");
-            let mut windows_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut windows_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
-                app,
-                cf_string.as_concrete_TypeRef(),
-                &mut windows_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                app as *const c_void,
+                cf_string.as_concrete_TypeRef() as *const c_void,
+                &mut windows_ref,
             );
 
-            CFRelease(app as *mut _);
+            CFRelease(app as *const c_void);
 
             if result != 0 || windows_ref.is_null() {
                 return Ok(vec![]);
             }
 
             let mut ids = Vec::new();
-            let count: CFIndex = CFArrayGetCount(windows_ref as *mut _);
+            let count: CFIndex = CFArrayGetCount(windows_ref);
             for i in 0..count {
-                let ax_window = CFArrayGetValueAtIndex(windows_ref as *mut _, i);
+                let ax_window = CFArrayGetValueAtIndex(windows_ref, i);
                 if !ax_window.is_null() {
-                    let wid = ax_get_window_id(ax_window as *mut _);
+                    let wid = ax_get_window_id(ax_window);
                     if wid > 0 {
                         ids.push(wid as u64);
                     }
                 }
             }
-            CFRelease(windows_ref as *mut _);
+            CFRelease(windows_ref);
             Ok(ids)
         }
     }
 
     fn ax_get_attribute_i32(
         &self,
-        ax_window: *mut objc::runtime::Object,
+        ax_window: *mut c_void,
         attribute: &CFString,
     ) -> Result<i32, GuiError> {
         unsafe {
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
-                ax_window,
-                attribute.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                ax_window as *const c_void,
+                attribute.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result != 0 || val_ref.is_null() {
                 return Err(GuiError::PlatformError("AX attribute not found".into()));
@@ -200,16 +189,16 @@ impl PlatformWindowManager {
 
     fn ax_set_attribute_i32(
         &self,
-        ax_window: *mut objc::runtime::Object,
+        ax_window: *mut c_void,
         attribute: &CFString,
         value: i32,
     ) -> Result<(), GuiError> {
         unsafe {
             let num = CFNumber::from(value);
             let result = AXUIElementSetAttributeValue(
-                ax_window,
-                attribute.as_concrete_TypeRef(),
-                num.as_concrete_TypeRef(),
+                ax_window as *const c_void,
+                attribute.as_concrete_TypeRef() as *const c_void,
+                num.as_concrete_TypeRef() as *const c_void,
             );
             if result != 0 {
                 return Err(GuiError::PlatformError(format!(
@@ -222,7 +211,7 @@ impl PlatformWindowManager {
 
     fn ax_set_point(
         &self,
-        ax_window: *mut objc::runtime::Object,
+        ax_window: *mut c_void,
         attribute: &CFString,
         x: f32,
         y: f32,
@@ -230,9 +219,9 @@ impl PlatformWindowManager {
         unsafe {
             let dict = create_point_dict(x as f64, y as f64);
             let result = AXUIElementSetAttributeValue(
-                ax_window,
-                attribute.as_concrete_TypeRef(),
-                dict.as_concrete_TypeRef(),
+                ax_window as *const c_void,
+                attribute.as_concrete_TypeRef() as *const c_void,
+                dict.as_concrete_TypeRef() as *const c_void,
             );
             if result != 0 {
                 return Err(GuiError::PlatformError(format!(
@@ -245,7 +234,7 @@ impl PlatformWindowManager {
 
     fn ax_set_size(
         &self,
-        ax_window: *mut objc::runtime::Object,
+        ax_window: *mut c_void,
         attribute: &CFString,
         w: f32,
         h: f32,
@@ -253,9 +242,9 @@ impl PlatformWindowManager {
         unsafe {
             let dict = create_size_dict(w as f64, h as f64);
             let result = AXUIElementSetAttributeValue(
-                ax_window,
-                attribute.as_concrete_TypeRef(),
-                dict.as_concrete_TypeRef(),
+                ax_window as *const c_void,
+                attribute.as_concrete_TypeRef() as *const c_void,
+                dict.as_concrete_TypeRef() as *const c_void,
             );
             if result != 0 {
                 return Err(GuiError::PlatformError(format!(
@@ -268,11 +257,14 @@ impl PlatformWindowManager {
 
     fn ax_perform_action(
         &self,
-        ax_window: *mut objc::runtime::Object,
+        ax_window: *mut c_void,
         action: &CFString,
     ) -> Result<(), GuiError> {
         unsafe {
-            let result = AXUIElementPerformAction(ax_window, action.as_concrete_TypeRef());
+            let result = AXUIElementPerformAction(
+                ax_window as *const c_void,
+                action.as_concrete_TypeRef() as *const c_void,
+            );
             if result != 0 {
                 return Err(GuiError::PlatformError(format!(
                     "AX perform action failed: {result}"
@@ -284,7 +276,7 @@ impl PlatformWindowManager {
 
     fn with_window_ax<F>(&self, window_id: u64, f: F) -> Result<(), GuiError>
     where
-        F: Fn(*mut objc::runtime::Object) -> Result<(), GuiError>,
+        F: Fn(*mut c_void) -> Result<(), GuiError>,
     {
         let windows = self.list_windows()?;
         let win = windows
@@ -308,14 +300,14 @@ impl PlatformWindowManager {
             }
 
             let ax_windows = CFString::new("AXWindows");
-            let mut windows_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut windows_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
-                app,
-                ax_windows.as_concrete_TypeRef(),
-                &mut windows_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                app as *const c_void,
+                ax_windows.as_concrete_TypeRef() as *const c_void,
+                &mut windows_ref,
             );
 
-            CFRelease(app as *mut _);
+            CFRelease(app as *const c_void);
 
             if result != 0 || windows_ref.is_null() {
                 return Err(GuiError::PlatformError(
@@ -323,24 +315,24 @@ impl PlatformWindowManager {
                 ));
             }
 
-            let count: CFIndex = CFArrayGetCount(windows_ref as *mut _);
+            let count: CFIndex = CFArrayGetCount(windows_ref);
             let mut found = false;
 
             for i in 0..count {
-                let ax_win = CFArrayGetValueAtIndex(windows_ref as *mut _, i);
+                let ax_win = CFArrayGetValueAtIndex(windows_ref, i);
                 if ax_win.is_null() {
                     continue;
                 }
 
-                let wid = ax_get_window_id(ax_win as *mut _);
+                let wid = ax_get_window_id(ax_win);
                 if wid as u64 == window_id {
-                    f(ax_win as *mut _)?;
+                    f(ax_win)?;
                     found = true;
                     break;
                 }
             }
 
-            CFRelease(windows_ref as *mut _);
+            CFRelease(windows_ref);
 
             if !found {
                 return Err(GuiError::PlatformError(format!(
@@ -367,9 +359,9 @@ impl PlatformWindowManager {
                 let focused = CFString::new("AXFocused");
                 let true_val = CFBoolean::true_value();
                 let result = AXUIElementSetAttributeValue(
-                    ax_win,
-                    focused.as_concrete_TypeRef(),
-                    true_val.as_concrete_TypeRef(),
+                    ax_win as *const c_void,
+                    focused.as_concrete_TypeRef() as *const c_void,
+                    true_val.as_concrete_TypeRef() as *const c_void,
                 );
                 if result != 0 {
                     return Err(GuiError::PlatformError(format!(
@@ -398,7 +390,7 @@ impl PlatformWindowManager {
     }
 
     pub fn minimize_window(&self, window_id: u64) -> Result<(), GuiError> {
-        let minimize = CFString::new("AXPressMiniaturize");
+        let _minimize = CFString::new("AXPressMiniaturize");
         let mini_button = CFString::new("AXMiniaturizeButton");
         self.with_window_ax(window_id, |ax_win| {
             let result = self.ax_perform_action(ax_win, &mini_button);
@@ -442,11 +434,11 @@ impl PlatformWindowManager {
 
         let _ = self.with_window_ax(window_id, |ax_win| {
             unsafe {
-                let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+                let mut val_ref: *mut c_void = std::ptr::null_mut();
                 let r = AXUIElementCopyAttributeValue(
-                    ax_win,
-                    title_attr.as_concrete_TypeRef(),
-                    &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                    ax_win as *const c_void,
+                    title_attr.as_concrete_TypeRef() as *const c_void,
+                    &mut val_ref,
                 );
                 if r == 0 && !val_ref.is_null() {
                     let cf_str = CFString::wrap_under_get_rule(val_ref as *mut _);
@@ -471,11 +463,11 @@ impl PlatformWindowManager {
 
         self.with_window_ax(window_id, |ax_win| {
             unsafe {
-                let mut pos_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+                let mut pos_ref: *mut c_void = std::ptr::null_mut();
                 if AXUIElementCopyAttributeValue(
-                    ax_win,
-                    position_attr.as_concrete_TypeRef(),
-                    &mut pos_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                    ax_win as *const c_void,
+                    position_attr.as_concrete_TypeRef() as *const c_void,
+                    &mut pos_ref,
                 ) == 0
                 {
                     let pos_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(pos_ref as *mut _);
@@ -485,11 +477,11 @@ impl PlatformWindowManager {
                     }
                 }
 
-                let mut size_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+                let mut size_ref: *mut c_void = std::ptr::null_mut();
                 if AXUIElementCopyAttributeValue(
-                    ax_win,
-                    size_attr.as_concrete_TypeRef(),
-                    &mut size_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                    ax_win as *const c_void,
+                    size_attr.as_concrete_TypeRef() as *const c_void,
+                    &mut size_ref,
                 ) == 0
                 {
                     let size_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(size_ref as *mut _);
@@ -565,14 +557,14 @@ fn create_size_dict(w: f64, h: f64) -> CFDictionary<CFString, CFType> {
     ])
 }
 
-fn ax_get_window_id(ax_win: *mut objc::runtime::Object) -> u32 {
+fn ax_get_window_id(ax_win: *mut c_void) -> u32 {
     unsafe {
         let attr = CFString::new("AXWindowID");
-        let mut wid_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+        let mut wid_ref: *mut c_void = std::ptr::null_mut();
         let result = AXUIElementCopyAttributeValue(
-            ax_win,
-            attr.as_concrete_TypeRef(),
-            &mut wid_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+            ax_win as *const c_void,
+            attr.as_concrete_TypeRef() as *const c_void,
+            &mut wid_ref,
         );
         if result == 0 && !wid_ref.is_null() {
             let num = CFNumber::wrap_under_get_rule(wid_ref as *mut _);
@@ -584,25 +576,25 @@ fn ax_get_window_id(ax_win: *mut objc::runtime::Object) -> u32 {
 }
 
 extern "C" {
-    fn AXUIElementCreateApplication(pid: u32) -> *mut objc::runtime::Object;
+    fn AXUIElementCreateApplication(pid: u32) -> *mut c_void;
     fn AXUIElementCopyAttributeValue(
-        element: *mut objc::runtime::Object,
-        attribute: *mut objc::runtime::Object,
-        value: *mut *mut objc::runtime::Object,
+        element: *const c_void,
+        attribute: *const c_void,
+        value: *mut *mut c_void,
     ) -> i32;
     fn AXUIElementSetAttributeValue(
-        element: *mut objc::runtime::Object,
-        attribute: *mut objc::runtime::Object,
-        value: *mut objc::runtime::Object,
+        element: *const c_void,
+        attribute: *const c_void,
+        value: *const c_void,
     ) -> i32;
     fn AXUIElementPerformAction(
-        element: *mut objc::runtime::Object,
-        action: *mut objc::runtime::Object,
+        element: *const c_void,
+        action: *const c_void,
     ) -> i32;
-    fn CFArrayGetCount(array: *mut objc::runtime::Object) -> CFIndex;
+    fn CFArrayGetCount(array: *const c_void) -> CFIndex;
     fn CFArrayGetValueAtIndex(
-        array: *mut objc::runtime::Object,
+        array: *const c_void,
         index: CFIndex,
-    ) -> *mut objc::runtime::Object;
-    fn CFRelease(obj: *mut objc::runtime::Object);
+    ) -> *mut c_void;
+    fn CFRelease(obj: *const c_void);
 }

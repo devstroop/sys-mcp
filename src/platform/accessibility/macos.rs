@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::ffi::c_void;
 
 use core_foundation::base::{CFIndex, CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -13,31 +13,31 @@ use crate::gui::types::*;
 pub struct PlatformAccessibility;
 
 extern "C" {
-    fn AXUIElementCreateApplication(pid: u32) -> *mut objc::runtime::Object;
+    fn AXUIElementCreateApplication(pid: u32) -> *mut c_void;
     fn AXUIElementCopyAttributeValue(
-        element: *mut objc::runtime::Object,
-        attribute: *mut objc::runtime::Object,
-        value: *mut *mut objc::runtime::Object,
+        element: *const c_void,
+        attribute: *const c_void,
+        value: *mut *mut c_void,
     ) -> i32;
     fn AXUIElementCopyAttributeNames(
-        element: *mut objc::runtime::Object,
-        names: *mut *mut objc::runtime::Object,
+        element: *const c_void,
+        names: *mut *mut c_void,
     ) -> i32;
     fn AXUIElementCopyActionNames(
-        element: *mut objc::runtime::Object,
-        names: *mut *mut objc::runtime::Object,
+        element: *const c_void,
+        names: *mut *mut c_void,
     ) -> i32;
     fn AXUIElementIsAttributeSettable(
-        element: *mut objc::runtime::Object,
-        attribute: *mut objc::runtime::Object,
+        element: *const c_void,
+        attribute: *const c_void,
         settable: *mut u8,
     ) -> i32;
-    fn CFArrayGetCount(array: *mut objc::runtime::Object) -> CFIndex;
+    fn CFArrayGetCount(array: *const c_void) -> CFIndex;
     fn CFArrayGetValueAtIndex(
-        array: *mut objc::runtime::Object,
+        array: *const c_void,
         index: CFIndex,
-    ) -> *mut objc::runtime::Object;
-    fn CFRelease(obj: *mut objc::runtime::Object);
+    ) -> *mut c_void;
+    fn CFRelease(obj: *const c_void);
 }
 
 impl PlatformAccessibility {
@@ -56,7 +56,7 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_app_ref(pid: u32) -> Result<*mut objc::runtime::Object, GuiError> {
+    fn get_ax_app_ref(pid: u32) -> Result<*mut c_void, GuiError> {
         unsafe {
             let app = AXUIElementCreateApplication(pid);
             if app.is_null() {
@@ -69,71 +69,71 @@ impl PlatformAccessibility {
     }
 
     fn get_ax_windows(
-        app: *mut objc::runtime::Object,
-    ) -> Result<Vec<*mut objc::runtime::Object>, GuiError> {
+        app: *const c_void,
+    ) -> Result<Vec<*mut c_void>, GuiError> {
         unsafe {
             let attr = CFString::new("AXWindows");
-            let mut windows_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut windows_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 app,
-                attr.as_concrete_TypeRef(),
-                &mut windows_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut windows_ref,
             );
             if result != 0 || windows_ref.is_null() {
                 return Ok(vec![]);
             }
 
-            let count = CFArrayGetCount(windows_ref as *mut _);
+            let count = CFArrayGetCount(windows_ref);
             let mut windows = Vec::new();
             for i in 0..count {
-                let win = CFArrayGetValueAtIndex(windows_ref as *mut _, i);
+                let win = CFArrayGetValueAtIndex(windows_ref, i);
                 if !win.is_null() {
-                    windows.push(win as *mut _);
+                    windows.push(win);
                 }
             }
-            CFRelease(windows_ref as *mut _);
+            CFRelease(windows_ref);
             Ok(windows)
         }
     }
 
     fn get_ax_children(
-        element: *mut objc::runtime::Object,
-    ) -> Result<Vec<*mut objc::runtime::Object>, GuiError> {
+        element: *const c_void,
+    ) -> Result<Vec<*mut c_void>, GuiError> {
         unsafe {
             let attr = CFString::new("AXChildren");
-            let mut children_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut children_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut children_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut children_ref,
             );
             if result != 0 || children_ref.is_null() {
                 return Ok(vec![]);
             }
 
-            let count = CFArrayGetCount(children_ref as *mut _);
+            let count = CFArrayGetCount(children_ref);
             let mut children = Vec::new();
             for i in 0..count {
-                let child = CFArrayGetValueAtIndex(children_ref as *mut _, i);
+                let child = CFArrayGetValueAtIndex(children_ref, i);
                 if !child.is_null() {
-                    children.push(child as *mut _);
+                    children.push(child);
                 }
             }
-            CFRelease(children_ref as *mut _);
+            CFRelease(children_ref);
             Ok(children)
         }
     }
 
     fn get_ax_string_attribute(
-        element: *mut objc::runtime::Object,
+        element: *const c_void,
         attr: &CFString,
     ) -> Option<String> {
         unsafe {
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result == 0 && !val_ref.is_null() {
                 let cf_str = CFString::wrap_under_get_rule(val_ref as *mut _);
@@ -147,15 +147,15 @@ impl PlatformAccessibility {
     }
 
     fn get_ax_number_attribute(
-        element: *mut objc::runtime::Object,
+        element: *const c_void,
         attr: &CFString,
     ) -> Option<f64> {
         unsafe {
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result == 0 && !val_ref.is_null() {
                 let num = CFNumber::wrap_under_get_rule(val_ref as *mut _);
@@ -166,13 +166,13 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_bool_attribute(element: *mut objc::runtime::Object, attr: &CFString) -> Option<bool> {
+    fn get_ax_bool_attribute(element: *const c_void, attr: &CFString) -> Option<bool> {
         unsafe {
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result == 0 && !val_ref.is_null() {
                 let boolean = CFBoolean::wrap_under_get_rule(val_ref as *mut _);
@@ -182,14 +182,14 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_position(element: *mut objc::runtime::Object) -> Option<(f64, f64)> {
+    fn get_ax_position(element: *const c_void) -> Option<(f64, f64)> {
         unsafe {
             let attr = CFString::new("AXPosition");
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result == 0 && !val_ref.is_null() {
                 let dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(val_ref as *mut _);
@@ -199,14 +199,14 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_size(element: *mut objc::runtime::Object) -> Option<(f64, f64)> {
+    fn get_ax_size(element: *const c_void) -> Option<(f64, f64)> {
         unsafe {
             let attr = CFString::new("AXSize");
-            let mut val_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
                 element,
-                attr.as_concrete_TypeRef(),
-                &mut val_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                attr.as_concrete_TypeRef() as *const c_void,
+                &mut val_ref,
             );
             if result == 0 && !val_ref.is_null() {
                 let dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(val_ref as *mut _);
@@ -216,32 +216,32 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_actions(element: *mut objc::runtime::Object) -> Vec<String> {
+    fn get_ax_actions(element: *const c_void) -> Vec<String> {
         unsafe {
-            let mut names_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+            let mut names_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyActionNames(
                 element,
-                &mut names_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+                &mut names_ref,
             );
             if result != 0 || names_ref.is_null() {
                 return vec![];
             }
 
-            let count = CFArrayGetCount(names_ref as *mut _);
+            let count = CFArrayGetCount(names_ref);
             let mut actions = Vec::new();
             for i in 0..count {
-                let name = CFArrayGetValueAtIndex(names_ref as *mut _, i);
+                let name = CFArrayGetValueAtIndex(names_ref, i);
                 if !name.is_null() {
                     let cf_str = CFString::wrap_under_get_rule(name as *mut _);
                     actions.push(cf_str.to_string());
                 }
             }
-            CFRelease(names_ref as *mut _);
+            CFRelease(names_ref);
             actions
         }
     }
 
-    fn get_ax_states(element: *mut objc::runtime::Object) -> Vec<String> {
+    fn get_ax_states(element: *const c_void) -> Vec<String> {
         let mut states = Vec::new();
 
         if let Some(focused) = Self::get_ax_bool_attribute(element, &CFString::new("AXFocused")) {
@@ -269,12 +269,12 @@ impl PlatformAccessibility {
         states
     }
 
-    fn get_ax_element_id(element: *mut objc::runtime::Object) -> String {
+    fn get_ax_element_id(element: *const c_void) -> String {
         format!("ax:{:p}", element)
     }
 
     fn build_ax_node(
-        element: *mut objc::runtime::Object,
+        element: *const c_void,
         depth: u32,
     ) -> Result<AccessibilityNode, GuiError> {
         let id = Self::get_ax_element_id(element);
@@ -352,13 +352,13 @@ impl PlatformAccessibility {
         if let Some(ax_win) = windows.first() {
             let node = Self::build_ax_node(*ax_win, depth)?;
             unsafe {
-                CFRelease(app as *mut _);
+                CFRelease(app as *const c_void);
             }
             return Ok(node);
         }
 
         unsafe {
-            CFRelease(app as *mut _);
+            CFRelease(app as *const c_void);
         }
         Err(GuiError::PlatformError(
             "No accessible windows found".into(),
@@ -406,7 +406,7 @@ impl PlatformAccessibility {
         }
     }
 
-    pub fn get_element_properties(&self, element_id: &str) -> Result<AccessibilityNode, GuiError> {
+    pub fn get_element_properties(&self, _element_id: &str) -> Result<AccessibilityNode, GuiError> {
         Err(GuiError::UnsupportedCapability(
             "get_element_properties by ID not yet implemented on macOS".into(),
         ))

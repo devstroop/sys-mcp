@@ -525,7 +525,7 @@ impl SystemMonitor {
                     if line.contains("CPU usage:") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         for (i, part) in parts.iter().enumerate() {
-                            if part.ends_with("%user") || part == "%user" {
+                            if part.ends_with("%user") || *part == "%user" {
                                 if let Some(pct) = parts.get(i.saturating_sub(1)) {
                                     stats.cpu_usage_percent =
                                         pct.trim_end_matches('%').parse().unwrap_or(0.0);
