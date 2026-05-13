@@ -28,7 +28,7 @@
 | 11 | Multi-monitor support is incomplete | 🟢 Open |
 | 12 | No rate limiting on web preview | ✅ Fixed |
 | 13 | CORS is overly permissive | ✅ Fixed |
-| 14 | CI only runs on Linux | 🟢 Open |
+| 14 | CI only runs on Linux | ✅ Fixed |
 | 15 | No resource or prompt support in MCP protocol | 🟢 Open |
 | 16 | Template matching (Phase 7) | 🔵 Open |
 | 17 | Key combo duplication | 🔵 Open |
