@@ -10,69 +10,110 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: sys-mcp
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: sys-mcp
-            asset_name: sys-mcp-x86_64-linux
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: sys-mcp
-            asset_name: sys-mcp-x86_64-macos
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: sys-mcp
-            asset_name: sys-mcp-aarch64-macos
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: sys-mcp.exe
-            asset_name: sys-mcp-x86_64-windows.exe
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install system dependencies
         run: sudo apt-get install -y libx11-dev libxtst-dev libxcb-shm0-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: v1-${{ matrix.target }}
+          key: v1-linux
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          name: sys-mcp-x86_64-linux
+          path: target/release/sys-mcp
 
-  release:
-    name: Create release
-    needs: build
+  build-windows:
+    name: Build Windows
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-windows
+
+      - name: Install cross
+        run: cargo install cross --version 0.2.1
+
+      - name: Build release
+        run: cross build --release --target x86_64-pc-windows-msvc
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sys-mcp-x86_64-windows
+          path: target/x86_64-pc-windows-msvc/release/sys-mcp.exe
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: v1-macos
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build aarch64
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Upload x86_64
+        uses: actions/upload-artifact@v4
+        with:
+          name: sys-mcp-x86_64-macos
+          path: target/x86_64-apple-darwin/release/sys-mcp
+
+      - name: Upload aarch64
+        uses: actions/upload-artifact@v4
+        with:
+          name: sys-mcp-aarch64-macos
+          path: target/aarch64-apple-darwin/release/sys-mcp
+
+  release:
+    name: Create release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
