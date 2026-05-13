@@ -55,7 +55,7 @@ pub struct PlatformAccessibility {
 impl PlatformAccessibility {
     pub fn new() -> Result<Self, GuiError> {
         unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()
                 .map_err(|e| GuiError::PlatformError(format!("COM init failed: {e}")))?;
         }
 
@@ -150,15 +150,15 @@ impl PlatformAccessibility {
         let cx = if w > 0 { Some(x + w as i32 / 2) } else { None };
         let cy = if h > 0 { Some(y + h as i32 / 2) } else { None };
 
-        let id = format!("uia:{:p}", element as *const _ as usize);
+        let id = format!("uia:{:p}", element as *const _);
 
         let mut children = Vec::new();
         if depth > 0 {
             unsafe {
                 if let Ok(child_array) =
-                    element.FindAll(TreeScope_Children, &automation.CreateTrueCondition()?)
+                    element.FindAll(TreeScope_Children, &automation.CreateTrueCondition().map_err(|e| GuiError::PlatformError(format!("CreateTrueCondition: {e}")))?)
                 {
-                    let count = child_array.Length()? as usize;
+                    let count = child_array.Length().map_err(|e| GuiError::PlatformError(format!("Length: {e}")))? as usize;
                     for i in 0..count {
                         if let Ok(child) = child_array.GetElement(i as i32) {
                             if let Ok(node) = Self::build_node(automation, &child, depth - 1) {
@@ -208,7 +208,7 @@ impl PlatformAccessibility {
 
                 let mut current = focused;
                 loop {
-                    if let Ok(parent) = current.GetParentElement() {
+                    if let Ok(parent) = self.automation.GetParentElement(&current) {
                         let ct = Self::get_element_control_type(&parent);
                         if ct == UIA_WindowControlTypeId
                             || parent

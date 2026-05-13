@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use std::ffi::c_void;
 
 use core_foundation::array::CFArray;
