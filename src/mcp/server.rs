@@ -160,6 +160,24 @@ impl GuiMcpServer {
                 .await;
         }
 
+        // Always start HTTP MCP transport when web preview is on, so agents
+        // can connect remotely even when the primary transport is stdio.
+        #[cfg(feature = "web-preview")]
+        if self.config.web_preview && self.config.transport != TransportMode::Http {
+            let cfg = self.config.clone();
+            let handler = self.handler.clone();
+            tokio::spawn(async move {
+                let session_mgr =
+                    create_session_manager(cfg.max_sessions, cfg.session_ttl_secs);
+                let http_server = crate::mcp::http_transport::HttpServer::new(
+                    cfg, session_mgr, handler,
+                );
+                if let Err(e) = http_server.run().await {
+                    log::error!("MCP HTTP transport failed: {e}");
+                }
+            });
+        }
+
         match self.config.transport {
             TransportMode::Stdio => {
                 self.run_stdio().await?;
