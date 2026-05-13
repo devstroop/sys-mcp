@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)]
-
 use std::ffi::c_void;
 
 use core_foundation::base::{CFIndex, CFType, TCFType};
@@ -7,7 +5,7 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use objc::{msg_send, sel, sel_impl, class};
+use objc::{class, msg_send, sel, sel_impl};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -21,15 +19,9 @@ extern "C" {
         attribute: *const c_void,
         value: *mut *mut c_void,
     ) -> i32;
-    fn AXUIElementCopyActionNames(
-        element: *const c_void,
-        names: *mut *mut c_void,
-    ) -> i32;
+    fn AXUIElementCopyActionNames(element: *const c_void, names: *mut *mut c_void) -> i32;
     fn CFArrayGetCount(array: *const c_void) -> CFIndex;
-    fn CFArrayGetValueAtIndex(
-        array: *const c_void,
-        index: CFIndex,
-    ) -> *mut c_void;
+    fn CFArrayGetValueAtIndex(array: *const c_void, index: CFIndex) -> *mut c_void;
     fn CFRelease(obj: *const c_void);
 }
 
@@ -39,7 +31,6 @@ impl PlatformAccessibility {
     }
 
     fn get_ax_focused_app() -> Result<u32, GuiError> {
-        #[allow(unexpected_cfgs)]
         unsafe {
             let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
             let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
@@ -62,9 +53,7 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_windows(
-        app: *const c_void,
-    ) -> Result<Vec<*mut c_void>, GuiError> {
+    fn get_ax_windows(app: *const c_void) -> Result<Vec<*mut c_void>, GuiError> {
         unsafe {
             let attr = CFString::new("AXWindows");
             let mut windows_ref: *mut c_void = std::ptr::null_mut();
@@ -90,9 +79,7 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_children(
-        element: *const c_void,
-    ) -> Result<Vec<*mut c_void>, GuiError> {
+    fn get_ax_children(element: *const c_void) -> Result<Vec<*mut c_void>, GuiError> {
         unsafe {
             let attr = CFString::new("AXChildren");
             let mut children_ref: *mut c_void = std::ptr::null_mut();
@@ -118,10 +105,7 @@ impl PlatformAccessibility {
         }
     }
 
-    fn get_ax_string_attribute(
-        element: *const c_void,
-        attr: &CFString,
-    ) -> Option<String> {
+    fn get_ax_string_attribute(element: *const c_void, attr: &CFString) -> Option<String> {
         unsafe {
             let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
@@ -141,10 +125,7 @@ impl PlatformAccessibility {
     }
 
     #[allow(dead_code)]
-    fn get_ax_number_attribute(
-        element: *const c_void,
-        attr: &CFString,
-    ) -> Option<f64> {
+    fn get_ax_number_attribute(element: *const c_void, attr: &CFString) -> Option<f64> {
         unsafe {
             let mut val_ref: *mut c_void = std::ptr::null_mut();
             let result = AXUIElementCopyAttributeValue(
@@ -214,10 +195,7 @@ impl PlatformAccessibility {
     fn get_ax_actions(element: *const c_void) -> Vec<String> {
         unsafe {
             let mut names_ref: *mut c_void = std::ptr::null_mut();
-            let result = AXUIElementCopyActionNames(
-                element,
-                &mut names_ref,
-            );
+            let result = AXUIElementCopyActionNames(element, &mut names_ref);
             if result != 0 || names_ref.is_null() {
                 return vec![];
             }
@@ -268,10 +246,7 @@ impl PlatformAccessibility {
         format!("ax:{:p}", element)
     }
 
-    fn build_ax_node(
-        element: *const c_void,
-        depth: u32,
-    ) -> Result<AccessibilityNode, GuiError> {
+    fn build_ax_node(element: *const c_void, depth: u32) -> Result<AccessibilityNode, GuiError> {
         let id = Self::get_ax_element_id(element);
         let role =
             Self::get_ax_string_attribute(element, &CFString::new("AXRole")).unwrap_or_default();
@@ -415,20 +390,24 @@ impl PlatformAccessibility {
 }
 
 fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let x = dict.find(CFString::new("X"))
+    let x = dict
+        .find(CFString::new("X"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let y = dict.find(CFString::new("Y"))
+    let y = dict
+        .find(CFString::new("Y"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((x, y))
 }
 
 fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let w = dict.find(CFString::new("Width"))
+    let w = dict
+        .find(CFString::new("Width"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let h = dict.find(CFString::new("Height"))
+    let h = dict
+        .find(CFString::new("Height"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((w, h))

@@ -3,16 +3,15 @@ use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
-    UIA_CONTROLTYPE_ID,
-    UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
-    UIA_EditControlTypeId, UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId,
-    UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
+    TreeScope_Children, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_ComboBoxControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
     UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
     UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId,
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TableControlTypeId,
     UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_WindowControlTypeId, UIA_WindowPatternId,
+    UIA_WindowControlTypeId, UIA_WindowPatternId, UIA_CONTROLTYPE_ID,
 };
 
 use crate::error::GuiError;
@@ -55,7 +54,8 @@ pub struct PlatformAccessibility {
 impl PlatformAccessibility {
     pub fn new() -> Result<Self, GuiError> {
         unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+                .ok()
                 .map_err(|e| GuiError::PlatformError(format!("COM init failed: {e}")))?;
         }
 
@@ -80,7 +80,11 @@ impl PlatformAccessibility {
     }
 
     fn get_element_control_type(element: &IUIAutomationElement) -> UIA_CONTROLTYPE_ID {
-        unsafe { element.CurrentControlType().unwrap_or(UIA_CONTROLTYPE_ID(0)) }
+        unsafe {
+            element
+                .CurrentControlType()
+                .unwrap_or(UIA_CONTROLTYPE_ID(0))
+        }
     }
 
     fn get_element_bounds(element: &IUIAutomationElement) -> (i32, i32, u32, u32) {
@@ -155,10 +159,16 @@ impl PlatformAccessibility {
         let mut children = Vec::new();
         if depth > 0 {
             unsafe {
-                if let Ok(child_array) =
-                    element.FindAll(TreeScope_Children, &automation.CreateTrueCondition().map_err(|e| GuiError::PlatformError(format!("CreateTrueCondition: {e}")))?)
-                {
-                    let count = child_array.Length().map_err(|e| GuiError::PlatformError(format!("Length: {e}")))? as usize;
+                if let Ok(child_array) = element.FindAll(
+                    TreeScope_Children,
+                    &automation.CreateTrueCondition().map_err(|e| {
+                        GuiError::PlatformError(format!("CreateTrueCondition: {e}"))
+                    })?,
+                ) {
+                    let count = child_array
+                        .Length()
+                        .map_err(|e| GuiError::PlatformError(format!("Length: {e}")))?
+                        as usize;
                     for i in 0..count {
                         if let Ok(child) = child_array.GetElement(i as i32) {
                             if let Ok(node) = Self::build_node(automation, &child, depth - 1) {
@@ -206,9 +216,13 @@ impl PlatformAccessibility {
                     GuiError::PlatformError(format!("GetFocusedElement failed: {e}"))
                 })?;
 
+                let tree_walker = self
+                    .automation
+                    .ControlViewWalker()
+                    .map_err(|e| GuiError::PlatformError(format!("ControlViewWalker: {e}")))?;
                 let mut current = focused;
                 loop {
-                    if let Ok(parent) = self.automation.GetParentElement(&current) {
+                    if let Ok(parent) = tree_walker.GetParentElement(&current) {
                         let ct = Self::get_element_control_type(&parent);
                         if ct == UIA_WindowControlTypeId
                             || parent

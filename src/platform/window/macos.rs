@@ -1,5 +1,3 @@
-#![allow(unexpected_cfgs)]
-
 use std::ffi::c_void;
 
 use core_foundation::array::CFArray;
@@ -15,7 +13,7 @@ use core_graphics::window::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
     kCGWindowOwnerPID,
 };
-use objc::{msg_send, sel, sel_impl, class};
+use objc::{class, msg_send, sel, sel_impl};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -119,7 +117,6 @@ impl PlatformWindowManager {
     }
 
     fn get_frontmost_pid(&self) -> Result<u32, GuiError> {
-        #[allow(unexpected_cfgs)]
         unsafe {
             let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
             let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
@@ -185,7 +182,8 @@ impl PlatformWindowManager {
                 return Err(GuiError::PlatformError("AX attribute not found".into()));
             }
             let num = CFNumber::wrap_under_get_rule(val_ref as *mut _);
-            num.to_i32().ok_or(GuiError::PlatformError("AX attribute not a number".into()))
+            num.to_i32()
+                .ok_or(GuiError::PlatformError("AX attribute not a number".into()))
         }
     }
 
@@ -258,11 +256,7 @@ impl PlatformWindowManager {
         }
     }
 
-    fn ax_perform_action(
-        &self,
-        ax_window: *mut c_void,
-        action: &CFString,
-    ) -> Result<(), GuiError> {
+    fn ax_perform_action(&self, ax_window: *mut c_void, action: &CFString) -> Result<(), GuiError> {
         unsafe {
             let result = AXUIElementPerformAction(
                 ax_window as *const c_void,
@@ -473,7 +467,8 @@ impl PlatformWindowManager {
                     &mut pos_ref,
                 ) == 0
                 {
-                    let pos_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(pos_ref as *mut _);
+                    let pos_dict =
+                        CFDictionary::<CFString, CFType>::wrap_under_get_rule(pos_ref as *mut _);
                     if let Some((px, py)) = dict_to_point(&pos_dict) {
                         region.x = px as u32;
                         region.y = py as u32;
@@ -487,7 +482,8 @@ impl PlatformWindowManager {
                     &mut size_ref,
                 ) == 0
                 {
-                    let size_dict = CFDictionary::<CFString, CFType>::wrap_under_get_rule(size_ref as *mut _);
+                    let size_dict =
+                        CFDictionary::<CFString, CFType>::wrap_under_get_rule(size_ref as *mut _);
                     if let Some((sw, sh)) = dict_to_size(&size_dict) {
                         region.width = sw as u32;
                         region.height = sh as u32;
@@ -530,20 +526,24 @@ fn extract_rect_from_dict_value(val: &CFType) -> Option<(f64, f64, f64, f64)> {
 }
 
 fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let x = dict.find(CFString::new("X"))
+    let x = dict
+        .find(CFString::new("X"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let y = dict.find(CFString::new("Y"))
+    let y = dict
+        .find(CFString::new("Y"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((x, y))
 }
 
 fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let w = dict.find(CFString::new("Width"))
+    let w = dict
+        .find(CFString::new("Width"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let h = dict.find(CFString::new("Height"))
+    let h = dict
+        .find(CFString::new("Height"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((w, h))
@@ -593,14 +593,8 @@ extern "C" {
         attribute: *const c_void,
         value: *const c_void,
     ) -> i32;
-    fn AXUIElementPerformAction(
-        element: *const c_void,
-        action: *const c_void,
-    ) -> i32;
+    fn AXUIElementPerformAction(element: *const c_void, action: *const c_void) -> i32;
     fn CFArrayGetCount(array: *const c_void) -> CFIndex;
-    fn CFArrayGetValueAtIndex(
-        array: *const c_void,
-        index: CFIndex,
-    ) -> *mut c_void;
+    fn CFArrayGetValueAtIndex(array: *const c_void, index: CFIndex) -> *mut c_void;
     fn CFRelease(obj: *const c_void);
 }

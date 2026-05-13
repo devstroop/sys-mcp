@@ -86,6 +86,9 @@ core-graphics = "0.24"
 cocoa = "0.26"
 objc = "0.2"
 
+[lints.rust]
+unexpected_cfgs = "allow"
+
 [features]
 default = ["ocr", "clipboard", "web-preview", "detection"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
