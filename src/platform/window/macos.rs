@@ -43,16 +43,16 @@ impl PlatformWindowManager {
 
             for i in 0..count {
                 if let Some(dict_ref) = array.get(i) {
-                    let dict: &CFDictionary<CFString, CFType> = &*dict_ref;
+                    let dict: &CFDictionary<CFString, CFType> = &dict_ref;
 
                     let window_id = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowNumber))
+                        .find(CFString::wrap_under_get_rule(kCGWindowNumber))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i64())
                         .unwrap_or(0) as u64;
 
                     let layer = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowLayer))
+                        .find(CFString::wrap_under_get_rule(kCGWindowLayer))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i32())
                         .unwrap_or(0);
@@ -62,7 +62,7 @@ impl PlatformWindowManager {
                     }
 
                     let title = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowName))
+                        .find(CFString::wrap_under_get_rule(kCGWindowName))
                         .and_then(|v| v.downcast::<CFString>())
                         .map(|s| s.to_string())
                         .unwrap_or_default();
@@ -72,19 +72,19 @@ impl PlatformWindowManager {
                     }
 
                     let process_name = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowOwnerName))
+                        .find(CFString::wrap_under_get_rule(kCGWindowOwnerName))
                         .and_then(|v| v.downcast::<CFString>())
                         .map(|s| s.to_string());
 
                     let process_id = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowOwnerPID))
+                        .find(CFString::wrap_under_get_rule(kCGWindowOwnerPID))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i32())
                         .map(|pid| pid as u32);
 
                     let (x, y, w, h) = dict
-                        .find(&CFString::wrap_under_get_rule(kCGWindowBounds))
-                        .and_then(|v| extract_rect_from_dict_value(&*v))
+                        .find(CFString::wrap_under_get_rule(kCGWindowBounds))
+                        .and_then(|v| extract_rect_from_dict_value(&v))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
                     windows.push(WindowInfo {
