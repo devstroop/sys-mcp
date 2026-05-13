@@ -167,11 +167,9 @@ impl GuiMcpServer {
             let cfg = self.config.clone();
             let handler = self.handler.clone();
             tokio::spawn(async move {
-                let session_mgr =
-                    create_session_manager(cfg.max_sessions, cfg.session_ttl_secs);
-                let http_server = crate::mcp::http_transport::HttpServer::new(
-                    cfg, session_mgr, handler,
-                );
+                let session_mgr = create_session_manager(cfg.max_sessions, cfg.session_ttl_secs);
+                let http_server =
+                    crate::mcp::http_transport::HttpServer::new(cfg, session_mgr, handler);
                 if let Err(e) = http_server.run().await {
                     log::error!("MCP HTTP transport failed: {e}");
                 }

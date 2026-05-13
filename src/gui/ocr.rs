@@ -158,10 +158,7 @@ fn iou(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> f32 {
     }
 }
 
-fn boxes_overlap_vertically(
-    a: (i32, i32, i32, i32),
-    b: (i32, i32, i32, i32),
-) -> bool {
+fn boxes_overlap_vertically(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
     let (_, ay, _, ah) = a;
     let (_, by, _, bh) = b;
     let overlap = (ay + ah).min(by + bh) - ay.max(by);
@@ -186,8 +183,7 @@ fn merge_lines(lines: Vec<OcrLine>, iou_threshold: f32) -> Vec<OcrLine> {
             let b = (candidate.x, candidate.y, candidate.width, candidate.height);
 
             let overlap = iou(a, b) > iou_threshold
-                || (boxes_overlap_vertically(a, b)
-                    && (b.0 - (a.0 + a.2)).abs() < a.2.max(b.2) / 2);
+                || (boxes_overlap_vertically(a, b) && (b.0 - (a.0 + a.2)).abs() < a.2.max(b.2) / 2);
 
             if overlap {
                 let x1 = existing.x.min(candidate.x);
