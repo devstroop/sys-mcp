@@ -1,11 +1,11 @@
-# Sys MCP
+# sys-mcp
 
 MCP server for system automation — screen capture, OCR, input control, window management, file system, process monitoring, and MCP server passthrough.
 
 Built in Rust for performance, powered by [rustautogui](https://gitlab.devstroop.com/devstroop/rustautogui) for cross-platform GUI automation and [ocrs](https://github.com/robertknight/ocrs) for on-device OCR.
 
-[![CI](https://github.com/devstroop/gui-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/devstroop/gui-mcp/actions)
-[![Release](https://github.com/devstroop/gui-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/devstroop/gui-mcp/releases)
+[![CI](https://github.com/devstroop/sys-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/devstroop/sys-mcp/actions)
+[![Release](https://github.com/devstroop/sys-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/devstroop/sys-mcp/releases)
 
 ## Install
 
@@ -13,119 +13,78 @@ Download a prebuilt binary for your platform:
 
 | Platform | Architecture | Download |
 |---|---|---|
-| Linux | x86_64 | [sys-mcp-x86_64-linux](https://github.com/devstroop/gui-mcp/releases/latest) |
-| macOS | Intel | [sys-mcp-x86_64-macos](https://github.com/devstroop/gui-mcp/releases/latest) |
-| macOS | Apple Silicon | [sys-mcp-aarch64-macos](https://github.com/devstroop/gui-mcp/releases/latest) |
-| Windows | x86_64 | [sys-mcp-x86_64-windows.exe](https://github.com/devstroop/gui-mcp/releases/latest) |
+| Linux | x86_64 | [sys-mcp-x86_64-linux](https://github.com/devstroop/sys-mcp/releases/latest) |
+| macOS | Intel | [sys-mcp-x86_64-macos](https://github.com/devstroop/sys-mcp/releases/latest) |
+| macOS | Apple Silicon | [sys-mcp-aarch64-macos](https://github.com/devstroop/sys-mcp/releases/latest) |
+| Windows | x86_64 | [sys-mcp-x86_64-windows.exe](https://github.com/devstroop/sys-mcp/releases/latest) |
 
 Or build from source:
 
 ```bash
-git clone --recurse-submodules https://github.com/devstroop/gui-mcp.git
+git clone --recurse-submodules https://github.com/devstroop/sys-mcp.git
 cd sys-mcp
 cargo build --release
 # Binary: target/release/sys-mcp (or sys-mcp.exe on Windows)
 ```
 
-## Features
+## Tools
 
-### Display & Input
-| Tool | Description |
-|---|---|
-| `gui_screenshot` | Full screen capture |
-| `gui_screenshot_region` | Capture a specific region |
-| `gui_get_screen_size` | Get screen dimensions |
-| `gui_list_monitors` | List all monitors |
+### Display
+`screen_capture` · `screen_capture_region` · `screen_size` · `screen_list_monitors`
 
-### OCR & Text
-| Tool | Description |
-|---|---|
-| `gui_read_screen` | OCR on a region (on-device, no cloud) |
-| `gui_find_text` | Find text in a region |
+### OCR
+`screen_read` · `screen_find_text` · `screen_scroll_to_text`
 
 ### Input Control
-| Tool | Description |
-|---|---|
-| `gui_click`, `gui_double_click` | Mouse clicks |
-| `gui_mouse_move`, `gui_mouse_position` | Mouse movement |
-| `gui_drag` | Drag operations |
-| `gui_scroll` | Scroll wheel |
-| `gui_type_text`, `gui_press_key` | Keyboard input |
+`mouse_click` · `mouse_double_click` · `mouse_move` · `mouse_position` · `mouse_drag` · `mouse_scroll`
+`keyboard_type` · `keyboard_press`
 
 ### Clipboard
-| Tool | Description |
-|---|---|
-| `gui_get_clipboard` | Read clipboard |
-| `gui_set_clipboard` | Write clipboard |
+`clipboard_get` · `clipboard_set`
 
 ### Window Management
-| Tool | Description |
-|---|---|
-| `gui_list_windows` | List open windows |
-| `gui_get_active_window` | Get focused window |
-| `gui_focus_window` | Focus a window |
-| `gui_find_windows` | Find windows by name |
-| `gui_move_resize_window` | Move/resize windows |
-| `gui_window_action` | Min/max/close/restore |
+`window_list` · `window_active` · `window_focus` · `window_find` · `window_move_resize` · `window_action`
 
 ### Accessibility
-| Tool | Description |
-|---|---|
-| `gui_accessibility_tree` | Full accessibility tree for a window |
-| `gui_find_ui_element` | Search UI elements by name/role |
+`accessibility_tree` · `accessibility_find`
 
-### Template Matching
-| Tool | Description |
-|---|---|
-| `gui_find_image` | Find an image on screen |
-| `gui_wait_for_image` | Wait for an image to appear |
+### Object Detection
+`detect_objects` · `detect_click_object`
 
 ### File System
-| Tool | Description |
-|---|---|
-| `gui_read_file`, `gui_write_file` | Read/write files |
-| `gui_list_dir`, `gui_file_exists` | List directories, check existence |
-| `gui_delete_file`, `gui_create_dir` | Delete files, create directories |
+`fs_read` · `fs_write` · `fs_list` · `fs_exists` · `fs_delete` · `fs_create_dir`
 
 ### Shell / Terminal
-| Tool | Description |
-|---|---|
-| `gui_shell_exec` | Execute a shell command |
-| `gui_shell_open`, `gui_shell_close`, `gui_shell_list` | Manage persistent shells |
-| `gui_shell_write`, `gui_shell_read` | Interact with active shells |
+`shell_exec` · `shell_open` · `shell_write` · `shell_read` · `shell_close` · `shell_list`
 
-### System & Monitoring
-| Tool | Description |
-|---|---|
-| `process_list`, `process_kill`, `process_info` | Process management |
-| `service_list`, `service_start`, `service_stop` | Windows service manager |
-| `network_info`, `network_connections` | Network information |
-| `system_stats`, `disk_usage` | System monitoring |
-| `system_logs` | View system logs |
+### Process Manager
+`process_list` · `process_kill` · `process_info` · `process_start`
+
+### Service Manager
+`service_list` · `service_start` · `service_stop` · `service_status`
+
+### Network
+`network_info` · `network_connections`
+
+### System Monitoring
+`system_stats` · `disk_usage` · `system_logs`
 
 ### MCP Hub
+`mcp_discover` · `mcp_list` · `mcp_register` · `mcp_unregister` · `mcp_start` · `mcp_stop` · `mcp_tools` · `mcp_tool_groups` · `mcp_exec`
+
+### Utilities
+`web_preview` · `system_info` · `system_wait`
+
+## MCP Hub
+
 Discover, register, and proxy to other MCP servers on the same machine. Supports `~/.mcp/`, `.mcp/`, and npm global packages.
-
-| Tool | Description |
-|---|---|
-| `mcp_discover` | Auto-discover MCP servers |
-| `mcp_register` | Register a new MCP server |
-| `mcp_start` / `mcp_stop` | Start/stop a server |
-| `mcp_list` | List registered servers |
-| `mcp_tools` | List tools from a server |
-| `mcp_exec` | Execute a tool from a server |
-
-## MCP Hub Usage
 
 ```json
 // Discover available MCP servers
 { "tool": "mcp_discover" }
 
 // Register a server
-{
-  "tool": "mcp_register",
-  "args": { "name": "chrome", "command": "npx", "args": ["-y", "chrome-devtools-mcp"] }
-}
+{ "tool": "mcp_register", "args": { "name": "chrome", "command": "npx", "args": ["-y", "chrome-devtools-mcp"] } }
 
 // Start and use
 { "tool": "mcp_start", "args": { "name": "chrome" } }
@@ -188,9 +147,9 @@ When running on a remote machine, sys-mcp can tunnel to MCP servers on your loca
 
 | Platform | Window Mgmt | Accessibility | Input | OCR |
 |---|---|---|---|---|
-| **Windows** | Win32 API | Windows UI Automation | ✅ | ✅ |
-| **Linux** | X11 | — | ✅ | ✅ |
-| **macOS** | AppKit/CoreGraphics | macOS Accessibility API | ✅ | ✅ |
+| **Windows** | Win32 API | Windows UI Automation | yes | yes |
+| **Linux** | X11 | — | yes | yes |
+| **macOS** | AppKit/CoreGraphics | macOS Accessibility API | yes | yes |
 
 ## License
 
