@@ -1,23 +1,17 @@
-use std::collections::HashMap;
-
-use windows::core::{HSTRING, VARIANT};
-use windows::Win32::Foundation::{BOOL, VARIANT_BOOL, VARIANT_FALSE, VARIANT_TRUE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationElementArray,
-    TreeScope_Children, TreeScope_Descendants, TreeScope_Subtree, UIA_ButtonControlTypeId,
-    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
-    UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_HeaderControlTypeId,
-    UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_InvokePatternId,
-    UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
+    UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
+    UIA_EditControlTypeId, UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId,
+    UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
     UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TableControlTypeId, UIA_TogglePatternId,
+    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TableControlTypeId,
     UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_WindowPatternId,
+    UIA_WindowControlTypeId, UIA_WindowPatternId,
 };
 
 use crate::error::GuiError;
@@ -107,16 +101,14 @@ impl PlatformAccessibility {
         let mut states = Vec::new();
 
         unsafe {
-            // Check if enabled
             if let Ok(is_enabled) = element.CurrentIsEnabled() {
-                if is_enabled == VARIANT_FALSE {
+                if !is_enabled.as_bool() {
                     states.push("disabled".to_string());
                 }
             }
 
-            // Check if focused
             if let Ok(has_focus) = element.CurrentHasKeyboardFocus() {
-                if has_focus == VARIANT_TRUE {
+                if has_focus.as_bool() {
                     states.push("focused".to_string());
                 }
             }
@@ -167,7 +159,7 @@ impl PlatformAccessibility {
                 {
                     let count = child_array.Length()? as usize;
                     for i in 0..count {
-                        if let Ok(child) = child_array.GetElement(i as u32) {
+                        if let Ok(child) = child_array.GetElement(i as i32) {
                             if let Ok(node) = Self::build_node(automation, &child, depth - 1) {
                                 children.push(node);
                             }

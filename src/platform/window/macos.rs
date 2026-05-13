@@ -46,13 +46,13 @@ impl PlatformWindowManager {
                     let dict: &CFDictionary<CFString, CFType> = &*dict_ref;
 
                     let window_id = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowNumber) })
+                        .find(&CFString::wrap_under_get_rule(kCGWindowNumber))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i64())
                         .unwrap_or(0) as u64;
 
                     let layer = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowLayer) })
+                        .find(&CFString::wrap_under_get_rule(kCGWindowLayer))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i32())
                         .unwrap_or(0);
@@ -62,7 +62,7 @@ impl PlatformWindowManager {
                     }
 
                     let title = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowName) })
+                        .find(&CFString::wrap_under_get_rule(kCGWindowName))
                         .and_then(|v| v.downcast::<CFString>())
                         .map(|s| s.to_string())
                         .unwrap_or_default();
@@ -72,19 +72,19 @@ impl PlatformWindowManager {
                     }
 
                     let process_name = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowOwnerName) })
+                        .find(&CFString::wrap_under_get_rule(kCGWindowOwnerName))
                         .and_then(|v| v.downcast::<CFString>())
                         .map(|s| s.to_string());
 
                     let process_id = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowOwnerPID) })
+                        .find(&CFString::wrap_under_get_rule(kCGWindowOwnerPID))
                         .and_then(|v| v.downcast::<CFNumber>())
                         .and_then(|n| n.to_i32())
                         .map(|pid| pid as u32);
 
                     let (x, y, w, h) = dict
-                        .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowBounds) })
-                        .and_then(|v| extract_rect_from_dict_value(&*v))
+                        .find(&CFString::wrap_under_get_rule(kCGWindowBounds))
+                        .and_then(|v| extract_rect_from_dict_value(v))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
                     windows.push(WindowInfo {
@@ -117,6 +117,7 @@ impl PlatformWindowManager {
     }
 
     fn get_frontmost_pid(&self) -> Result<u32, GuiError> {
+        #[allow(unexpected_cfgs)]
         unsafe {
             let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
             let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
@@ -127,6 +128,7 @@ impl PlatformWindowManager {
         }
     }
 
+    #[allow(dead_code)]
     fn ax_get_window_list(&self, pid: u32) -> Result<Vec<u64>, GuiError> {
         unsafe {
             let app = AXUIElementCreateApplication(pid);
@@ -164,6 +166,7 @@ impl PlatformWindowManager {
         }
     }
 
+    #[allow(dead_code)]
     fn ax_get_attribute_i32(
         &self,
         ax_window: *mut c_void,
@@ -184,6 +187,7 @@ impl PlatformWindowManager {
         }
     }
 
+    #[allow(dead_code)]
     fn ax_set_attribute_i32(
         &self,
         ax_window: *mut c_void,
@@ -524,20 +528,20 @@ fn extract_rect_from_dict_value(val: &CFType) -> Option<(f64, f64, f64, f64)> {
 }
 
 fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let x = dict.find(&CFString::new("X"))
+    let x = dict.find(CFString::new("X"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let y = dict.find(&CFString::new("Y"))
+    let y = dict.find(CFString::new("Y"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((x, y))
 }
 
 fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let w = dict.find(&CFString::new("Width"))
+    let w = dict.find(CFString::new("Width"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let h = dict.find(&CFString::new("Height"))
+    let h = dict.find(CFString::new("Height"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((w, h))

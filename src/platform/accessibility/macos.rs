@@ -19,18 +19,9 @@ extern "C" {
         attribute: *const c_void,
         value: *mut *mut c_void,
     ) -> i32;
-    fn AXUIElementCopyAttributeNames(
-        element: *const c_void,
-        names: *mut *mut c_void,
-    ) -> i32;
     fn AXUIElementCopyActionNames(
         element: *const c_void,
         names: *mut *mut c_void,
-    ) -> i32;
-    fn AXUIElementIsAttributeSettable(
-        element: *const c_void,
-        attribute: *const c_void,
-        settable: *mut u8,
     ) -> i32;
     fn CFArrayGetCount(array: *const c_void) -> CFIndex;
     fn CFArrayGetValueAtIndex(
@@ -46,6 +37,7 @@ impl PlatformAccessibility {
     }
 
     fn get_ax_focused_app() -> Result<u32, GuiError> {
+        #[allow(unexpected_cfgs)]
         unsafe {
             let workspace: *mut objc::runtime::Object = msg_send![class!(NSWorkspace), alloc];
             let workspace: *mut objc::runtime::Object = msg_send![workspace, init];
@@ -146,6 +138,7 @@ impl PlatformAccessibility {
         }
     }
 
+    #[allow(dead_code)]
     fn get_ax_number_attribute(
         element: *const c_void,
         attr: &CFString,
@@ -420,20 +413,20 @@ impl PlatformAccessibility {
 }
 
 fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let x = dict.find(&CFString::new("X"))
+    let x = dict.find(CFString::new("X"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let y = dict.find(&CFString::new("Y"))
+    let y = dict.find(CFString::new("Y"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((x, y))
 }
 
 fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
-    let w = dict.find(&CFString::new("Width"))
+    let w = dict.find(CFString::new("Width"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
-    let h = dict.find(&CFString::new("Height"))
+    let h = dict.find(CFString::new("Height"))
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((w, h))

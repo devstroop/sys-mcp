@@ -88,6 +88,7 @@ fn check_token(state: &WebState, query: &TokenQuery) -> Result<(), Response> {
 }
 
 #[cfg(feature = "web-preview")]
+#[allow(clippy::result_large_err)]
 fn check_rate_limit(state: &WebState) -> Result<(), Response> {
     if state.rate_limiter.check("global") {
         Ok(())
