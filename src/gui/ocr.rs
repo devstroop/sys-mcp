@@ -127,6 +127,97 @@ fn get_engine() -> Result<&'static OcrEngine, GuiError> {
     }
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn iou(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> f32 {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+
+    let ax1 = ax;
+    let ay1 = ay;
+    let ax2 = ax + aw;
+    let ay2 = ay + ah;
+
+    let bx1 = bx;
+    let by1 = by;
+    let bx2 = bx + bw;
+    let by2 = by + bh;
+
+    let inter_w = (ax2.min(bx2) - ax1.max(bx1)).max(0);
+    let inter_h = (ay2.min(by2) - ay1.max(by1)).max(0);
+    let inter_area = inter_w * inter_h;
+
+    let a_area = aw * ah;
+    let b_area = bw * bh;
+    let union_area = a_area + b_area - inter_area;
+
+    if union_area == 0 {
+        0.0
+    } else {
+        inter_area as f32 / union_area as f32
+    }
+}
+
+fn boxes_overlap_vertically(
+    a: (i32, i32, i32, i32),
+    b: (i32, i32, i32, i32),
+) -> bool {
+    let (_, ay, _, ah) = a;
+    let (_, by, _, bh) = b;
+    let overlap = (ay + ah).min(by + bh) - ay.max(by);
+    let min_h = ah.min(bh);
+    overlap > 0 && (overlap as f32 / min_h as f32) > 0.3
+}
+
+/// Merge overlapping or adjacent lines that belong to the same visual text line.
+fn merge_lines(lines: Vec<OcrLine>, iou_threshold: f32) -> Vec<OcrLine> {
+    if lines.len() < 2 {
+        return lines;
+    }
+
+    let mut merged: Vec<OcrLine> = Vec::with_capacity(lines.len());
+
+    for line in lines {
+        let mut candidate = line;
+        let mut readded = false;
+
+        for existing in merged.iter_mut() {
+            let a = (existing.x, existing.y, existing.width, existing.height);
+            let b = (candidate.x, candidate.y, candidate.width, candidate.height);
+
+            let overlap = iou(a, b) > iou_threshold
+                || (boxes_overlap_vertically(a, b)
+                    && (b.0 - (a.0 + a.2)).abs() < a.2.max(b.2) / 2);
+
+            if overlap {
+                let x1 = existing.x.min(candidate.x);
+                let y1 = existing.y.min(candidate.y);
+                let x2 = (existing.x + existing.width).max(candidate.x + candidate.width);
+                let y2 = (existing.y + existing.height).max(candidate.y + candidate.height);
+
+                existing.text.push(' ');
+                existing.text.push_str(&candidate.text);
+                existing.x = x1;
+                existing.y = y1;
+                existing.width = x2 - x1;
+                existing.height = y2 - y1;
+
+                let all_words = std::mem::take(&mut existing.words);
+                existing.words = all_words.into_iter().chain(candidate.words).collect();
+
+                readded = true;
+                break;
+            }
+        }
+
+        if !readded {
+            merged.push(candidate);
+        }
+    }
+
+    merged
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 /// Run OCR on a screenshot and return structured text with positions.
@@ -155,7 +246,6 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
         .recognize_text(&ocr_input, &line_rects)
         .map_err(|e| GuiError::OcrError(format!("OCR recognize: {e}")))?;
 
-    let mut full_text = String::new();
     let mut lines = Vec::new();
 
     for line_opt in &line_texts {
@@ -164,11 +254,6 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
         if text.trim().is_empty() || text.len() <= 1 {
             continue;
         }
-
-        if !full_text.is_empty() {
-            full_text.push('\n');
-        }
-        full_text.push_str(&text);
 
         let line_rect = line.bounding_rect();
         let mut words = Vec::new();
@@ -200,8 +285,16 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
         });
     }
 
+    let lines = merge_lines(lines, 0.5);
+
+    let merged_text: String = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
     Ok(OcrResult {
-        text: full_text,
+        text: merged_text,
         lines,
         screen_width: screenshot.width,
         screen_height: screenshot.height,
