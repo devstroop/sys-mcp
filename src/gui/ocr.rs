@@ -202,8 +202,7 @@ fn merge_lines(lines: Vec<OcrLine>, iou_threshold: f32) -> Vec<OcrLine> {
                 existing.width = x2 - x1;
                 existing.height = y2 - y1;
 
-                let all_words = std::mem::take(&mut existing.words);
-                existing.words = all_words.into_iter().chain(candidate.words).collect();
+                existing.words.append(&mut candidate.words);
 
                 readded = true;
                 break;
