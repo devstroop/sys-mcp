@@ -12,6 +12,7 @@ use core_graphics::window::{
     kCGWindowBounds, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
     kCGWindowOwnerPID,
 };
+use objc::{msg_send, sel, class};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -184,7 +185,7 @@ impl PlatformWindowManager {
             for i in 0..count {
                 let ax_window = CFArrayGetValueAtIndex(windows_ref as *mut _, i);
                 if !ax_window.is_null() {
-                    let wid = AXUIElementGetWindow(ax_window as *mut _);
+                    let wid = ax_get_window_id(ax_window as *mut _);
                     if wid > 0 {
                         ids.push(wid as u64);
                     }
@@ -357,7 +358,7 @@ impl PlatformWindowManager {
                     continue;
                 }
 
-                let wid = AXUIElementGetWindow(ax_win as *mut _);
+                let wid = ax_get_window_id(ax_win as *mut _);
                 if wid as u64 == window_id {
                     f(ax_win as *mut _)?;
                     found = true;
@@ -548,6 +549,27 @@ impl PlatformWindowManager {
     }
 }
 
+// Replacement for AXUIElementGetWindow (removed from modern macOS)
+fn ax_get_window_id(ax_win: *mut objc::runtime::Object) -> u32 {
+    unsafe {
+        let attr = CFString::new("AXWindowID");
+        let mut wid_ref: *mut objc::runtime::Object = std::ptr::null_mut();
+        let result = AXUIElementCopyAttributeValue(
+            ax_win,
+            attr.as_concrete_TypeRef(),
+            &mut wid_ref as *mut *mut objc::runtime::Object as *mut *mut _,
+        );
+        if result == 0 && !wid_ref.is_null() {
+            let num = CFNumber::wrap_under_get_rule(wid_ref as *mut _);
+            let mut wid: u32 = 0;
+            num.get_value(&mut wid);
+            wid
+        } else {
+            0
+        }
+    }
+}
+
 // External C functions
 extern "C" {
     fn AXUIElementCreateApplication(pid: u32) -> *mut objc::runtime::Object;
@@ -565,7 +587,6 @@ extern "C" {
         element: *mut objc::runtime::Object,
         action: *mut objc::runtime::Object,
     ) -> i32;
-    fn AXUIElementGetWindow(element: *mut objc::runtime::Object) -> u32;
     fn CFArrayGetCount(array: *mut objc::runtime::Object) -> CFIndex;
     fn CFArrayGetValueAtIndex(
         array: *mut objc::runtime::Object,

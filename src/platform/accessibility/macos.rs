@@ -7,6 +7,7 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use core_graphics::display::CGRect;
+use objc::{msg_send, sel, class};
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -276,8 +277,7 @@ impl PlatformAccessibility {
     }
 
     fn get_ax_element_id(element: *mut objc::runtime::Object) -> String {
-        let pid = unsafe { AXUIElementGetWindow(element) };
-        format!("ax:{}", pid)
+        format!("ax:{:p}", element)
     }
 
     fn build_ax_node(
