@@ -202,37 +202,5 @@ async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
 }
 
 fn strip_ansi_codes(s: &str) -> String {
-    // Remove ANSI escape sequences using a simple state machine.
-    // Handles CSI sequences (most common), and strips everything from ESC
-    // until a known terminator letter.
-    let mut result = String::with_capacity(s.len());
-    let mut skip = false;
-
-    for c in s.chars() {
-        if c == '\u{1B}' {
-            skip = true;
-        } else if skip {
-            // Terminator bytes for CSI and other escape sequences
-            if (c.is_ascii_alphabetic() || c == '@' || c == '`')
-                && (c == 'm'
-                    || c == 'H'
-                    || c == 'J'
-                    || c == 'K'
-                    || c == 'A'
-                    || c == 'B'
-                    || c == 'C'
-                    || c == 'D'
-                    || c == 'P'
-                    || c == 'S'
-                    || c == 'T'
-                    || c == 'f')
-            {
-                skip = false;
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
+    String::from_utf8_lossy(&strip_ansi_escapes::strip(s).unwrap_or_else(|_| s.as_bytes().to_vec())).into_owned()
 }

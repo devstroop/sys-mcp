@@ -23,11 +23,11 @@
 | 6 | Test coverage is critically low | ✅ Fixed (66 tests) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
-| 9 | MCP Hub JSON-RPC I/O framing | 🟢 Open |
-| 10 | ANSI escape stripping is heuristic | 🟢 Open |
+| 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
+| 10 | ANSI escape stripping is heuristic | ✅ Fixed |
 | 11 | Multi-monitor support is incomplete | 🟢 Open |
-| 12 | No rate limiting on web preview | 🟢 Open |
-| 13 | CORS is overly permissive | 🟢 Open |
+| 12 | No rate limiting on web preview | ✅ Fixed |
+| 13 | CORS is overly permissive | ✅ Fixed |
 | 14 | CI only runs on Linux | 🟢 Open |
 | 15 | No resource or prompt support in MCP protocol | 🟢 Open |
 | 16 | Template matching (Phase 7) | 🔵 Open |

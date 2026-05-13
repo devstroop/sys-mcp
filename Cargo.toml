@@ -51,6 +51,9 @@ arboard = { version = "3", optional = true }
 # Terminal/PTY
 portable-pty = "0.8"
 
+# ANSI escape stripping
+strip-ansi-escapes = "0.2"
+
 # Logging
 tracing = "0.1"
 

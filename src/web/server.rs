@@ -1,5 +1,11 @@
 #[cfg(feature = "web-preview")]
+use std::collections::HashMap;
+#[cfg(feature = "web-preview")]
 use std::sync::Arc;
+#[cfg(feature = "web-preview")]
+use std::sync::Mutex;
+#[cfg(feature = "web-preview")]
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "web-preview")]
 use axum::extract::{Query, State};
@@ -32,9 +38,41 @@ pub struct TokenQuery {
 }
 
 #[cfg(feature = "web-preview")]
+struct RateLimiter {
+    buckets: Mutex<HashMap<String, Vec<Instant>>>,
+    max_requests: usize,
+    window: Duration,
+}
+
+#[cfg(feature = "web-preview")]
+impl RateLimiter {
+    fn new(max_requests: usize, window_secs: u64) -> Self {
+        Self {
+            buckets: Mutex::new(HashMap::new()),
+            max_requests,
+            window: Duration::from_secs(window_secs),
+        }
+    }
+
+    fn check(&self, key: &str) -> bool {
+        let mut buckets = self.buckets.lock().unwrap();
+        let now = Instant::now();
+        let bucket = buckets.entry(key.to_string()).or_default();
+        bucket.retain(|t| now.duration_since(*t) < self.window);
+        if bucket.len() >= self.max_requests {
+            false
+        } else {
+            bucket.push(now);
+            true
+        }
+    }
+}
+
+#[cfg(feature = "web-preview")]
 pub struct WebState {
     pub client: Arc<GuiClient>,
     pub token: String,
+    rate_limiter: RateLimiter,
 }
 
 #[cfg(feature = "web-preview")]
@@ -46,6 +84,19 @@ fn check_token(state: &WebState, query: &TokenQuery) -> Result<(), Response> {
     match &query.token {
         Some(t) if t == &state.token => Ok(()),
         _ => Err((StatusCode::UNAUTHORIZED, "invalid or missing token").into_response()),
+    }
+}
+
+#[cfg(feature = "web-preview")]
+fn check_rate_limit(state: &WebState) -> Result<(), Response> {
+    if state.rate_limiter.check("global") {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate limit exceeded, try again later",
+        )
+            .into_response())
     }
 }
 
@@ -66,6 +117,7 @@ impl WebServer {
         let state = Arc::new(WebState {
             client,
             token: token.clone(),
+            rate_limiter: RateLimiter::new(60, 1),
         });
 
         let app = Router::new()
@@ -292,6 +344,7 @@ async fn screenshot_png(
     Query(q): Query<TokenQuery>,
 ) -> Result<Response, Response> {
     check_token(&state, &q)?;
+    check_rate_limit(&state)?;
 
     let screenshot = state.client.screenshot().await.map_err(|e| {
         (
@@ -318,6 +371,7 @@ async fn api_ocr(
     Query(q): Query<TokenQuery>,
 ) -> Result<Json<serde_json::Value>, Response> {
     check_token(&state, &q)?;
+    check_rate_limit(&state)?;
 
     let ocr_result = state.client.read_screen(None).await.map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, format!("OCR error: {e}")).into_response()
@@ -340,6 +394,7 @@ async fn screenshot_feed(
     Query(q): Query<TokenQuery>,
 ) -> Result<Html<String>, Response> {
     check_token(&state, &q)?;
+    check_rate_limit(&state)?;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -366,6 +421,7 @@ async fn api_click(
     Query(p): Query<ClickParams>,
 ) -> Result<&'static str, Response> {
     check_token(&state, &TokenQuery { token: p.token })?;
+    check_rate_limit(&state)?;
     let button = match p.button.as_deref() {
         Some("right") => MouseButton::Right,
         Some("middle") => MouseButton::Middle,
@@ -392,6 +448,7 @@ async fn api_type(
     Query(p): Query<TypeParams>,
 ) -> Result<&'static str, Response> {
     check_token(&state, &TokenQuery { token: p.token })?;
+    check_rate_limit(&state)?;
     state
         .client
         .type_text(&p.text)
@@ -413,6 +470,7 @@ async fn api_key(
     Query(p): Query<KeyParams>,
 ) -> Result<&'static str, Response> {
     check_token(&state, &TokenQuery { token: p.token })?;
+    check_rate_limit(&state)?;
     if p.key.contains('+') {
         let keys: Vec<String> = p.key.split('+').map(String::from).collect();
         state.client.key_combo(&keys).await
@@ -439,6 +497,7 @@ async fn api_scroll(
     Query(p): Query<ScrollParams>,
 ) -> Result<&'static str, Response> {
     check_token(&state, &TokenQuery { token: p.token })?;
+    check_rate_limit(&state)?;
     let direction = match p.direction.as_str() {
         "up" => ScrollDirection::Up,
         "down" => ScrollDirection::Down,
