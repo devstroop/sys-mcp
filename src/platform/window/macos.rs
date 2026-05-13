@@ -82,12 +82,9 @@ impl PlatformWindowManager {
                         .and_then(|n| n.to_i32())
                         .map(|pid| pid as u32);
 
-                    let bounds_dict = dict
+                    let (x, y, w, h) = dict
                         .find(unsafe { &CFString::wrap_under_get_rule(kCGWindowBounds) })
-                        .and_then(|v| v.downcast::<CFDictionary<CFString, CFType>>());
-
-                    let (x, y, w, h) = bounds_dict
-                        .and_then(|b| dict_to_rect(&b))
+                        .and_then(|v| extract_rect_from_dict_value(v))
                         .unwrap_or((0.0, 0.0, 0.0, 0.0));
 
                     windows.push(WindowInfo {
@@ -274,9 +271,9 @@ impl PlatformWindowManager {
         }
     }
 
-    fn with_window_ax<F>(&self, window_id: u64, f: F) -> Result<(), GuiError>
+    fn with_window_ax<F>(&self, window_id: u64, mut f: F) -> Result<(), GuiError>
     where
-        F: Fn(*mut c_void) -> Result<(), GuiError>,
+        F: FnMut(*mut c_void) -> Result<(), GuiError>,
     {
         let windows = self.list_windows()?;
         let win = windows
@@ -507,6 +504,25 @@ impl PlatformWindowManager {
     }
 }
 
+fn extract_rect_from_dict_value(val: &CFType) -> Option<(f64, f64, f64, f64)> {
+    let dict = val.downcast::<CFDictionary>()?;
+    unsafe {
+        let x = dict
+            .find(CFString::new("X").as_CFTypeRef())
+            .and_then(|v| CFNumber::wrap_under_get_rule(*v as *const _).to_f64())?;
+        let y = dict
+            .find(CFString::new("Y").as_CFTypeRef())
+            .and_then(|v| CFNumber::wrap_under_get_rule(*v as *const _).to_f64())?;
+        let w = dict
+            .find(CFString::new("Width").as_CFTypeRef())
+            .and_then(|v| CFNumber::wrap_under_get_rule(*v as *const _).to_f64())?;
+        let h = dict
+            .find(CFString::new("Height").as_CFTypeRef())
+            .and_then(|v| CFNumber::wrap_under_get_rule(*v as *const _).to_f64())?;
+        Some((x, y, w, h))
+    }
+}
+
 fn dict_to_point(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
     let x = dict.find(&CFString::new("X"))
         .and_then(|v| v.downcast::<CFNumber>())
@@ -525,22 +541,6 @@ fn dict_to_size(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64)> {
         .and_then(|v| v.downcast::<CFNumber>())
         .and_then(|n| n.to_f64())?;
     Some((w, h))
-}
-
-fn dict_to_rect(dict: &CFDictionary<CFString, CFType>) -> Option<(f64, f64, f64, f64)> {
-    let x = dict.find(&CFString::new("X"))
-        .and_then(|v| v.downcast::<CFNumber>())
-        .and_then(|n| n.to_f64())?;
-    let y = dict.find(&CFString::new("Y"))
-        .and_then(|v| v.downcast::<CFNumber>())
-        .and_then(|n| n.to_f64())?;
-    let w = dict.find(&CFString::new("Width"))
-        .and_then(|v| v.downcast::<CFNumber>())
-        .and_then(|n| n.to_f64())?;
-    let h = dict.find(&CFString::new("Height"))
-        .and_then(|v| v.downcast::<CFNumber>())
-        .and_then(|n| n.to_f64())?;
-    Some((x, y, w, h))
 }
 
 fn create_point_dict(x: f64, y: f64) -> CFDictionary<CFString, CFType> {
