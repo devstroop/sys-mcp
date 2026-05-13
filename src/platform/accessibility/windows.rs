@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use windows::core::{HSTRING, VARIANT};
-use windows::Win32::Foundation::{BOOL, VARIANT_BOOL, VARIANT_TRUE};
+use windows::Win32::Foundation::{BOOL, VARIANT_BOOL, VARIANT_FALSE, VARIANT_TRUE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
@@ -10,19 +10,21 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationElementArray,
     TreeScope_Children, TreeScope_Descendants, TreeScope_Subtree, UIA_ButtonControlTypeId,
     UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControlTypePropertyId,
-    UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_ExpandCollapseState,
-    UIA_ExpandCollapseState_Collapsed, UIA_ExpandCollapseState_Expanded, UIA_HeaderControlTypeId,
+    UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_HeaderControlTypeId,
     UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_InvokePatternId,
-    UIA_LabelControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+    UIA_ListControlTypeId, UIA_ListItemControlTypeId,
     UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
     UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId,
     UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TableControlTypeId, UIA_TogglePatternId,
-    UIA_ToggleState, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
+    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
     UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_WindowPatternId,
 };
 
 use crate::error::GuiError;
 use crate::gui::types::*;
+
+unsafe impl Send for PlatformAccessibility {}
+unsafe impl Sync for PlatformAccessibility {}
 
 fn control_type_to_role(control_type: i32) -> String {
     match control_type {
@@ -46,7 +48,6 @@ fn control_type_to_role(control_type: i32) -> String {
         UIA_TreeControlTypeId => "tree".to_string(),
         UIA_TreeItemControlTypeId => "tree_item".to_string(),
         UIA_HeaderControlTypeId => "header".to_string(),
-        UIA_LabelControlTypeId => "label".to_string(),
         UIA_WindowControlTypeId => "window".to_string(),
         _ => format!("control_type_{}", control_type),
     }
@@ -113,32 +114,6 @@ impl PlatformAccessibility {
                 }
             }
 
-            // Check toggle state
-            if let Ok(toggle_pattern) = element.GetCurrentPattern(UIA_TogglePatternId) {
-                if let Ok(toggle) = toggle_pattern.cast::<IUIAutomationTogglePattern>() {
-                    if let Ok(state) = toggle.CurrentToggleState() {
-                        match state {
-                            UIA_ToggleState_On => states.push("checked".to_string()),
-                            UIA_ToggleState_Indeterminate => {
-                                states.push("indeterminate".to_string())
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            // Check expand/collapse state
-            if let Ok(expand_pattern) = element.GetCurrentPattern(UIA_ExpandCollapsePatternId) {
-                if let Ok(expand) = expand_pattern.cast::<IUIAutomationExpandCollapsePattern>() {
-                    if let Ok(state) = expand.CurrentExpandCollapseState() {
-                        if state == ExpandCollapseState::UIA_ExpandCollapseState_Expanded {
-                            states.push("expanded".to_string());
-                        }
-                    }
-                }
-            }
-
             // Check if focused
             if let Ok(has_focus) = element.CurrentHasKeyboardFocus() {
                 if has_focus == VARIANT_TRUE {
@@ -150,37 +125,12 @@ impl PlatformAccessibility {
         states
     }
 
-    fn get_element_value(element: &IUIAutomationElement) -> Option<String> {
-        unsafe {
-            if let Ok(value_pattern) = element.GetCurrentPattern(UIA_ValuePatternId) {
-                if let Ok(value) = value_pattern.cast::<IUIAutomationValuePattern>() {
-                    let val = value.CurrentValue().ok()?;
-                    let s = val.to_string();
-                    if !s.is_empty() {
-                        return Some(s);
-                    }
-                }
-            }
-            None
-        }
-    }
-
     fn get_element_actions(element: &IUIAutomationElement) -> Vec<String> {
         let mut actions = Vec::new();
 
         unsafe {
             if element.GetCurrentPattern(UIA_InvokePatternId).is_ok() {
                 actions.push("invoke".to_string());
-            }
-            if element.GetCurrentPattern(UIA_TogglePatternId).is_ok() {
-                actions.push("toggle".to_string());
-            }
-            if element
-                .GetCurrentPattern(UIA_ExpandCollapsePatternId)
-                .is_ok()
-            {
-                actions.push("expand".to_string());
-                actions.push("collapse".to_string());
             }
             if element.GetCurrentPattern(UIA_WindowPatternId).is_ok() {
                 actions.push("close".to_string());
@@ -194,12 +144,12 @@ impl PlatformAccessibility {
     }
 
     fn build_node(
+        automation: &IUIAutomation,
         element: &IUIAutomationElement,
         depth: u32,
     ) -> Result<AccessibilityNode, GuiError> {
         let name = Self::get_element_name(element);
         let role = control_type_to_role(Self::get_element_control_type(element));
-        let value = Self::get_element_value(element);
         let actions = Self::get_element_actions(element);
         let states = Self::get_element_states(element);
 
@@ -213,12 +163,12 @@ impl PlatformAccessibility {
         if depth > 0 {
             unsafe {
                 if let Ok(child_array) =
-                    element.FindAll(TreeScope_Children, &self.automation.CreateTrueCondition()?)
+                    element.FindAll(TreeScope_Children, &automation.CreateTrueCondition()?)
                 {
                     let count = child_array.Length()? as usize;
                     for i in 0..count {
                         if let Ok(child) = child_array.GetElement(i as u32) {
-                            if let Ok(node) = Self::build_node(&child, depth - 1) {
+                            if let Ok(node) = Self::build_node(automation, &child, depth - 1) {
                                 children.push(node);
                             }
                         }
@@ -231,7 +181,7 @@ impl PlatformAccessibility {
             id,
             role,
             name,
-            value,
+            value: None,
             description: None,
             x: Some(x),
             y: Some(y),
@@ -254,18 +204,15 @@ impl PlatformAccessibility {
 
         unsafe {
             let root = if let Some(wid) = window_id {
-                // Get element from window handle
                 let hwnd = windows::Win32::Foundation::HWND(wid as *mut _);
                 self.automation.ElementFromHandle(hwnd).map_err(|e| {
                     GuiError::PlatformError(format!("ElementFromHandle failed: {e}"))
                 })?
             } else {
-                // Get the desktop-rooted element (focused app)
                 let focused = self.automation.GetFocusedElement().map_err(|e| {
                     GuiError::PlatformError(format!("GetFocusedElement failed: {e}"))
                 })?;
 
-                // Walk up to the top-level window
                 let mut current = focused;
                 loop {
                     if let Ok(parent) = current.GetParentElement() {
@@ -287,7 +234,7 @@ impl PlatformAccessibility {
                 current
             };
 
-            Self::build_node(&root, depth)
+            Self::build_node(&self.automation, &root, depth)
         }
     }
 
