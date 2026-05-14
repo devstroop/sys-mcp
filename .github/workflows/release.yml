@@ -32,7 +32,7 @@ jobs:
             archive: zip
 
           - name: macos-x86_64
-            os: macos-latest
+            os: macos-13
             target: x86_64-apple-darwin
             archive: tar.gz
 
