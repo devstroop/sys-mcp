@@ -26,3 +26,5 @@ ocr-models/
 
 # Worktrees
 .worktrees
+# Shared build cache for worktrees
+/.cargo-target
