@@ -89,6 +89,16 @@ objc = "0.2"
 [lints.rust]
 unexpected_cfgs = "allow"
 
+[lints.clippy]
+# The `#[async_trait]` macro emits a message-less `#[must_use]` on the methods
+# it generates, and those methods return `Result` (already `#[must_use]`).
+# Newer clippy (1.99+) reports this as `double_must_use` on every capability
+# trait. It is macro-generated, so there is nothing to fix in our own code.
+double_must_use = "allow"
+# Axum handlers use the idiomatic `Result<impl IntoResponse, Response>`
+# signature. `Response` is a large type, which trips `result_large_err`.
+result_large_err = "allow"
+
 [features]
 default = ["ocr", "clipboard", "web-preview", "detection"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
