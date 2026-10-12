@@ -5,7 +5,7 @@ pub fn all_tools() -> Vec<Value> {
         // ── Display ─────────────────────────────────────────────────────
         json!({
             "name": "screen_capture",
-            "description": "Capture the local screen as a compressed JPEG image. For reading text content, PREFER gui_read_screen instead — it returns structured text with clickable coordinates and is much smaller.",
+            "description": "Capture the local screen as a compressed JPEG image. For reading text content, PREFER screen_read instead — it returns structured text with clickable coordinates and is much smaller.",
             "inputSchema": { "type": "object", "properties": {} }
         }),
         json!({
@@ -35,7 +35,7 @@ pub fn all_tools() -> Vec<Value> {
         // ── OCR — Screen Reading ────────────────────────────────────────
         json!({
             "name": "screen_read",
-            "description": "Read all text on screen via on-device OCR. Returns structured text with word-level bounding boxes and click coordinates (cx, cy). PREFER THIS over gui_screenshot for understanding screen content — it returns ~2KB instead of a multi-MB image. First call downloads OCR models (~15MB, cached). Optionally specify a region to OCR only part of the screen.",
+            "description": "Read all text on screen via on-device OCR. Returns structured text with word-level bounding boxes and click coordinates (cx, cy). PREFER THIS over screen_capture for understanding screen content — it returns ~2KB instead of a multi-MB image. First call downloads OCR models (~15MB, cached). Optionally specify a region to OCR only part of the screen.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -54,7 +54,7 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "screen_find_text",
-            "description": "Search for specific text on screen via OCR. Returns matching words/phrases with center (cx, cy) coordinates ready for gui_click. Use this to find buttons, links, menu items, or any text element.",
+            "description": "Search for specific text on screen via OCR. Returns matching words/phrases with center (cx, cy) coordinates ready for mouse_click. Use this to find buttons, links, menu items, or any text element.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -193,11 +193,11 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "window_focus",
-            "description": "Bring a window to the foreground and give it focus. Provide either window_id (from gui_list_windows) or title (substring match).",
+            "description": "Bring a window to the foreground and give it focus. Provide either window_id (from window_list) or title (substring match).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "window_id": { "type": "integer", "description": "Window ID from gui_list_windows." },
+                    "window_id": { "type": "integer", "description": "Window ID from window_list." },
                     "title": { "type": "string", "description": "Window title substring to search for." }
                 }
             }
@@ -251,7 +251,7 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "window_id": { "type": "integer", "description": "Window ID from gui_list_windows (optional — defaults to focused window)." },
+                    "window_id": { "type": "integer", "description": "Window ID from window_list (optional — defaults to focused window)." },
                     "max_depth": { "type": "integer", "description": "Maximum depth of the tree to explore (default 10).", "default": 10 }
                 }
             }
@@ -269,8 +269,11 @@ pub fn all_tools() -> Vec<Value> {
             }
         }),
         // ── Template Matching (Phase 7 — not yet implemented) ──────────
-        // gui_find_image and gui_wait_for_image are kept in handlers.rs
-        // but hidden from tools/list until handlers are wired up.
+        // vision_find_image and vision_wait_for_image are dispatched in
+        // handlers/mod.rs (implemented in handlers/vision.rs) but are
+        // intentionally NOT declared here: their handlers only return a
+        // permanent "not yet implemented" error. Keep them unregistered
+        // in tools/list until template matching is actually wired up.
 
         // ── Utility ────────────────────────────────────────────────────
         json!({
@@ -300,6 +303,10 @@ pub fn all_tools() -> Vec<Value> {
             }
         }),
         // ── Web Preview ─────────────────────────────────────────────────
+        // NOTE: web_preview is only functional when built with the
+        // `web-preview` feature — dispatch lives in server.rs behind
+        // #[cfg(feature = "web-preview")]. Without the feature the tool
+        // is still declared here but its call will fail.
         json!({
             "name": "web_preview",
             "description": "Get a live web preview URL for the local screen. Open this in a browser to view and interact with the desktop remotely.",
@@ -327,7 +334,7 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "detect_click_object",
-            "description": "Click an object by label. Use gui_detect_objects first to see available objects, then specify the label and index (0-based) to click.",
+            "description": "Click an object by label. Use detect_objects first to see available objects, then specify the label and index (0-based) to click.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -346,7 +353,7 @@ pub fn all_tools() -> Vec<Value> {
         // ── File System ──────────────────────────────────────────────────
         json!({
             "name": "fs_read",
-            "description": "Read a file and return its contents as base64. Use this to read binary files (images, executables, archives) or large text files. For small text files, gui_get_clipboard may be simpler.",
+            "description": "Read a file and return its contents as base64. Use this to read binary files (images, executables, archives) or large text files. For small text files, clipboard_get may be simpler.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -390,7 +397,7 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "fs_delete",
-            "description": "Delete a file. Does not delete directories. Use gui_delete_dir for directories.",
+            "description": "Delete a file. Does not delete directories — no tool currently deletes directories.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -425,7 +432,7 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "shell_open",
-            "description": "Open a new interactive shell session. Returns a session_id that can be used with gui_shell_write and gui_shell_close. Useful for multi-step operations like 'cd project && npm install'.",
+            "description": "Open a new interactive shell session. Returns a session_id that can be used with shell_write and shell_close. Useful for multi-step operations like 'cd project && npm install'.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -437,11 +444,11 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "shell_write",
-            "description": "Write input to an open shell session. Use the session_id from gui_shell_open. Send commands followed by newline to execute.",
+            "description": "Write input to an open shell session. Use the session_id from shell_open. Send commands followed by newline to execute.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." },
+                    "session_id": { "type": "string", "description": "Session ID from shell_open." },
                     "input": { "type": "string", "description": "Input to send to the shell (append newline to execute)." }
                 },
                 "required": ["session_id", "input"]
@@ -453,7 +460,7 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                    "session_id": { "type": "string", "description": "Session ID from shell_open." }
                 },
                 "required": ["session_id"]
             }
@@ -464,7 +471,7 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "session_id": { "type": "string", "description": "Session ID from gui_shell_open." }
+                    "session_id": { "type": "string", "description": "Session ID from shell_open." }
                 },
                 "required": ["session_id"]
             }

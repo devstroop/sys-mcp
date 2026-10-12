@@ -40,7 +40,7 @@ pub(crate) async fn handle_find_ui_element(
         Ok(ToolResult::text("No matching UI elements found."))
     } else {
         Ok(ToolResult::text(format!(
-            "Found {} element(s). Use cx/cy with gui_click.\n{}",
+            "Found {} element(s). Use cx/cy with mouse_click.\n{}",
             elements.len(),
             serde_json::to_string_pretty(&elements).unwrap_or_default()
         )))
