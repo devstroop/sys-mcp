@@ -28,7 +28,11 @@ pub(crate) async fn handle_process_list(
 ) -> Result<ToolResult, String> {
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
-    let mut processes = ProcessManager::list_processes();
+    // list_processes shells out with blocking Command::output(); keep it off
+    // the async runtime.
+    let mut processes = tokio::task::spawn_blocking(move || ProcessManager::list_processes())
+        .await
+        .map_err(|e| format!("Process list task failed: {e}"))?;
     processes.truncate(limit);
 
     Ok(ToolResult::text(
@@ -42,7 +46,9 @@ pub(crate) async fn handle_process_kill(
 ) -> Result<ToolResult, String> {
     let pid = u64_arg(args, "pid")? as u32;
 
-    ProcessManager::kill_process(pid)?;
+    tokio::task::spawn_blocking(move || ProcessManager::kill_process(pid))
+        .await
+        .map_err(|e| format!("Kill process task failed: {e}"))??;
 
     Ok(ToolResult::text(format!("Killed process {}", pid)))
 }
@@ -53,7 +59,9 @@ pub(crate) async fn handle_process_info(
 ) -> Result<ToolResult, String> {
     let pid = u64_arg(args, "pid")? as u32;
 
-    let info = ProcessManager::get_process_info(pid)?;
+    let info = tokio::task::spawn_blocking(move || ProcessManager::get_process_info(pid))
+        .await
+        .map_err(|e| format!("Process info task failed: {e}"))??;
 
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
@@ -64,7 +72,7 @@ pub(crate) async fn handle_process_start(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let command = str_arg(args, "command")?;
+    let command = str_arg(args, "command")?.to_string();
     let args: Vec<String> = args
         .get("args")
         .and_then(|v| v.as_array())
@@ -75,11 +83,14 @@ pub(crate) async fn handle_process_start(
         })
         .unwrap_or_default();
 
-    let pid = ProcessManager::start_process(command, args)?;
+    let command_name = command.clone();
+    let pid = tokio::task::spawn_blocking(move || ProcessManager::start_process(&command, args))
+        .await
+        .map_err(|e| format!("Start process task failed: {e}"))??;
 
     Ok(ToolResult::text(
         serde_json::json!({
-            "message": format!("Started process {}", command),
+            "message": format!("Started process {}", command_name),
             "pid": pid
         })
         .to_string(),
@@ -91,7 +102,9 @@ pub(crate) async fn handle_process_start(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_service_list(_client: &GuiClient) -> Result<ToolResult, String> {
-    let services = ServiceManager::list_services();
+    let services = tokio::task::spawn_blocking(move || ServiceManager::list_services())
+        .await
+        .map_err(|e| format!("Service list task failed: {e}"))?;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&services).unwrap_or("[]".to_string()),
     ))
@@ -101,8 +114,11 @@ pub(crate) async fn handle_service_start(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let name = str_arg(args, "name")?;
-    ServiceManager::start_service(name)?;
+    let name = str_arg(args, "name")?.to_string();
+    let name_arg = name.clone();
+    tokio::task::spawn_blocking(move || ServiceManager::start_service(&name_arg))
+        .await
+        .map_err(|e| format!("Start service task failed: {e}"))??;
     Ok(ToolResult::text(format!("Started service: {}", name)))
 }
 
@@ -110,17 +126,21 @@ pub(crate) async fn handle_service_stop(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let name = str_arg(args, "name")?;
-    ServiceManager::stop_service(name)?;
+    let name = str_arg(args, "name")?.to_string();
+    let name_arg = name.clone();
+    tokio::task::spawn_blocking(move || ServiceManager::stop_service(&name_arg))
+        .await
+        .map_err(|e| format!("Stop service task failed: {e}"))??;
     Ok(ToolResult::text(format!("Stopped service: {}", name)))
 }
-
 pub(crate) async fn handle_service_status(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let name = str_arg(args, "name")?;
-    let status = ServiceManager::service_status(name)?;
+    let name = str_arg(args, "name")?.to_string();
+    let status = tokio::task::spawn_blocking(move || ServiceManager::service_status(&name))
+        .await
+        .map_err(|e| format!("Service status task failed: {e}"))??;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&status).unwrap_or("{}".to_string()),
     ))
@@ -131,7 +151,9 @@ pub(crate) async fn handle_service_status(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_network_info(_client: &GuiClient) -> Result<ToolResult, String> {
-    let info = NetworkManager::get_info()?;
+    let info = tokio::task::spawn_blocking(move || NetworkManager::get_info())
+        .await
+        .map_err(|e| format!("Network info task failed: {e}"))??;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
     ))
@@ -141,26 +163,34 @@ pub(crate) async fn handle_network_connections(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let _limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
-    let connections = NetworkManager::list_connections();
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+    // list_connections shells out with blocking Command::output(); keep it
+    // off the async runtime and honor the declared `limit` argument.
+    let mut connections = tokio::task::spawn_blocking(move || NetworkManager::list_connections())
+        .await
+        .map_err(|e| format!("Network connections task failed: {e}"))?;
+    connections.truncate(limit);
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&connections).unwrap_or("[]".to_string()),
     ))
 }
-
 // ═══════════════════════════════════════════════════════════════════════════
 // System Monitoring
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResult, String> {
-    let stats = SystemMonitor::get_stats()?;
+    let stats = tokio::task::spawn_blocking(move || SystemMonitor::get_stats())
+        .await
+        .map_err(|e| format!("System stats task failed: {e}"))??;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&stats).unwrap_or("{}".to_string()),
     ))
 }
-
 pub(crate) async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult, String> {
-    let usage = SystemMonitor::get_disk_usage();
+    let usage = tokio::task::spawn_blocking(move || SystemMonitor::get_disk_usage())
+        .await
+        .map_err(|e| format!("Disk usage task failed: {e}"))?;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&usage).unwrap_or("[]".to_string()),
     ))
@@ -177,7 +207,9 @@ pub(crate) async fn handle_system_logs(
     let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
     let level = args.get("level").and_then(|v| v.as_str()).map(String::from);
 
-    let logs = LogViewer::get_system_logs(count, level);
+    let logs = tokio::task::spawn_blocking(move || LogViewer::get_system_logs(count, level))
+        .await
+        .map_err(|e| format!("System logs task failed: {e}"))?;
     Ok(ToolResult::text(
         serde_json::to_string_pretty(&logs).unwrap_or("[]".to_string()),
     ))

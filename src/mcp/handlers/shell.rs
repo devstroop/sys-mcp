@@ -52,11 +52,37 @@ pub(crate) async fn handle_shell_exec(
         .await
         .map_err(|e| format!("Failed to send command: {}", e))?;
 
-    // Close the terminal (signals EOF to the process)
-    let _ = PTY_MANAGER.close(&session_id).await;
+    // Wait for the command to actually finish producing output instead of
+    // sleeping a fixed amount: poll the shared buffer until it has been quiet
+    // for QUIET_PERIOD (no new bytes), with a hard timeout cap. (The PTY API
+    // exposes no exit/status signal, so quiet-period polling is the only way
+    // to detect completion from here.)
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+    const QUIET_PERIOD: std::time::Duration = std::time::Duration::from_millis(250);
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
-    // Give the process a moment to finish and flush output
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let started = std::time::Instant::now();
+    let mut last_len = output_buffer.lock().unwrap().len();
+    let mut last_change = std::time::Instant::now();
+    loop {
+        if started.elapsed() >= MAX_WAIT {
+            // Hard cap hit (e.g. a long-running interactive command): return
+            // whatever output we have so far.
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+        let len = output_buffer.lock().unwrap().len();
+        if len != last_len {
+            last_len = len;
+            last_change = std::time::Instant::now();
+        } else if last_change.elapsed() >= QUIET_PERIOD {
+            break;
+        }
+    }
+
+    // Close the terminal (kills any remaining process, signals EOF to the
+    // reader task)
+    let _ = PTY_MANAGER.close(&session_id).await;
 
     // Get output
     let output = spawn_blocking_get_buffer(output_buffer).await;
