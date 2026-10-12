@@ -28,3 +28,6 @@ ocr-models/
 .worktrees
 # Shared build cache for worktrees
 /.cargo-target
+
+# Local cargo config (shared build cache)
+/.cargo/
