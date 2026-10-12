@@ -52,7 +52,7 @@ pub(crate) async fn handle_detect_objects(
             i, det.label, det.confidence, det.x, det.y, det.width, det.height
         ));
     }
-    output.push_str("\nUse gui_click_object with label and index to click.");
+    output.push_str("\nUse detect_click_object with label and index to click.");
 
     Ok(ToolResult {
         content: vec![ContentItem::text(output)],

@@ -17,7 +17,7 @@ pub(crate) async fn handle_screenshot(client: &GuiClient) -> Result<ToolResult, 
                 content: vec![
                     ContentItem::image_base64("image/jpeg", &jpeg_b64),
                     ContentItem::text(format!(
-                        "{}x{} JPEG (compressed from {}x{}). Use gui_read_screen for text content.",
+                        "{}x{} JPEG (compressed from {}x{}). Use screen_read for text content.",
                         w, h, shot.width, shot.height
                     )),
                 ],
