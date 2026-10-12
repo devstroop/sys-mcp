@@ -98,10 +98,7 @@ impl PlatformWindowManager {
         // trailing remainder is dropped), but avoids re-validating the length
         // on every iteration.
         let (chunks, _remainder) = data.as_chunks::<4>();
-        Ok(chunks
-            .iter()
-            .map(|c| u32::from_ne_bytes(*c))
-            .collect())
+        Ok(chunks.iter().map(|c| u32::from_ne_bytes(*c)).collect())
     }
 
     pub fn get_window_title(&self, window_id: u64) -> Result<String, GuiError> {
