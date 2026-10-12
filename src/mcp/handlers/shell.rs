@@ -126,7 +126,7 @@ pub(crate) async fn handle_shell_open(
 
     Ok(ToolResult::text(serde_json::json!({
         "session_id": session_id,
-        "message": "Shell session opened. Use gui_shell_write to send commands, gui_shell_read to get output, gui_shell_close to close."
+        "message": "Shell session opened. Use shell_write to send commands, shell_read to get output, shell_close to close."
     }).to_string()))
 }
 
