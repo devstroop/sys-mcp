@@ -30,7 +30,7 @@ pub(crate) async fn handle_process_list(
 
     // list_processes shells out with blocking Command::output(); keep it off
     // the async runtime.
-    let mut processes = tokio::task::spawn_blocking(move || ProcessManager::list_processes())
+    let mut processes = tokio::task::spawn_blocking(ProcessManager::list_processes)
         .await
         .map_err(|e| format!("Process list task failed: {e}"))?;
     processes.truncate(limit);
@@ -102,7 +102,7 @@ pub(crate) async fn handle_process_start(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_service_list(_client: &GuiClient) -> Result<ToolResult, String> {
-    let services = tokio::task::spawn_blocking(move || ServiceManager::list_services())
+    let services = tokio::task::spawn_blocking(ServiceManager::list_services)
         .await
         .map_err(|e| format!("Service list task failed: {e}"))?;
     Ok(ToolResult::text(
@@ -151,7 +151,7 @@ pub(crate) async fn handle_service_status(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_network_info(_client: &GuiClient) -> Result<ToolResult, String> {
-    let info = tokio::task::spawn_blocking(move || NetworkManager::get_info())
+    let info = tokio::task::spawn_blocking(NetworkManager::get_info)
         .await
         .map_err(|e| format!("Network info task failed: {e}"))??;
     Ok(ToolResult::text(
@@ -167,7 +167,7 @@ pub(crate) async fn handle_network_connections(
 
     // list_connections shells out with blocking Command::output(); keep it
     // off the async runtime and honor the declared `limit` argument.
-    let mut connections = tokio::task::spawn_blocking(move || NetworkManager::list_connections())
+    let mut connections = tokio::task::spawn_blocking(NetworkManager::list_connections)
         .await
         .map_err(|e| format!("Network connections task failed: {e}"))?;
     connections.truncate(limit);
@@ -180,7 +180,7 @@ pub(crate) async fn handle_network_connections(
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResult, String> {
-    let stats = tokio::task::spawn_blocking(move || SystemMonitor::get_stats())
+    let stats = tokio::task::spawn_blocking(SystemMonitor::get_stats)
         .await
         .map_err(|e| format!("System stats task failed: {e}"))??;
     Ok(ToolResult::text(
@@ -188,7 +188,7 @@ pub(crate) async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResul
     ))
 }
 pub(crate) async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult, String> {
-    let usage = tokio::task::spawn_blocking(move || SystemMonitor::get_disk_usage())
+    let usage = tokio::task::spawn_blocking(SystemMonitor::get_disk_usage)
         .await
         .map_err(|e| format!("Disk usage task failed: {e}"))?;
     Ok(ToolResult::text(
