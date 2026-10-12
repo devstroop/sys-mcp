@@ -86,8 +86,8 @@ AI Agent (Claude, OpenCode, etc.)
 
 ### Platform Layer (`src/platform/`)
 
-- **window/** — OS-specific window management implementations behind a common `PlatformWindowManager` interface. Full Win32 implementation on Windows; stubs on Linux/macOS.
-- **accessibility/** — Placeholder stubs for future platform-specific accessibility tree access.
+- **window/** — OS-specific window management implementations behind a common `PlatformWindowManager` interface. Real implementations on all three platforms: Win32 on Windows, `x11rb` with EWMH atoms on Linux (X11 only — no Wayland), and `CGWindowListCopyWindowInfo` + Cocoa/objc messaging on macOS. All expose list/active/focus/move/resize/minimize/maximize/restore/close/title/bounds/find-by-title.
+- **accessibility/** — Real platform accessibility trees behind a common `PlatformAccessibility` interface: Windows UI Automation (COM `IUIAutomation`, `ControlViewWalker`), macOS `AXUIElement` C FFI, and Linux AT-SPI2 over D-Bus (`zbus`, blocking API; ignores `window_id`, walks from the AT-SPI root). `get_tree` and `find_elements` are implemented on all three; `get_element_properties` and `invoke_element_action` still return `UnsupportedCapability`.
 
 ### Protocol Layer (`src/protocol/`)
 

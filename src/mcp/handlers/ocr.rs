@@ -55,7 +55,7 @@ pub(crate) async fn handle_read_screen(
                     })
                 }).collect();
                 format!(
-                    "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for gui_click):\n{}",
+                    "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for mouse_click):\n{}",
                     result.screen_width,
                     result.screen_height,
                     result.lines.len(),
@@ -64,7 +64,7 @@ pub(crate) async fn handle_read_screen(
                 )
             }
             _ => format!(
-                "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for gui_click):\n{}",
+                "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for mouse_click):\n{}",
                 result.screen_width,
                 result.screen_height,
                 result.lines.len(),
@@ -98,12 +98,12 @@ pub(crate) async fn handle_find_text(
 
         if matches.is_empty() {
             Ok(ToolResult::text(format!(
-                "No text matching '{}' found on screen. Try gui_read_screen to see all visible text.",
+                "No text matching '{}' found on screen. Try screen_read to see all visible text.",
                 query
             )))
         } else {
             let summary = format!(
-                "Found {} match(es). Use cx/cy coordinates directly with gui_click.\n{}",
+                "Found {} match(es). Use cx/cy coordinates directly with mouse_click.\n{}",
                 matches.len(),
                 serde_json::to_string_pretty(&matches).unwrap_or_default()
             );
@@ -170,7 +170,7 @@ pub(crate) async fn handle_scroll_to_text(
 
             if !matches.is_empty() {
                 return Ok(ToolResult::text(format!(
-                    "Found '{}' after {} scroll(s). Use cx/cy with gui_click.\n{}",
+                    "Found '{}' after {} scroll(s). Use cx/cy with mouse_click.\n{}",
                     query,
                     i,
                     serde_json::to_string_pretty(&matches).unwrap_or_default()
@@ -186,7 +186,7 @@ pub(crate) async fn handle_scroll_to_text(
         }
 
         Ok(ToolResult::text(format!(
-            "Text '{}' not found after {} scrolls. Try gui_read_screen to see what's currently visible.",
+            "Text '{}' not found after {} scrolls. Try screen_read to see what's currently visible.",
             query, max_scrolls
         )))
     }

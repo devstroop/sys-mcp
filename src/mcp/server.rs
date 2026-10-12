@@ -93,8 +93,9 @@ impl McpRequestHandler {
             }
         };
 
+        // Matches the tool name advertised in tools.rs (web_preview).
         #[cfg(feature = "web-preview")]
-        if tool_name == "gui_web_preview" {
+        if tool_name == "web_preview" {
             return self.handle_web_preview(req);
         }
 
