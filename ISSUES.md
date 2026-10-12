@@ -1,5 +1,7 @@
 # Issues & Next-Phase Development Gaps (sys-mcp)
 
+**Last verified: 2026-10-12** — every status below was checked against the code in this worktree.
+
 ## Priority Legend
 
 | Label | Meaning |
@@ -35,91 +37,102 @@
 | 18 | No connection pooling for model downloads | 🔵 Open |
 | 19 | `Box::leak` in PTY default shell resolution | 🔵 Open |
 | 20 | No graceful shutdown for child processes in MCP Hub | 🔵 Open |
+| 21 | Stale `gui_*` tool-name references after tool rename | 🟡 Open (fix on branch `fix/tool-descriptions`, not merged) |
+| 22 | Blocking process calls inside async handlers | 🟡 Open (fix on branch `fix/async-blocking`, not merged) |
+| 23 | `shell_exec` fixed 500ms wait loses output | 🔴 Open (fix on branch `fix/async-blocking`, not merged) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | 🟡 Open (in progress on branch `test/destructive-tools`) |
+| 25 | Tests lack platform cfg gating | 🟢 Open |
+| 26 | `network_connections` ignores its `limit` parameter | 🟢 Open |
 
 ---
 
-## 🔴 Critical Bugs (None remaining)
+## 🔴 Critical Bugs
 
-All critical bugs have been resolved.
+### 23. `shell_exec` fixed 500ms wait loses output
+
+**File:** `src/mcp/handlers/shell.rs` (`handle_shell_exec`)
+**Problem (verified):** After sending the command and closing the PTY, the handler sleeps a fixed 500ms and then reads the output buffer. Any command slower than 500ms silently loses or truncates its output. There is no completion detection (no exit status check, no read-until-EOF).
+**Status:** Fix in progress on branch `fix/async-blocking` (not merged as of this writing).
+**Severity:** 🔴 Critical — silently incorrect results.
 
 ---
 
 ## 🟡 High-Priority Gaps
 
-### 4. Accessibility — all platforms are stubs
+### 4. Accessibility — all platforms are stubs — ✅ Fixed
 
-**Files:** `src/platform/accessibility/{windows,linux,macos}.rs`
-**Problem:** All three are placeholder comments only. Tools `gui_accessibility_tree` and `gui_find_ui_element` exist in the handler dispatch but are commented out of the tools list.
-**Planned APIs:** Windows → UI Automation (COM), Linux → AT-SPI2 (D-Bus), macOS → AXUIElement.
-**Severity:** 🟡 High
+**Fixed:** `src/platform/accessibility/{windows,macos,linux}.rs` all contain real implementations (Windows: COM `IUIAutomation` with `ControlViewWalker`; macOS: `AXUIElement` C FFI via `objc`/`core-foundation`; Linux: AT-SPI2 over D-Bus via `zbus`). All three implement `get_tree` and `find_elements`; both tools (`accessibility_tree`, `accessibility_find`) are dispatched in `src/mcp/handlers/mod.rs` and declared in `tools.rs`. Residual gaps: `get_element_properties` and `invoke_element_action` return `UnsupportedCapability` on all three platforms; the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from the AT-SPI root).
 
-### 5. Object detection is a stub
+### 5. Object detection is a stub — ✅ Fixed
 
-**File:** `src/gui/detection.rs`
-**Problem:** Returns hardcoded mock detections (laptop, mouse, keyboard, cup). No YOLOv8 ONNX inference implemented. Model download stub logs a message but never downloads.
-**Severity:** 🟡 High
+**Fixed:** `src/gui/detection.rs` performs real YOLOv8n ONNX inference via `tract-onnx` (letterbox preprocessing, confidence threshold, NMS), downloads the model from the ultralytics assets release URL on first use, and ships the full 80-class COCO label list.
 
-### 6. Test coverage is critically low
+### 6. Test coverage is critically low — ✅ Fixed
 
-**Count:** 8 tests total (6 hub integration + 2 session unit) for ~6000 lines of Rust and 54+ MCP tools.
-**Missing:** No tests for handlers, protocol serialization, backends (StubBackend exists but is untested), web server, platform code, OCR, terminal/PTY, CLI config, error paths.
-**Foundation:** `StubBackend` provides a good test double — tests should be written against it.
-**Severity:** 🟡 High
+**Fixed:** 66 tests total (64 across `tests/{handler,protocol,hub,config}_tests.rs` + 2 unit tests in `src/mcp/session.rs`), up from 8. Remaining coverage gaps are tracked as issue #24.
+
+### 21. Stale `gui_*` tool-name references after tool rename
+
+**Files:** `src/mcp/tools.rs`, `src/mcp/server.rs`
+**Problem:** Tools were renamed to a category scheme (`gui_screenshot` → `screen_capture`, etc.), but many tool descriptions still reference the old names (`gui_read_screen`, `gui_screenshot`, `gui_click`, `gui_list_windows`, `gui_shell_open`/`gui_shell_write`, `gui_delete_dir`, `gui_detect_objects`, …). Worse, this is functional in one place: `src/mcp/server.rs` special-cases the tool name `gui_web_preview`, but `tools.rs` advertises the tool as `web_preview` — so the advertised `web_preview` tool falls through to `handle_tool_call`, hits no dispatch arm, and returns "unknown tool".
+**Status:** Fix in progress on branch `fix/tool-descriptions` (not merged as of this writing).
+**Severity:** 🟡 High — misleading docs for agent callers plus one uncallable advertised tool.
+
+### 22. Blocking process calls inside async handlers
+
+**Files:** `src/mcp/handlers/system.rs`, `src/system.rs`, `src/sysinfo.rs`
+**Problem (verified):** Handlers such as `handle_process_list`, `handle_service_list`, `handle_network_info`, `handle_system_stats`, and `handle_system_logs` call synchronous functions directly inside `async fn` without `spawn_blocking`. Those functions shell out with blocking `std::process::Command::output()` (`sc`, `systemctl`, `launchctl`, `powershell`, `netstat`, `ss`, `top`, `df`, `journalctl`, `log`, …). Long-running commands block a tokio worker thread for their whole duration.
+**Status:** Fix in progress on branch `fix/async-blocking` (not merged as of this writing).
+**Severity:** 🟡 High — runtime stall under load, slow tools.
+
+### 24. Tool coverage gap (22 of 64 tools tested)
+
+**Files:** `tests/handler_tests.rs`, `src/mcp/tools.rs`
+**Problem (verified):** `tools.rs` declares 64 tools, but `handler_tests.rs` exercises only 22 distinct tools (display, mouse, keyboard, clipboard, window, `system_info`, `system_wait`). Entire categories have zero handler coverage: `fs_*`, `shell_*`, `mcp_*`, `process_*`, `service_*`, `network_*`, `system_stats`/`disk_usage`/`system_logs`, `screen_read`/`screen_find_text`, accessibility, detection, `web_preview`.
+**Status:** Being addressed on branch `test/destructive-tools`.
+**Severity:** 🟡 High.
 
 ---
 
 ## 🟢 Medium-Priority Improvements
 
-### 7. `handlers.rs` is too large (1546 lines)
+### 7. `handlers.rs` is too large (1546 lines) — ✅ Fixed
 
-**File:** `src/mcp/handlers.rs`
-**Problem:** Single file contains the dispatch match statement and all 50+ tool handler functions. Hard to navigate, review, and maintain.
-**Suggestion:** Split into a directory: `src/mcp/handlers/` with files per category (e.g., `display.rs`, `input.rs`, `window.rs`, `ocr.rs`, `filesystem.rs`, `shell.rs`, `mcp_hub.rs`, `system.rs`).
+**Fixed:** Handlers were split into `src/mcp/handlers/` with `mod.rs` (dispatch) + 10 category modules (`accessibility.rs`, `detection.rs`, `filesystem.rs`, `mcp_hub.rs`, `ocr.rs`, `shell.rs`, `system.rs`, `ui.rs`, `vision.rs`, `window.rs`); the largest is ~240 lines.
 
-### 8. CLI argument parsing is fragile
+### 8. CLI argument parsing is fragile — ✅ Fixed
 
-**File:** `src/config.rs`
-**Problem:** Manual `std::env::args()` parsing instead of a library like `clap`. No subcommand support, no environment variable overrides, inconsistent error messages.
-**Suggestion:** Migrate to `clap` with derive macros.
+**Fixed:** `src/config.rs` uses `clap` derive (`#[derive(Parser)]`) with long flags, env-var overrides (`SYS_MCP_*`), and `ValueEnum` for `TransportMode`. Covered by `tests/config_tests.rs`.
 
-### 9. `mcphub` single-line read for JSON-RPC I/O
+### 9. `mcphub` single-line read for JSON-RPC I/O — ✅ Fixed
 
-**File:** `src/mcp/hub.rs:302-322`
-**Related to:** Bug #1 above, but the deeper issue is the I/O strategy. Instead of a line-based protocol reader, use a proper framing mechanism (e.g., newline-delimited JSON with buffered reading until a complete JSON value is formed).
+**Fixed:** `send_jsonrpc()` in `src/mcp/hub.rs` reads the child server's stdout through a `BufReader` and parses complete JSON-RPC values; multi-line responses are no longer truncated.
 
-### 10. ANSI escape stripping is heuristic
+### 10. ANSI escape stripping is heuristic — ✅ Fixed
 
-**File:** `src/mcp/handlers.rs:1257-1294`
-**Problem:** `strip_ansi_codes()` uses a state machine that handles common CSI sequences but may miss or mishandle edge cases (SGR with multiple parameters, OSC sequences, DCS sequences, etc.).
-**Suggestion:** Use a well-tested crate like `strip-ansi-escapes` or `console`.
+**Fixed:** The `strip_ansi_codes()` helper in `src/mcp/handlers/shell.rs` is a thin wrapper over the `strip-ansi-escapes` crate (a declared dependency in `Cargo.toml`); the hand-rolled state machine is gone.
 
 ### 11. Multi-monitor support is incomplete
 
-**File:** `src/gui/backend/local.rs`
-**Problem:** `list_monitors()` always returns a single primary monitor at (0,0) with the screen resolution. The `rustautogui` library may return monitor information, but it's not plumbed through.
+**File:** `src/gui/backend/local.rs` (`list_monitors`)
+**Problem (verified):** `list_monitors()` always returns exactly one synthetic monitor (`id: 0`, `name: "Primary"`, `primary: true`, `position: (0,0)`) sized from `get_screen_size()`. Real per-monitor enumeration is not plumbed through from `rustautogui`.
 
-### 12. No rate limiting on web preview
+### 12. No rate limiting on web preview — ✅ Fixed
 
-**File:** `src/web/server.rs`
-**Problem:** The web preview server has no rate limiting on its API routes. A misbehaving client could hammer the screenshot/click/type endpoints.
-**Suggestion:** Add a simple token-bucket or request-per-second limiter.
+**Fixed:** `src/web/server.rs` has a `RateLimiter` (sliding-window, keyed per client IP, configured at 60 requests/second) checked by every API route, plus a per-run UUID token guard (`check_token`).
 
-### 13. CORS is overly permissive
+### 13. CORS is overly permissive — ✅ Fixed
 
-**File:** `src/mcp/http_transport.rs:43-44`
-**Problem:** `CorsLayer::new().allow_origin(Any)` allows any origin to make requests.
-**Suggestion:** Make the CORS origin configurable, defaulting to a safe value or documenting that `Any` is not production-safe.
+**Fixed:** `src/mcp/http_transport.rs` builds the `CorsLayer` conditionally: `allow_origin(Any)` only when binding to `0.0.0.0`/`::`; for any other bind host it allows only the origin `http(s)://{host}:{port}` derived from the configured host/port.
 
-### 14. CI only runs on Linux
+### 14. CI only runs on Linux — ✅ Fixed
 
-**File:** `.github/workflows/ci.yml`
-**Problem:** No Windows or macOS runners. Platform-specific code (Win32 window management, macOS frameworks) is never compiled or tested in CI.
-**Suggestion:** Add a matrix build with `os: [ubuntu-latest, windows-latest, macos-latest]`.
+**Fixed:** `.github/workflows/ci.yml` runs a matrix over `ubuntu-latest`, `macos-latest`, `windows-latest` (`fail-fast: false`), and `.github/workflows/release.yml` builds cross-platform release binaries on tag push.
 
 ### 15. No resource or prompt support in MCP protocol
 
-**File:** `src/mcp/server.rs`
-**Problem:** The server only advertises `"tools": {}` capabilities. The MCP spec also supports `resources` and `prompts`.
+**File:** `src/mcp/server.rs` (`handle_initialize`)
+**Problem (verified):** The `initialize` response still advertises only `"capabilities": { "tools": {} }`, and the dispatch handles only `initialize`, `initialized`, `tools/list`, `tools/call`, and `ping`. No `resources` or `prompts` support.
 **Suggestion:** Add resource templates for file system access and prompt templates for common GUI automation tasks.
 
 ---
@@ -128,66 +141,66 @@ All critical bugs have been resolved.
 
 ### 16. Template matching (Phase 7)
 
-**Files:** `src/mcp/handlers.rs:621-628`
-**Status:** Handlers for `gui_find_image` and `gui_wait_for_image` return permanent errors. The `rustautogui` submodule likely has template matching capabilities that need to be wired up.
+**Files:** `src/mcp/handlers/vision.rs`, `src/mcp/tools.rs`
+**Problem (verified):** `handle_find_image` and `handle_wait_for_image` in `vision.rs` return a permanent "Template matching not yet implemented" error, and their schemas are hidden from `tools/list` (comment block in `tools.rs`). The `rustautogui` submodule contains template-matching implementations (`src/core/template_match/`: slow NCC, segmented NCC, FFT NCC, OpenCL variants) that still need wiring into the handlers and re-exposing in `tools.rs`.
 
 ### 17. Key combo duplication
 
-**Problem:** `gui_press_key` splits key names on `+` in the handler (`handlers.rs:472-477`) to call `client.key_combo()`. But `GuiClient.key_combo()` also exists as a separate method. This dual path could lead to confusion about where key combo logic lives.
+**Files:** `src/mcp/handlers/ui.rs`, `src/gui/mod.rs`, `src/web/server.rs`
+**Problem (verified):** `handle_press_key` (`keyboard_press`) splits the key string on `+` in the handler and calls `client.key_combo()`, but `GuiClient::key_combo()` is also a public method called directly from `src/web/server.rs`. Key-combo parsing lives in more than one place.
 
 ### 18. No connection pooling for model downloads
 
-**File:** `src/gui/ocr.rs:92-101`
-**Problem:** `ureq` is used synchronously inside `tokio::task::spawn_blocking` for downloading OCR models. For a one-time download this is acceptable, but it blocks a worker thread.
+**File:** `src/gui/ocr.rs:92`
+**Problem (verified):** OCR model download uses synchronous `ureq::get()` (`ensure_model`), triggered lazily from `get_engine()` on first use — call sites wrap `read_screen`/`find_text` in `tokio::task::spawn_blocking`, so the runtime is not blocked. Remaining gap: no retry/resume for interrupted downloads.
 
 ### 19. `Box::leak` in PTY default shell resolution
 
-**File:** `src/terminal/pty.rs`
-**Problem:** The `$SHELL` env var is leaked via `Box::leak` to produce a `&'static str`. Minor memory leak (process-lifetime only) but worth noting.
+**File:** `src/terminal/pty.rs:182`
+**Problem (verified):** The `$SHELL` env var is leaked via `Box::leak` to produce a `&'static str`. Process-lifetime-only leak; worth replacing with owned data.
 
 ### 20. No graceful shutdown for child processes in MCP Hub
 
-**File:** `src/mcp/hub.rs:208-224`
-**Problem:** `stop_server()` calls `child.kill().await` but does not attempt a graceful SIGTERM before SIGKILL on Unix, nor does it wait for the process to exit.
+**File:** `src/mcp/hub.rs` (`stop_server`)
+**Problem (verified):** `stop_server()` calls `child.kill().await` directly — no graceful SIGTERM on Unix, no draining of pending I/O, no wait beyond `kill`.
+
+### 25. Tests lack platform cfg gating
+
+**Files:** `tests/*.rs`
+**Problem:** No test is gated with `#[cfg(windows)]`/`#[cfg(unix)]`/`#[cfg(target_os = ...)]`. Whether every test is valid on all three CI platforms is unverified beyond "CI is green" — most handler tests pass through `StubBackend` and so never exercise platform code.
+
+### 26. `network_connections` ignores its `limit` parameter
+
+**File:** `src/mcp/handlers/system.rs` (`handle_network_connections`)
+**Problem (verified):** The tool schema in `tools.rs` declares a `limit` parameter (default 50), and the handler reads it into `let _limit = …` but never applies it — `NetworkManager::list_connections()` results are returned untruncated. (`process_list` by contrast does apply `limit` via `processes.truncate(limit)`.)
 
 ---
 
 ## Summary of Next-Phase Development Gaps
 
-The following represents the planned feature phases and remaining work:
+Current state of the planned feature phases:
 
-### Phase 6 — Accessibility (Unstarted)
-- Implement UI Automation COM on Windows
-- Implement AT-SPI2 via D-Bus on Linux
-- Implement AXUIElement on macOS
-- Wire up `gui_accessibility_tree` and `gui_find_ui_element` in `tools.rs`
+### Phase 6 — Accessibility ✅ Done (element-level gaps remain)
+- All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). Both tools are live in the dispatch and in `tools/list` (see issue #4).
+- Remaining: `get_element_properties` / `invoke_element_action` unsupported on all platforms; Linux ignores `window_id` and uses blocking D-Bus calls.
 
-### Phase 7 — Template Matching (Unstarted)
-- Wire up `rustautogui` template matching in `gui_find_image` and `gui_wait_for_image`
-- Uncomment tool schemas in `tools.rs`
+### Phase 7 — Template Matching 🔓 Unfinished (the one open phase)
+- Wire up `rustautogui` template matching in `vision_find_image` / `vision_wait_for_image` (`src/mcp/handlers/vision.rs`).
+- Re-expose the hidden tool schemas in `tools.rs` (issue #16).
 
-### Phase 8 — Window Management: Linux + macOS (Unstarted)
-- Implement `PlatformWindowManager` for Linux using `x11rb`
-- Implement `PlatformWindowManager` for macOS using `CoreGraphics` + `Cocoa`
-- Test on both platforms
+### Phase 8 — Window Management: Linux + macOS ✅ Done
+- Linux: `x11rb`-based implementation with EWMH atoms (`_NET_CLIENT_LIST`, `_NET_WM_STATE`, …). X11 only — no Wayland support.
+- macOS: `CGWindowListCopyWindowInfo` for enumeration plus Cocoa/objc messaging for focus/move/resize/minimize/maximize/restore/close.
 
-### Phase 9 — Object Detection (Stub → Real)
-- Implement actual YOLOv8 ONNX inference (choose `ort` or `tract-onnx` crate)
-- Implement model download
-- Remove mock data
+### Phase 9 — Object Detection ✅ Done
+- Real YOLOv8n ONNX inference via `tract-onnx`, model auto-download, COCO labels (issue #5).
 
-### Phase 10 — Cross-Platform System Monitoring
-- Add macOS-specific branches using `sysctl`, `vm_stat`, `launchctl`, `log show`, etc.
-- Test all system utilities on macOS
+### Phase 10 — Cross-Platform System Monitoring ✅ Done
+- `src/system.rs` has per-OS branches (`sc`/`powershell` on Windows, `systemctl`/`ss`/`ip`/`journalctl` on Linux, `launchctl`/`vm_stat`/`sysctl`/`top -l`/`log show` on macOS). CI compiles and tests on all three OSes.
 
-### Phase 11 — Testing & Quality
-- Add unit tests for protocol serialization
-- Add integration tests for all tool handlers using `StubBackend`
-- Add web server integration tests
-- Add CLI config parsing tests
-- Add property-based testing for JSON-RPC roundtrips
+### Phase 11 — Testing & Quality 🔓 Partially done
+- Done: 66 tests (handler dispatch via `StubBackend`, protocol serialization, hub, config).
+- Remaining: destructive-tool coverage (branch `test/destructive-tools`, issue #24), platform cfg gating (issue #25), web server tests, property-based JSON-RPC roundtrips.
 
-### Phase 12 — CI/CD
-- Add macOS and Windows CI runners
-- Add release workflow with binary publishing
-- Add cargo-deny for dependency auditing
+### Phase 12 — CI/CD ✅ Done
+- Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
