@@ -23,3 +23,6 @@ ocr-models/
 
 # Claude settings
 .claude/
+
+# Worktrees
+.worktrees
