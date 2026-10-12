@@ -381,7 +381,10 @@ async fn test_fs_read_missing_path_errors() {
     let result = handle_tool_call(&client, "fs_read", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: path"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: path"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -390,7 +393,10 @@ async fn test_fs_write_missing_path_errors() {
     let result = handle_tool_call(&client, "fs_write", json!({"content": "aGVsbG8="})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: path"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: path"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -411,7 +417,10 @@ async fn test_fs_delete_missing_path_errors() {
     let result = handle_tool_call(&client, "fs_delete", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: path"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: path"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -420,7 +429,10 @@ async fn test_fs_create_dir_missing_path_errors() {
     let result = handle_tool_call(&client, "fs_create_dir", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: path"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: path"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -429,7 +441,10 @@ async fn test_process_kill_missing_pid_errors() {
     let result = handle_tool_call(&client, "process_kill", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: pid"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: pid"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -438,7 +453,10 @@ async fn test_process_info_missing_pid_errors() {
     let result = handle_tool_call(&client, "process_info", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: pid"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: pid"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -459,7 +477,10 @@ async fn test_service_start_missing_name_errors() {
     let result = handle_tool_call(&client, "service_start", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: name"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: name"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -468,7 +489,10 @@ async fn test_service_stop_missing_name_errors() {
     let result = handle_tool_call(&client, "service_stop", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: name"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: name"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -477,7 +501,10 @@ async fn test_service_status_missing_name_errors() {
     let result = handle_tool_call(&client, "service_status", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: name"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: name"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -547,10 +574,7 @@ async fn test_window_focus_missing_id_and_title_errors() {
     let result = handle_tool_call(&client, "window_focus", json!({"neither": true})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(
-        text.contains("Provide window_id or title"),
-        "got: {text}"
-    );
+    assert!(text.contains("Provide window_id or title"), "got: {text}");
 }
 
 #[tokio::test]
@@ -600,7 +624,10 @@ async fn test_mouse_drag_missing_to_y_errors() {
     .await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: to_y"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: to_y"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -609,7 +636,10 @@ async fn test_keyboard_type_missing_text_errors() {
     let result = handle_tool_call(&client, "keyboard_type", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: text"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: text"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -618,7 +648,10 @@ async fn test_clipboard_set_missing_text_errors() {
     let result = handle_tool_call(&client, "clipboard_set", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: text"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: text"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -627,7 +660,10 @@ async fn test_screen_find_text_missing_query_errors() {
     let result = handle_tool_call(&client, "screen_find_text", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(text.contains("missing required argument: query"), "got: {text}");
+    assert!(
+        text.contains("missing required argument: query"),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -636,10 +672,7 @@ async fn test_no_such_tool_returns_error() {
     let result = handle_tool_call(&client, "no_such_tool", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
-    assert!(
-        text.contains("unknown tool: no_such_tool"),
-        "got: {text}"
-    );
+    assert!(text.contains("unknown tool: no_such_tool"), "got: {text}");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -826,8 +859,12 @@ async fn test_fs_write_read_roundtrip_tempfile() {
     let path = file_path.to_str().unwrap();
 
     // fs_write expects base64-encoded content
-    let write = handle_tool_call(&client, "fs_write", json!({"path": path, "content": "aGVsbG8="}))
-        .await;
+    let write = handle_tool_call(
+        &client,
+        "fs_write",
+        json!({"path": path, "content": "aGVsbG8="}),
+    )
+    .await;
     assert!(!write.is_error.unwrap_or(false));
     let text = write.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("Written to"), "got: {text}");
@@ -845,8 +882,12 @@ async fn test_fs_list_tempdir_success() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("probe.txt"), b"x").unwrap();
 
-    let result = handle_tool_call(&client, "fs_list", json!({"path": dir.path().to_str().unwrap()}))
-        .await;
+    let result = handle_tool_call(
+        &client,
+        "fs_list",
+        json!({"path": dir.path().to_str().unwrap()}),
+    )
+    .await;
     assert!(!result.is_error.unwrap_or(false));
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("probe.txt"), "got: {text}");
@@ -890,8 +931,12 @@ async fn test_fs_create_dir_and_delete_in_tempdir_success() {
     let dir = tempfile::tempdir().unwrap();
     let sub = dir.path().join("nested").join("child");
 
-    let create = handle_tool_call(&client, "fs_create_dir", json!({"path": sub.to_str().unwrap()}))
-        .await;
+    let create = handle_tool_call(
+        &client,
+        "fs_create_dir",
+        json!({"path": sub.to_str().unwrap()}),
+    )
+    .await;
     assert!(!create.is_error.unwrap_or(false));
     assert!(sub.is_dir(), "directory should have been created");
 
@@ -963,7 +1008,10 @@ async fn test_network_connections_no_required_args() {
     // (limit is optional, defaulting to 50) — it runs a read-only netstat.
     let result = handle_tool_call(&client, "network_connections", json!({})).await;
     assert!(!result.is_error.unwrap_or(false));
-    assert!(!result.content.is_empty(), "expected connection list content");
+    assert!(
+        !result.content.is_empty(),
+        "expected connection list content"
+    );
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.starts_with('['), "expected a JSON array, got: {text}");
 }
