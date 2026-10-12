@@ -344,6 +344,36 @@ pub fn all_tools() -> Vec<Value> {
                 "required": ["label"]
             }
         }),
+        // ── JEV Decision ──────────────────────────────────────────────
+        // NOTE: calls require the `jev` cargo feature at runtime; without
+        // it the tool is still listed but its call fails with a clear error.
+        json!({
+            "name": "decision",
+            "description": "Ask the JEV decision model (TypeSafe System One) to evaluate a state against typed questions. JEV never generates text: it returns typed answers with calibrated probabilities. Supply `state` (a string or any JSON value) and one or more `questions` keyed by id. Question types: \"noul\" — binary truth (returns {noul: 0..1}); \"choice\" — pick one option from criteria keys (returns {choice, probabilities, confidence}); \"score\" — ordered rubric whose criteria array indices become the scale (returns {score, probabilities, confidence, legend}). Multiple questions are evaluated in parallel. Use this for triage, guardrails, urgency checks, or ranking over bounded options — not for free-form answers.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "description": "The state to evaluate: a plain string, or any JSON value (e.g. log output, an action descriptor, a window title). Obvious secrets (passwords, tokens, keys) are redacted before sending."
+                    },
+                    "questions": {
+                        "type": "object",
+                        "description": "Map of question id -> question. Each question: {\"type\": \"noul\"|\"choice\"|\"score\", \"instructions\": string, \"criteria\": optional}. For noul, criteria is an optional {\"true\": desc, \"false\": desc} object. For choice, criteria is an object mapping option name -> description (2+ options). For score, criteria is an ordered array of legend labels (e.g. [\"Low\",\"Med\",\"High\"]).",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "type": { "type": "string", "enum": ["noul", "choice", "score"], "description": "Question type." },
+                                "instructions": { "type": "string", "description": "What to evaluate. Keep short and plain; repeat prohibitions explicitly." },
+                                "criteria": { "description": "Type-dependent: noul -> {\"true\"/\"false\" descriptions}; choice -> {option: description, ...} (2+); score -> ordered [label, ...] array." }
+                            },
+                            "required": ["type", "instructions"]
+                        }
+                    },
+                    "model": { "type": "string", "description": "Override the configured JEV model (default: jev-1.13-free)." }
+                },
+                "required": ["state", "questions"]
+            }
+        }),
         // ── System Info ─────────────────────────────────────────────────
         json!({
             "name": "system_info",

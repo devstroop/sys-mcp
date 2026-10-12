@@ -16,6 +16,9 @@ async fn main() -> anyhow::Result<()> {
 
     log::info!("gui-mcp v{} starting...", env!("CARGO_PKG_VERSION"));
 
+    // Install JEV decision configuration (endpoint/key/model/timeout).
+    sys_mcp::decision::init(config.jev.clone());
+
     // Create the local GUI backend
     let backend = LocalBackend::new(config.debug)?;
     let client = GuiClient::new(backend);

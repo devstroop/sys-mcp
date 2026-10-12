@@ -1,4 +1,5 @@
 pub mod accessibility;
+pub mod decision;
 pub mod detection;
 pub mod filesystem;
 pub mod mcp_hub;
@@ -64,6 +65,10 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "detect_objects" => detection::handle_detect_objects(client, &args).await,
         #[cfg(feature = "detection")]
         "detect_click_object" => detection::handle_click_object(client, &args).await,
+
+        // JEV decision (feature-gated inside the handler so the tool stays
+        // advertised and fails with a clear message when not compiled in)
+        "decision" => decision::handle_decision(client, &args).await,
 
         // Utility
         "system_wait" => system::handle_wait(&args).await,
