@@ -68,10 +68,11 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         "vision_find_image" => vision::handle_find_image(client, &args).await,
         "vision_wait_for_image" => vision::handle_wait_for_image(client, &args).await,
 
-        // Object detection
-        #[cfg(feature = "detection")]
+        // Object detection. The arms are ungated (unlike the handlers' real
+        // bodies) so the tools stay reachable when the `detection` feature is
+        // off — otherwise an agent sees them in tools/list and gets a
+        // confusing "unknown tool" from the dispatcher.
         "detect_objects" => detection::handle_detect_objects(client, &args).await,
-        #[cfg(feature = "detection")]
         "detect_click_object" => detection::handle_click_object(client, &args).await,
 
         // JEV decision (feature-gated inside the handler so the tool stays
@@ -81,6 +82,24 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         // Utility
         "system_wait" => system::handle_wait(&args).await,
         "screen_scroll_to_text" => ocr::handle_scroll_to_text(client, &args).await,
+
+        // Web preview. When the `web-preview` feature is ON, `server.rs`
+        // intercepts this name and serves the running preview URL before
+        // dispatch reaches here. When it is OFF this arm is the only one
+        // that can match, so it must return an actionable error rather than
+        // letting the tool fall through as "unknown tool".
+        "web_preview" => {
+            #[cfg(feature = "web-preview")]
+            {
+                // Unreachable in a web-preview build (server.rs intercepts),
+                // but keep the message correct if that ever changes.
+                Err("web preview is not running — start the server with the web-preview feature enabled".to_string())
+            }
+            #[cfg(not(feature = "web-preview"))]
+            {
+                Err("Web preview is not available in this build — rebuild with `--features web-preview`.".to_string())
+            }
+        }
 
         // System
         "system_info" => system::handle_system_info(client).await,

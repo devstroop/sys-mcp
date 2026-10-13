@@ -46,6 +46,7 @@
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
 | 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
 | 29 | `detection` feature made opt-in (heaviest feature, +56 crates) | ✅ Fixed |
+| 30 | Advertised tools unreachable when their feature is off (`detect_objects`, `web_preview`) | ✅ Fixed |
 
 ---
 
