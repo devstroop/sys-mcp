@@ -106,7 +106,11 @@ fn key_is_secret(key_lower: &str) -> bool {
 }
 
 fn is_value_end(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '"' | '\'' | '&' | ';' | ',' | ')' | ']' | '}' | '>' | '[')
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '&' | ';' | ',' | ')' | ']' | '}' | '>' | '['
+        )
 }
 
 /// Redact `password=…`, `token: …`, and JSON `"password": "…"` pairs.

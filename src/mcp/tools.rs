@@ -431,7 +431,8 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to the file to delete." }
+                    "path": { "type": "string", "description": "Path to the file to delete." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["path"]
             }
@@ -455,7 +456,8 @@ pub fn all_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Shell command to execute." },
-                    "cwd": { "type": "string", "description": "Working directory for the command (optional)." }
+                    "cwd": { "type": "string", "description": "Working directory for the command (optional)." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["command"]
             }
@@ -608,7 +610,8 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Process ID to kill." }
+                    "pid": { "type": "integer", "description": "Process ID to kill." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["pid"]
             }
@@ -631,7 +634,8 @@ pub fn all_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "Command to execute." },
-                    "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments for the command (optional)." }
+                    "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments for the command (optional)." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["command"]
             }
@@ -648,7 +652,8 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Service name to start." }
+                    "name": { "type": "string", "description": "Service name to start." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["name"]
             }
@@ -659,7 +664,8 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Service name to stop." }
+                    "name": { "type": "string", "description": "Service name to stop." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["name"]
             }

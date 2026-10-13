@@ -7,8 +7,12 @@
 //! Module layout:
 //! - [`types`] — serde types for the `/v1/systemone` request/response.
 //! - [`redact`] — best-effort secret scrubbing applied to outbound state.
+//! - [`guard`] — opt-in risk guard for destructive tools. The denylist and
+//!   verdict types compile without any feature flag; only the model-backed
+//!   `assess` needs `jev`.
 //! - `client` — async HTTP client (requires the `jev` cargo feature).
 
+pub mod guard;
 pub mod redact;
 pub mod types;
 

@@ -117,10 +117,7 @@ fn request_serializes_noul_question() {
     };
     let value = serde_json::to_value(&req).unwrap();
     assert_eq!(value["model"], "jev-1.13-free");
-    assert_eq!(
-        value["state"],
-        "My payments have failed for three days."
-    );
+    assert_eq!(value["state"], "My payments have failed for three days.");
     assert_eq!(value["questions"]["is_urgent"]["type"], "noul");
     assert_eq!(
         value["questions"]["is_urgent"]["instructions"],
@@ -158,7 +155,10 @@ fn request_serializes_score_question_with_array_criteria() {
     };
     let value = serde_json::to_value(&req).unwrap();
     assert_eq!(value["questions"]["sev"]["type"], "score");
-    assert_eq!(value["questions"]["sev"]["criteria"], json!(["Low", "Med", "High"]));
+    assert_eq!(
+        value["questions"]["sev"]["criteria"],
+        json!(["Low", "Med", "High"])
+    );
 }
 
 #[test]
@@ -243,7 +243,10 @@ fn redact_scrubs_multiple_secret_shapes() {
         // sk- bearer-style token
         ("key is sk-abcdef123456 done", "key is [REDACTED] done"),
         // password= pair
-        ("connect with password=hunter2 now", "connect with password=[REDACTED] now"),
+        (
+            "connect with password=hunter2 now",
+            "connect with password=[REDACTED] now",
+        ),
         // token= pair
         ("token=ghp_abc123def456&x=1", "token=[REDACTED]&x=1"),
         // secret= pair (colon form)
@@ -251,7 +254,10 @@ fn redact_scrubs_multiple_secret_shapes() {
         // api_key= pair
         ("api_key=AKIA1234567890ABCD", "api_key=[REDACTED]"),
         // Bearer token in an Authorization header dump
-        ("Authorization: Bearer eyJhbGciOi.payload.sig", "Authorization: [REDACTED]"),
+        (
+            "Authorization: Bearer eyJhbGciOi.payload.sig",
+            "Authorization: [REDACTED]",
+        ),
         // 64-char hex blob
         (
             "hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef end",
@@ -279,11 +285,11 @@ fn redact_leaves_non_secrets_untouched() {
     for input in [
         "",
         "The deploy failed with exit code 1",
-        "user=alice role=admin",         // no secret key names
-        "tokenizer=fast",                // "tokenizer" does not end with a secret key suffix
-        "short sk-x",                    // sk body too short
-        "https://example.com/path?q=1",  // URL
-        "password:",                     // separator, empty value
+        "user=alice role=admin",        // no secret key names
+        "tokenizer=fast",               // "tokenizer" does not end with a secret key suffix
+        "short sk-x",                   // sk body too short
+        "https://example.com/path?q=1", // URL
+        "password:",                    // separator, empty value
     ] {
         assert_eq!(redact(input), input, "input: {input}");
     }
@@ -338,7 +344,10 @@ fn validate_missing_questions() {
 #[test]
 fn validate_empty_questions() {
     let err = validation_error(json!({ "state": "hello", "questions": {} }));
-    assert_eq!(err, "invalid argument: questions must contain at least one question");
+    assert_eq!(
+        err,
+        "invalid argument: questions must contain at least one question"
+    );
 }
 
 #[test]

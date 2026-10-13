@@ -50,14 +50,21 @@ impl Default for ServerConfig {
     }
 }
 
-/// Settings for the JEV decision endpoint (`decision` tool).
+/// Settings for the JEV decision endpoint (`decision` tool) and the
+/// opt-in destructive-tool guardrails.
 ///
 /// Environment overrides: `JEV_ENDPOINT`, `JEV_API_KEY`, `JEV_MODEL`,
-/// `JEV_TIMEOUT_SECS`. The API key is never logged or echoed in tool output.
-#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+/// `JEV_TIMEOUT_SECS`, `SYS_MCP_JEV_GUARDRAILS`,
+/// `SYS_MCP_JEV_GUARD_THRESHOLD`, `SYS_MCP_JEV_GUARD_TOOLS`. The API key
+/// is never logged or echoed in tool output.
+#[derive(Parser, Debug, Clone, PartialEq)]
 pub struct JevConfig {
     /// JEV decision endpoint URL (POST /v1/systemone)
-    #[arg(long, default_value = "http://192.168.2.49:5050/v1/systemone", env = "JEV_ENDPOINT")]
+    #[arg(
+        long,
+        default_value = "http://192.168.2.49:5050/v1/systemone",
+        env = "JEV_ENDPOINT"
+    )]
     pub endpoint: String,
 
     /// JEV API key (kept out of logs and tool output)
@@ -71,6 +78,24 @@ pub struct JevConfig {
     /// JEV request timeout in seconds
     #[arg(long, default_value_t = 15, env = "JEV_TIMEOUT_SECS")]
     pub timeout_secs: u64,
+
+    /// Gate destructive tools behind a JEV risk check (opt-in; default off).
+    /// When enabled, guarded tool calls are assessed by the decision model
+    /// and held for confirmation unless the Rust denylist refuses them first.
+    #[arg(long = "jev-guardrails", default_value_t = false, action = clap::ArgAction::SetTrue, env = "SYS_MCP_JEV_GUARDRAILS")]
+    pub guardrails: bool,
+
+    /// Risk threshold (0.0–1.0) for the JEV guard: a `noul` "safe to run
+    /// without confirmation" score below this value holds the call for
+    /// confirmation.
+    #[arg(long = "jev-guard-threshold", default_value_t = 0.5, value_parser = parse_guard_threshold, env = "SYS_MCP_JEV_GUARD_THRESHOLD")]
+    pub guard_threshold: f64,
+
+    /// Comma-separated override list of tools to guard. When unset, the
+    /// compiled-in defaults are used (shell_exec, fs_delete, process_kill,
+    /// service_stop, service_start, process_start).
+    #[arg(long = "jev-guard-tools", env = "SYS_MCP_JEV_GUARD_TOOLS")]
+    pub guard_tools: Option<String>,
 }
 
 impl Default for JevConfig {
@@ -85,6 +110,21 @@ impl Default for JevConfig {
 impl ServerConfig {
     pub fn from_args() -> Self {
         Self::parse()
+    }
+}
+
+/// Clap value parser for `--jev-guard-threshold`: a finite f64 in
+/// `[0.0, 1.0]`.
+fn parse_guard_threshold(s: &str) -> Result<f64, String> {
+    let v: f64 = s
+        .parse()
+        .map_err(|_| format!("invalid threshold '{s}': expected a number between 0.0 and 1.0"))?;
+    if v.is_finite() && (0.0..=1.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!(
+            "invalid threshold '{s}': expected a value between 0.0 and 1.0"
+        ))
     }
 }
 
