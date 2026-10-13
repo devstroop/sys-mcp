@@ -432,6 +432,29 @@ pub fn all_tools() -> Vec<Value> {
                 }
             }
         }),
+        // ── JEV bounded action loop (Phase 4) ─────────────────────────
+        // Higher risk than every other tool here: it drives real input off a
+        // model's judgment. Requires BOTH the `jev` cargo feature and the
+        // opt-in --jev-ui-loop / SYS_MCP_JEV_UI_LOOP=1 flag (default off);
+        // without them the call fails with an actionable message.
+        json!({
+            "name": "ui_decide",
+            "description": "Drive the FOREGROUND window toward a goal with a bounded, JEV-guided action loop (observe -> JEV picks one action from a fixed candidate set -> Rust safety gates -> execute -> re-observe). Requires the `jev` feature and the opt-in --jev-ui-loop / SYS_MCP_JEV_UI_LOOP=1 flag; otherwise this call fails with an explanatory error. Safety guarantees: completion is reported as \"likely_done\" (model judgment), never \"done\"; irreversible or destructive next actions (delete/send/pay/install/close-unsaved) are held with status \"needs_confirmation\" unless you pass \"confirm\": true; text to type comes ONLY from your `values` map — the model never generates text; the loop stops after max_steps (default 12, max 20) or when two consecutive actions change nothing (\"stuck\"); an inaccessible/elevated window is reported \"blocked\" and never driven. Statuses: done | likely_done | needs_confirmation | error | stuck | ambiguous | blocked. Each call returns a full action trace plus the model's completion/irreversibility scores.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "goal": { "type": "string", "description": "What to achieve in the foreground window, e.g. 'Save the document as report.txt'. Phrase it as an observable end state." },
+                    "values": {
+                        "type": "object",
+                        "description": "Literal text the loop is allowed to type, keyed by element name (or 'type:<idx>' / element id). The model chooses WHERE to type; only these values are ever typed — it can never invent text.",
+                        "additionalProperties": { "type": "string" }
+                    },
+                    "max_steps": { "type": "integer", "description": "Action budget (default 12, clamped to 1..20). The loop stops with 'stuck' when exhausted.", "default": 12 },
+                    "confirm": { "type": "boolean", "description": "Acknowledge that irreversible actions may be executed (default false: they are held with 'needs_confirmation' and nothing is run).", "default": false }
+                },
+                "required": ["goal"]
+            }
+        }),
         // ── System Info ─────────────────────────────────────────────────
         json!({
             "name": "system_info",

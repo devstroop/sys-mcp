@@ -131,16 +131,28 @@ src/
 - Deferred: `screen_read`/`accessibility_tree` normalisation into numbered `choice` candidates —
   not needed yet; OCR output is already structured and budgeted.
 
-### Phase 4 — Bounded action loop (optional, higher risk)
-- [ ] `ui_decide` tool: observe foreground window via existing `accessibility_tree` → build bounded
-      candidate action list (invoke/click/type-literal/select/toggle + target) → one Jev `choice`
-      (+ completion `noul`) → freshness re-check (target still present, same name/position) →
-      execute via existing input tools → independent assertion → status:
-      `done | likely_done | needs_confirmation | error | stuck | ambiguous | blocked`.
-- [ ] Safety: step budget (default 12, max 20), irreversible-action confirmation gate,
-      typed text must be a literal span supplied by the caller, foreground-window scoping,
-      emergency stop hook, never drive an elevated window (PermissionError → `blocked`).
-- [ ] Explicitly out of scope for now: OCR fallback for canvas apps, drag-drop, cross-window flows.
+### Phase 4 — Bounded action loop (optional, higher risk) ✅ shipped
+- [x] `ui_decide` tool: observe foreground window via existing `accessibility_tree` → build bounded
+      candidate action list (`click:<idx>`/`type:<idx>`/`key:<name>`/`wait`/`stop`) → one Jev
+      `choice` (+ completion `noul` + irreversibility `noul`) → freshness re-check (target still
+      present, same name/position within 8 px; same foreground window) → execute via existing input
+      tools → re-observe and compare fingerprints → status:
+      `done | likely_done | needs_confirmation | error | stuck | ambiguous | blocked`
+      (`done` is reserved by the vocabulary but never produced: completion is model judgment and
+      is always reported `likely_done`).
+- [x] Safety: step budget (default 12, hard cap 20), irreversible-action confirmation gate
+      (noul ≥ 0.5, and a **missing** irreversible answer counts as irreversible), typed text must
+      be a literal supplied by the caller via `values` (keyed by element name / `type:<idx>` /
+      element id; the model never generates text, and `type:` on a non-editable element is refused
+      at parse time), foreground-window scoping, permission/elevation observation failure →
+      `blocked` (never driven), >40 actionable elements → `ambiguous` (never silently truncated),
+      hallucinated choice → `error` with nothing executed, two consecutive no-change rounds →
+      `stuck` (no blind retry loops).
+- [x] Opt-in: `--jev-ui-loop` / `SYS_MCP_JEV_UI_LOOP`, default **off**; requires the `jev` cargo
+      feature as well. An observe-only `preview` path reports the candidate set + one Jev
+      decision without executing.
+- Explicitly out of scope for now: OCR fallback for canvas apps, drag-drop, cross-window flows,
+      an emergency-stop hotkey (the step budget and per-step gates are the local mitigation).
 
 ### Phase 5 — Observability & cost ledger ✅ shipped
 - [x] Log per decision: model, tag, tokens, latency, success/failure (redacted).

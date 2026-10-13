@@ -55,7 +55,8 @@ impl Default for ServerConfig {
 ///
 /// Environment overrides: `JEV_ENDPOINT`, `JEV_API_KEY`, `JEV_MODEL`,
 /// `JEV_TIMEOUT_SECS`, `SYS_MCP_JEV_GUARDRAILS`,
-/// `SYS_MCP_JEV_GUARD_THRESHOLD`, `SYS_MCP_JEV_GUARD_TOOLS`. The API key
+/// `SYS_MCP_JEV_GUARD_THRESHOLD`, `SYS_MCP_JEV_GUARD_TOOLS`,
+/// `SYS_MCP_JEV_UI_LOOP`. The API key
 /// is never logged or echoed in tool output.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct JevConfig {
@@ -109,6 +110,19 @@ pub struct JevConfig {
     /// lets the call through with the fuzzy judgment skipped.
     #[arg(long = "jev-guard-fail-mode", default_value_t = GuardFailMode::Closed, value_enum, env = "SYS_MCP_JEV_GUARD_FAIL_MODE")]
     pub guard_fail_mode: GuardFailMode,
+
+    /// Enable the `ui_decide` bounded action loop (Phase 4; opt-in, default
+    /// off). This is the one tool that *drives mouse and keyboard* based on
+    /// a model's judgment, so it stays off unless explicitly requested.
+    /// Even when enabled, irreversible actions are held for a per-call
+    /// `confirm: true`, typed text comes only from caller-supplied literals,
+    /// and the step budget is capped (see `decision::ui_loop`).
+    ///
+    /// Accepts a bare `--jev-ui-loop` flag, or any of `1/0`, `true/false`,
+    /// `yes/no`, `on/off` (case-insensitive) via the env var, same as
+    /// `--jev-guardrails`.
+    #[arg(long = "jev-ui-loop", default_value_t = false, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool, env = "SYS_MCP_JEV_UI_LOOP")]
+    pub ui_loop: bool,
 }
 
 impl Default for JevConfig {

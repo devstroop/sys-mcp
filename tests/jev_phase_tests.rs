@@ -3,6 +3,12 @@
 //! These are offline: `split_blocks`/`render` are pure, `stats` is pure
 //! bookkeeping, and `rank`'s small-input path returns before any model call,
 //! so the whole file runs without network or an API key.
+//!
+//! Gated on the `jev` feature because `decision::rank` and `decision::client`
+//! only exist with it (Phase 5's `stats` ledger compiles everywhere, but it
+//! is exercised here alongside the ranking it exists to audit).
+
+#![cfg(feature = "jev")]
 
 use std::time::Duration;
 

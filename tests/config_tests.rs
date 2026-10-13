@@ -26,6 +26,7 @@ fn test_jev_config_defaults() {
         "SYS_MCP_JEV_GUARD_THRESHOLD",
         "SYS_MCP_JEV_GUARD_TOOLS",
         "SYS_MCP_JEV_GUARD_FAIL_MODE",
+        "SYS_MCP_JEV_UI_LOOP",
     ]
     .iter()
     .any(|k| std::env::var(k).is_ok())
@@ -46,10 +47,15 @@ fn test_jev_config_defaults() {
     assert_eq!(jev.guard_tools, None);
     assert_eq!(jev.guard_fail_mode, GuardFailMode::Closed);
 
+    // The ui_decide action loop is opt-in too — this one drives real input,
+    // so default-off matters even more than for guardrails.
+    assert!(!jev.ui_loop);
+
     // Flattened into ServerConfig.
     let config = ServerConfig::default();
     assert_eq!(config.jev.model, "jev-1.13-free");
     assert!(!config.jev.guardrails);
+    assert!(!config.jev.ui_loop);
 }
 
 #[test]
@@ -89,6 +95,38 @@ fn test_jev_guardrails_cli_overrides() {
     assert!(!config.jev.guardrails);
     assert!((config.jev.guard_threshold - 0.5).abs() < f64::EPSILON);
     assert_eq!(config.jev.guard_tools, None);
+}
+
+#[test]
+fn test_jev_ui_loop_cli_override_and_default_off() {
+    // Bare flag enables the action loop.
+    let config = ServerConfig::try_parse_from(["sys-mcp", "--jev-ui-loop"]).expect("parse");
+    assert!(config.jev.ui_loop);
+
+    // Same value parser as --jev-guardrails, so every common boolean
+    // spelling works — exercised via CLI (not std::env::set_var) because
+    // cargo runs tests in parallel and env mutation would race.
+    for truthy in ["1", "true", "TRUE", "yes", "on"] {
+        let config =
+            ServerConfig::try_parse_from(["sys-mcp", "--jev-ui-loop", truthy]).expect("parse");
+        assert!(config.jev.ui_loop, "expected true for {truthy:?}");
+    }
+    for falsy in ["0", "false", "FALSE", "no", "off"] {
+        let config =
+            ServerConfig::try_parse_from(["sys-mcp", "--jev-ui-loop", falsy]).expect("parse");
+        assert!(!config.jev.ui_loop, "expected false for {falsy:?}");
+    }
+
+    // Garbage is a clean error, not a silent enable.
+    let result = ServerConfig::try_parse_from(["sys-mcp", "--jev-ui-loop", "maybe"]);
+    assert!(result.is_err(), "invalid boolean must be rejected");
+
+    // Default is off, unless the ambient environment opted in.
+    if std::env::var("SYS_MCP_JEV_UI_LOOP").is_ok() {
+        return;
+    }
+    let config = ServerConfig::try_parse_from(["sys-mcp"]).expect("args should parse");
+    assert!(!config.jev.ui_loop, "ui loop must default to off");
 }
 
 #[test]

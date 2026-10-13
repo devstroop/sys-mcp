@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **JEV decision layer** (cargo feature `jev`, off by default):
   - `decision` tool — evaluate a state against typed JEV (`/v1/systemone`)
     questions (`noul` / `choice` / `score`) with secret redaction before send
+  - `ui_decide` tool (Phase 4, opt-in via `--jev-ui-loop` /
+    `SYS_MCP_JEV_UI_LOOP=1`, default **off**) — bounded action loop that
+    drives the foreground window toward a goal: observe → JEV picks one
+    action from a bounded candidate set → Rust safety gates → execute →
+    re-observe. Completion is reported `likely_done` (never `done`);
+    irreversible actions are held for a per-call `confirm: true`; typed text
+    comes only from caller-supplied literals; more than 40 actionable
+    elements is `ambiguous` (never a silent truncation); two unchanged
+    rounds or an exhausted step budget (default 12, cap 20) end as `stuck`;
+    an inaccessible/elevated window is `blocked` and never driven.
   - Opt-in guardrails for destructive tools (`--jev-guardrails`, default off):
     a hardcoded Rust denylist (offline, model-independent) plus a JEV `noul`
     risk check that holds calls for confirmation (`confirm: true` to proceed);

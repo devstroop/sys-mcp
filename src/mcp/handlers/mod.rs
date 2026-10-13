@@ -7,6 +7,7 @@ pub mod ocr;
 pub mod shell;
 pub mod system;
 pub mod ui;
+pub mod ui_loop;
 pub mod vision;
 pub mod window;
 
@@ -83,6 +84,9 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         // Phase 5: local cost ledger. Reads no model and mutates nothing on
         // the machine, so it is always available.
         "decision_stats" => decision::handle_decision_stats(client, &args).await,
+        // Phase 4: bounded GUI action loop. Gated behind the `jev` feature
+        // AND the opt-in --jev-ui-loop flag, both checked inside the handler.
+        "ui_decide" => ui_loop::handle_ui_decide(client, &args).await,
 
         // Utility
         "system_wait" => system::handle_wait(&args).await,
@@ -197,8 +201,14 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
     }
     // The decision tools are never guarded. `decision` and `decision_rank`
     // would recurse if they were; `decision_stats` reads local bookkeeping
-    // only. None of them mutate the machine.
-    if matches!(tool_name, "decision" | "decision_rank" | "decision_stats") {
+    // only. `ui_decide` has its own, stricter gates inside the loop
+    // (irreversible-action confirmation, freshness, literal-only typing), so
+    // double-gating it would ask the model the same question twice per step.
+    // None of them mutate the machine via this dispatcher.
+    if matches!(
+        tool_name,
+        "decision" | "decision_rank" | "decision_stats" | "ui_decide"
+    ) {
         return None;
     }
     if !guard::is_guarded(&config, tool_name) {
