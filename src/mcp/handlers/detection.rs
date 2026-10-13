@@ -1,12 +1,19 @@
 #![allow(dead_code)]
 #[cfg(feature = "detection")]
 use crate::gui::types::*;
-#[cfg(feature = "detection")]
 use crate::gui::GuiClient;
 #[cfg(feature = "detection")]
-use crate::protocol::mcp::{ContentItem, ToolResult};
-#[cfg(feature = "detection")]
+use crate::protocol::mcp::ContentItem;
+use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
+
+/// Message returned when the binary was built without the `detection` feature.
+/// The tools stay advertised in `tools/list`; failing here rather than
+/// gating the dispatch arm keeps them reachable, so an agent gets an
+/// actionable error instead of the dispatcher's generic "unknown tool".
+#[cfg(not(feature = "detection"))]
+const DETECTION_DISABLED: &str =
+    "Object detection is not available in this build — rebuild with `--features detection`.";
 
 #[cfg(feature = "detection")]
 pub(crate) async fn handle_detect_objects(
@@ -107,6 +114,25 @@ pub(crate) async fn handle_click_object(
         "Clicked {} at ({}, {})",
         target.label, target.cx, target.cy
     )))
+}
+
+// Feature-off fallbacks. Mirrors the pattern used by `ocr` and `decision`:
+// the tool stays in `tools/list` and fails with an actionable message rather
+// than disappearing from the dispatcher as an "unknown tool".
+#[cfg(not(feature = "detection"))]
+pub(crate) async fn handle_detect_objects(
+    _client: &GuiClient,
+    _args: &Value,
+) -> Result<ToolResult, String> {
+    Err(DETECTION_DISABLED.to_string())
+}
+
+#[cfg(not(feature = "detection"))]
+pub(crate) async fn handle_click_object(
+    _client: &GuiClient,
+    _args: &Value,
+) -> Result<ToolResult, String> {
+    Err(DETECTION_DISABLED.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
