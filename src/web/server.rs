@@ -374,19 +374,32 @@ async fn api_ocr(
     check_token(&state, &q)?;
     check_rate_limit(&state)?;
 
-    let ocr_result = state.client.read_screen(None).await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("OCR error: {e}")).into_response()
-    })?;
-
-    let json_value = serde_json::to_value(ocr_result).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("JSON error: {e}"),
+    #[cfg(not(feature = "ocr"))]
+    {
+        let _ = (state, q);
+        Err((
+            StatusCode::NOT_IMPLEMENTED,
+            "OCR is not available in this build — rebuild with the 'ocr' cargo feature.",
         )
-            .into_response()
-    })?;
+            .into_response())
+    }
 
-    Ok(Json(json_value))
+    #[cfg(feature = "ocr")]
+    {
+        let ocr_result = state.client.read_screen(None).await.map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("OCR error: {e}")).into_response()
+        })?;
+
+        let json_value = serde_json::to_value(ocr_result).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("JSON error: {e}"),
+            )
+                .into_response()
+        })?;
+
+        Ok(Json(json_value))
+    }
 }
 
 #[cfg(feature = "web-preview")]

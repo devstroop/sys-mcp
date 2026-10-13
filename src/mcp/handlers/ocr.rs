@@ -1,7 +1,10 @@
 #![allow(dead_code)]
+#[cfg(feature = "ocr")]
 use crate::gui::ocr;
+#[cfg(feature = "ocr")]
 use crate::gui::types::*;
 use crate::gui::GuiClient;
+#[cfg(feature = "ocr")]
 use crate::mcp::handlers::{str_arg, u32_arg};
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
