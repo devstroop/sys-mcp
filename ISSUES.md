@@ -32,7 +32,7 @@
 | 13 | CORS is overly permissive | ✅ Fixed |
 | 14 | CI only runs on Linux | ✅ Fixed |
 | 15 | No resource or prompt support in MCP protocol | 🟢 Open |
-| 16 | Template matching (Phase 7) | 🔵 Open |
+| 16 | Template matching (Phase 7) | ✅ Fixed |
 | 17 | Key combo duplication | ✅ Fixed |
 | 18 | No connection pooling for model downloads | 🔵 Open |
 | 19 | `Box::leak` in PTY default shell resolution | ✅ Fixed |
