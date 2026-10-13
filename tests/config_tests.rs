@@ -1,5 +1,5 @@
 use clap::Parser;
-use sys_mcp::config::{JevConfig, ServerConfig, TransportMode};
+use sys_mcp::config::{GuardFailMode, JevConfig, ServerConfig, TransportMode};
 
 #[test]
 fn test_config_defaults() {
@@ -25,6 +25,7 @@ fn test_jev_config_defaults() {
         "SYS_MCP_JEV_GUARDRAILS",
         "SYS_MCP_JEV_GUARD_THRESHOLD",
         "SYS_MCP_JEV_GUARD_TOOLS",
+        "SYS_MCP_JEV_GUARD_FAIL_MODE",
     ]
     .iter()
     .any(|k| std::env::var(k).is_ok())
@@ -37,10 +38,13 @@ fn test_jev_config_defaults() {
     assert_eq!(jev.model, "jev-1.13-free");
     assert_eq!(jev.timeout_secs, 15);
 
-    // Guardrails are opt-in: off by default, 0.5 threshold, default tool set.
+    // Guardrails are opt-in: off by default, 0.5 threshold, default tool
+    // set, and fail CLOSED when the model is unreachable (JEV_PLAN.md
+    // safety rule 6).
     assert!(!jev.guardrails);
     assert!((jev.guard_threshold - 0.5).abs() < f64::EPSILON);
     assert_eq!(jev.guard_tools, None);
+    assert_eq!(jev.guard_fail_mode, GuardFailMode::Closed);
 
     // Flattened into ServerConfig.
     let config = ServerConfig::default();
@@ -93,6 +97,30 @@ fn test_jev_guard_threshold_out_of_range_rejected() {
     assert!(result.is_err(), "threshold > 1.0 must be rejected");
     let result = ServerConfig::try_parse_from(["sys-mcp", "--jev-guard-threshold", "-0.1"]);
     assert!(result.is_err(), "threshold < 0.0 must be rejected");
+}
+
+#[test]
+fn test_jev_guard_fail_mode_cli_override_and_default() {
+    // Default is Closed (destructive tools fail closed per JEV_PLAN.md).
+    if std::env::var("SYS_MCP_JEV_GUARD_FAIL_MODE").is_ok() {
+        return;
+    }
+    let config = ServerConfig::try_parse_from(["sys-mcp"]).expect("args parse");
+    assert_eq!(config.jev.guard_fail_mode, GuardFailMode::Closed);
+
+    // Explicit closed is accepted.
+    let config = ServerConfig::try_parse_from(["sys-mcp", "--jev-guard-fail-mode", "closed"])
+        .expect("args parse");
+    assert_eq!(config.jev.guard_fail_mode, GuardFailMode::Closed);
+
+    // Opting into availability-first behaviour.
+    let config = ServerConfig::try_parse_from(["sys-mcp", "--jev-guard-fail-mode", "open"])
+        .expect("args parse");
+    assert_eq!(config.jev.guard_fail_mode, GuardFailMode::Open);
+
+    // Anything else is rejected rather than silently defaulting.
+    let result = ServerConfig::try_parse_from(["sys-mcp", "--jev-guard-fail-mode", "maybe"]);
+    assert!(result.is_err(), "unknown fail mode must be rejected");
 }
 
 #[test]

@@ -531,13 +531,14 @@ mod handler {
     }
 
     /// Guardrails ON, model unreachable (dead endpoint in the test config),
-    /// no `confirm`: the denylist passes, the model call fails, the guard
-    /// fails OPEN and the call executes — offline end-to-end.
+    /// no `confirm`: the denylist passes but the model call fails, so the
+    /// guard fails CLOSED (the default, per JEV_PLAN.md safety rule 6) and
+    /// holds the call — the file must NOT be deleted.
     #[tokio::test]
-    async fn handler_fails_open_when_model_unreachable() {
+    async fn handler_fails_closed_when_model_unreachable() {
         init_guarded_config();
         let dir = tempfile::tempdir().expect("tempdir");
-        let target = dir.path().join("fail-open.txt");
+        let target = dir.path().join("fail-closed.txt");
         std::fs::write(&target, b"x").expect("write");
         let result = handle_tool_call(
             &client(),
@@ -545,14 +546,24 @@ mod handler {
             json!({"path": target.to_string_lossy()}),
         )
         .await;
-        assert!(
-            !result.is_error.unwrap_or(false),
-            "expected fail-open dispatch, got: {:?}",
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "expected the call to be held, got: {:?}",
             result.content.first().and_then(|c| c.text.as_deref())
         );
+        let text = result
+            .content
+            .first()
+            .and_then(|c| c.text.as_deref())
+            .unwrap_or_default();
         assert!(
-            !target.exists(),
-            "file should be gone after fail-open dispatch"
+            text.contains("confirm"),
+            "held message should tell the caller how to proceed: {text}"
+        );
+        assert!(
+            target.exists(),
+            "file must survive a fail-closed hold"
         );
     }
 }
@@ -579,14 +590,16 @@ mod assess {
         DecisionClient::new(&cfg).expect("client")
     }
 
+    /// The default fail mode is `closed`: an unreachable model holds the
+    /// call for confirmation rather than silently dropping the guard.
     #[tokio::test]
-    async fn fail_open_when_model_unreachable() {
+    async fn fail_closed_when_model_unreachable() {
         let verdict = assess(&dead_client(), "shell_exec", &json!({"command": "dir"}))
             .await
             .expect("assess must not hard-error on model failure");
-        assert_eq!(verdict.action, GuardAction::Allow);
+        assert_eq!(verdict.action, GuardAction::Confirm);
         assert!(
-            verdict.reason.contains("fail-open"),
+            verdict.reason.contains("fail-closed"),
             "reason: {}",
             verdict.reason
         );
@@ -602,19 +615,20 @@ mod assess {
         .await
         .expect("assess");
         assert_eq!(verdict.action, GuardAction::Deny);
-        assert!(!verdict.reason.contains("fail-open"));
+        assert!(!verdict.reason.contains("fail-closed"));
     }
 
     #[tokio::test]
     async fn threshold_from_config_is_honored_by_assess_with() {
-        // Use the dead client so the model layer fails open (Allow); this
+        // Use the dead client so the model layer is skipped; with the default
+        // fail-closed mode that yields Confirm regardless of threshold. This
         // only proves assess_with takes the threshold parameter without
         // error. Boundary mapping itself is covered by classify() unit
         // tests in the library.
         let verdict = assess_with(&dead_client(), "process_kill", &json!({"pid": 424242}), 0.9)
             .await
             .expect("assess_with");
-        assert_eq!(verdict.action, GuardAction::Allow);
+        assert_eq!(verdict.action, GuardAction::Confirm);
     }
 }
 

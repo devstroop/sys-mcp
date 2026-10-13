@@ -13,18 +13,20 @@
 //!    and never bypass the denylist.
 //! 3. **Caller confirmation** (`confirm: true`) — skips layer 2 only.
 //!
-//! On model failure the guard **fails open** (returns [`GuardAction::Allow`]
-//! with an explanatory reason and a log line): a decision model must not
-//! become an availability single point of failure for the whole server.
-//! Note that the denylist (layer 1) still applies — fail-open only relaxes
-//! the fuzzy judgment, never the hard policy.
+//! On model failure the guard is **configurable**: `--jev-guard-fail-mode`
+//! defaults to `closed` (per `JEV_PLAN.md` safety rule 6 — destructive tools
+//! fail closed), which holds the call for confirmation. `open` instead lets
+//! it through with the fuzzy judgment skipped, for deployments that
+//! prioritise availability. Either way the denylist (layer 1) still applies,
+//! and the caller can re-send with `confirm: true` — so `closed` is a hold,
+//! never a hard block, and the human stays in the loop.
 //!
 //! Everything except [`assess`]/[`assess_with`] compiles without
 //! the `jev` cargo feature so the denylist (and its tests) work everywhere.
 
 use serde_json::Value;
 
-use crate::config::JevConfig;
+use crate::config::{GuardFailMode, JevConfig};
 use crate::decision::redact::redact_value;
 
 /// The `noul` question asked by the model guard.
@@ -63,8 +65,8 @@ pub enum GuardAction {
 pub struct GuardVerdict {
     pub action: GuardAction,
     /// The model's `noul` score (probability the action is safe to run
-    /// automatically). `1.0` when the denylist fired or the guard was
-    /// skipped (fail-open) — read `reason` to distinguish.
+    /// automatically). `1.0` when the guard was skipped via fail-open mode;
+    /// `0.0` on a fail-closed hold. Read `reason` to distinguish.
     pub noul: f64,
     pub reason: &'static str,
 }
@@ -332,10 +334,11 @@ mod live {
     ///
     /// Order: denylist first (pure Rust, no network); on a hit the model is
     /// never called. Otherwise one `noul` question is asked against the
-    /// redacted state. Model failure (network, timeout, 429, bad payload)
-    /// **fails open**: `Ok(Allow)` with a `guard skipped` reason, logged at
-    /// warn level — the denylist already ran, and a decision model must not
-    /// become an availability single point of failure.
+    /// redacted state. If the model is unreachable (network, timeout, 429,
+    /// bad payload) the configured `--jev-guard-fail-mode` decides: `closed`
+    /// (default) returns `Ok(Confirm)` so the call is held for a human;
+    /// `open` returns `Ok(Allow)` with a `guard skipped` reason. Both are
+    /// logged at warn level, and the denylist has already run either way.
     #[cfg(feature = "jev")]
     pub async fn assess(
         client: &DecisionClient,
@@ -387,7 +390,7 @@ mod live {
         match client.decide(state, questions, None).await {
             Ok(response) => {
                 // Missing/malformed `noul` → 0.0 → Confirm (fail closed on
-                // garbage answers; only transport failures fail open).
+                // garbage answers).
                 let noul = response
                     .answers
                     .get(GUARD_QUESTION_ID)
@@ -409,17 +412,37 @@ mod live {
                 })
             }
             Err(e) => {
-                // Fail open — see the module docs. The denylist already ran
-                // before this call, so only the fuzzy judgment is skipped.
-                // The API key is never included in `e` (see client.rs).
+                // The model is unreachable (network, timeout, 429, bad
+                // payload). The Rust denylist already ran above, so only the
+                // fuzzy judgment is affected. The API key is never included
+                // in `e` (see client.rs).
+                //
+                // Default (`GuardFailMode::Closed`, per JEV_PLAN.md safety
+                // rule 6) is to hold the call for confirmation: the operator
+                // enabled guardrails precisely because they wanted a human in
+                // the loop, so we must not silently drop that when the model
+                // is down. This is not a hard block — the caller can re-send
+                // with `confirm: true`, so the human stays in control either
+                // way and the server remains usable.
+                //
+                // `GuardFailMode::Open` prefers availability and lets the
+                // call through with the judgment skipped.
                 log::warn!(
-                    "JEV guard skipped for tool '{tool}': {e} (failing open; Rust denylist already applied)"
+                    "JEV guard: model unavailable for tool '{tool}': {e} (denylist already applied; fail mode = {:?})",
+                    crate::decision::config().guard_fail_mode
                 );
-                Ok(GuardVerdict {
-                    action: GuardAction::Allow,
-                    noul: 1.0,
-                    reason: "guard skipped: decision model unavailable (fail-open; Rust denylist already applied)",
-                })
+                match crate::decision::config().guard_fail_mode {
+                    GuardFailMode::Open => Ok(GuardVerdict {
+                        action: GuardAction::Allow,
+                        noul: 1.0,
+                        reason: "guard skipped: decision model unavailable (fail-open; Rust denylist already applied)",
+                    }),
+                    GuardFailMode::Closed => Ok(GuardVerdict {
+                        action: GuardAction::Confirm,
+                        noul: 0.0,
+                        reason: "guard held: decision model unavailable (fail-closed; re-send with confirm=true to proceed)",
+                    }),
+                }
             }
         }
     }

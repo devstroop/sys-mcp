@@ -96,6 +96,15 @@ pub struct JevConfig {
     /// service_stop, service_start, process_start).
     #[arg(long = "jev-guard-tools", env = "SYS_MCP_JEV_GUARD_TOOLS")]
     pub guard_tools: Option<String>,
+
+    /// What to do when the decision model itself is unreachable (network,
+    /// timeout, 429). `closed` (the default, per JEV_PLAN.md safety rule 6)
+    /// holds the call for confirmation — the Rust denylist still applies
+    /// either way, and the caller can always re-send with `confirm: true`,
+    /// so this is not a hard block. `open` prioritises availability and
+    /// lets the call through with the fuzzy judgment skipped.
+    #[arg(long = "jev-guard-fail-mode", default_value_t = GuardFailMode::Closed, value_enum, env = "SYS_MCP_JEV_GUARD_FAIL_MODE")]
+    pub guard_fail_mode: GuardFailMode,
 }
 
 impl Default for JevConfig {
@@ -126,6 +135,16 @@ fn parse_guard_threshold(s: &str) -> Result<f64, String> {
             "invalid threshold '{s}': expected a value between 0.0 and 1.0"
         ))
     }
+}
+
+/// Behaviour when the decision model is unreachable while guardrails are on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum GuardFailMode {
+    /// Hold the call for confirmation (default; JEV_PLAN.md safety rule 6).
+    #[default]
+    Closed,
+    /// Allow the call through with the fuzzy judgment skipped.
+    Open,
 }
 
 /// Transport mode for MCP server
