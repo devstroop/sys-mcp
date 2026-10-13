@@ -92,6 +92,33 @@ fn test_jev_guardrails_cli_overrides() {
 }
 
 #[test]
+fn test_jev_guardrails_flag_accepts_common_boolean_spellings() {
+    // A bare flag still works.
+    let config = ServerConfig::try_parse_from(["sys-mcp", "--jev-guardrails"]).expect("parse");
+    assert!(config.jev.guardrails);
+
+    // clap's SetTrue action only accepted literal "true"/"false" from env, so
+    // the natural SYS_MCP_JEV_GUARDRAILS=1 aborted the whole process. The
+    // env and CLI paths share this value_parser, so exercising it via CLI
+    // covers both — and unlike std::env::set_var it is safe under cargo's
+    // parallel test threads.
+    for truthy in ["1", "true", "TRUE", "yes", "on"] {
+        let config =
+            ServerConfig::try_parse_from(["sys-mcp", "--jev-guardrails", truthy]).expect("parse");
+        assert!(config.jev.guardrails, "expected true for {truthy:?}");
+    }
+    for falsy in ["0", "false", "FALSE", "no", "off"] {
+        let config =
+            ServerConfig::try_parse_from(["sys-mcp", "--jev-guardrails", falsy]).expect("parse");
+        assert!(!config.jev.guardrails, "expected false for {falsy:?}");
+    }
+
+    // Garbage is a clean error, not a process abort.
+    let result = ServerConfig::try_parse_from(["sys-mcp", "--jev-guardrails", "maybe"]);
+    assert!(result.is_err(), "invalid boolean must be rejected");
+}
+
+#[test]
 fn test_jev_guard_threshold_out_of_range_rejected() {
     let result = ServerConfig::try_parse_from(["sys-mcp", "--jev-guard-threshold", "1.5"]);
     assert!(result.is_err(), "threshold > 1.0 must be rejected");

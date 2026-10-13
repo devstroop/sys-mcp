@@ -82,7 +82,11 @@ pub struct JevConfig {
     /// Gate destructive tools behind a JEV risk check (opt-in; default off).
     /// When enabled, guarded tool calls are assessed by the decision model
     /// and held for confirmation unless the Rust denylist refuses them first.
-    #[arg(long = "jev-guardrails", default_value_t = false, action = clap::ArgAction::SetTrue, env = "SYS_MCP_JEV_GUARDRAILS")]
+    ///
+    /// Accepts a bare `--jev-guardrails` flag, or any of `1/0`, `true/false`,
+    /// `yes/no`, `on/off` (case-insensitive) via the env var — `=1` is the
+    /// most natural thing to type and must not abort the process.
+    #[arg(long = "jev-guardrails", default_value_t = false, num_args = 0..=1, default_missing_value = "true", value_parser = parse_bool, env = "SYS_MCP_JEV_GUARDRAILS")]
     pub guardrails: bool,
 
     /// Risk threshold (0.0–1.0) for the JEV guard: a `noul` "safe to run
@@ -134,6 +138,22 @@ fn parse_guard_threshold(s: &str) -> Result<f64, String> {
         Err(format!(
             "invalid threshold '{s}': expected a value between 0.0 and 1.0"
         ))
+    }
+}
+
+/// Clap value parser for boolean flags exposed via env vars.
+///
+/// clap's built-in `ArgAction::SetTrue` only accepts the literal strings
+/// `true`/`false` from the environment, so `SYS_MCP_JEV_GUARDRAILS=1` — the
+/// most natural way to enable a flag — aborts the whole process with an
+/// opaque parse error. Accept the common spellings instead.
+fn parse_bool(s: &str) -> Result<bool, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(format!(
+            "invalid boolean '{other}': expected one of 1/0, true/false, yes/no, on/off"
+        )),
     }
 }
 

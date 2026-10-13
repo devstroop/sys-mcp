@@ -561,10 +561,7 @@ mod handler {
             text.contains("confirm"),
             "held message should tell the caller how to proceed: {text}"
         );
-        assert!(
-            target.exists(),
-            "file must survive a fail-closed hold"
-        );
+        assert!(target.exists(), "file must survive a fail-closed hold");
     }
 }
 
