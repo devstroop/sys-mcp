@@ -137,17 +137,11 @@ fn ensure_model() -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create model dir: {e}"))?;
 
     log::info!("downloading YOLOv8n model from {MODEL_URL}");
-    let resp = ureq::get(MODEL_URL)
-        .call()
-        .map_err(|e| format!("failed to download YOLO model: {e}"))?;
 
-    let mut body = resp.into_body();
-    let mut file = std::fs::File::create(&path)
-        .map_err(|e| format!("failed to create {}: {}", path.display(), e))?;
-    std::io::copy(&mut body.as_reader(), &mut file)
-        .map_err(|e| format!("failed to write model: {e}"))?;
+    // Atomic + verified + retried: a partial download can no longer leave a
+    // truncated file behind that `path.exists()` would then treat as valid.
+    crate::download::download_verified(MODEL_URL, &path, "YOLOv8n model")?;
 
-    log::info!("YOLOv8n model downloaded: {}", path.display());
     Ok(path)
 }
 
