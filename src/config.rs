@@ -35,6 +35,10 @@ pub struct ServerConfig {
     /// Enable debug logging
     #[arg(long, short)]
     pub debug: bool,
+
+    /// JEV (TypeSafe System One) decision service settings
+    #[command(flatten)]
+    pub jev: JevConfig,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +47,38 @@ impl Default for ServerConfig {
         // but we need to parse empty args to get those defaults.
         Self::try_parse_from(std::iter::once::<String>("".into()))
             .expect("default config should be valid")
+    }
+}
+
+/// Settings for the JEV decision endpoint (`decision` tool).
+///
+/// Environment overrides: `JEV_ENDPOINT`, `JEV_API_KEY`, `JEV_MODEL`,
+/// `JEV_TIMEOUT_SECS`. The API key is never logged or echoed in tool output.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct JevConfig {
+    /// JEV decision endpoint URL (POST /v1/systemone)
+    #[arg(long, default_value = "http://192.168.2.49:5050/v1/systemone", env = "JEV_ENDPOINT")]
+    pub endpoint: String,
+
+    /// JEV API key (kept out of logs and tool output)
+    #[arg(long, default_value = "", env = "JEV_API_KEY")]
+    pub api_key: String,
+
+    /// JEV model name
+    #[arg(long, default_value = "jev-1.13-free", env = "JEV_MODEL")]
+    pub model: String,
+
+    /// JEV request timeout in seconds
+    #[arg(long, default_value_t = 15, env = "JEV_TIMEOUT_SECS")]
+    pub timeout_secs: u64,
+}
+
+impl Default for JevConfig {
+    fn default() -> Self {
+        // Same pattern as ServerConfig: parse empty args so clap resolves
+        // env overrides and default values.
+        Self::try_parse_from(std::iter::once::<String>("".into()))
+            .expect("default JEV config should be valid")
     }
 }
 
