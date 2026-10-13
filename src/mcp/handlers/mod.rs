@@ -17,6 +17,14 @@ use crate::gui::GuiClient;
 use crate::protocol::mcp::ToolResult;
 
 pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) -> ToolResult {
+    // Opt-in JEV risk guard (requires the `jev` cargo feature *and*
+    // --jev-guardrails / SYS_MCP_JEV_GUARDRAILS). With either missing this
+    // compiles away / returns immediately — zero behavior change.
+    #[cfg(feature = "jev")]
+    if let Some(held) = guard_gate(tool_name, &args).await {
+        return held;
+    }
+
     let result = match tool_name {
         // Display
         "screen_capture" => ui::handle_screenshot(client).await,
@@ -139,6 +147,84 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
                 e
             };
             ToolResult::error(msg)
+        }
+    }
+}
+
+// ─── JEV risk guard (opt-in; `jev` cargo feature) ─────────────────────────
+
+/// Pre-dispatch gate for guarded tools. Returns `Some(result)` when the
+/// call must not proceed (held for confirmation, or denied by the Rust
+/// denylist), `None` to dispatch normally.
+///
+/// Layer order (see `decision::guard` docs): hardcoded Rust denylist first
+/// (never bypassed, model-free, offline), then the caller's `confirm: true`
+/// acknowledgment (bypasses only the model check), then the JEV `noul`
+/// judgment. Model failure fails *open* — a decision model must not become
+/// an availability single point of failure — but the denylist still applies.
+#[cfg(feature = "jev")]
+async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
+    use crate::decision::client::DecisionClient;
+    use crate::decision::guard::{self, GuardAction};
+
+    let config = crate::decision::config();
+    if !config.guardrails {
+        return None; // guardrails off (the default) — behave exactly as before
+    }
+    // The decision tool itself is never guarded (no recursion).
+    if tool_name == "decision" {
+        return None;
+    }
+    if !guard::is_guarded(&config, tool_name) {
+        return None;
+    }
+
+    // Layer 1: hard Rust denylist. Applies before any network call and is
+    // never bypassed by `confirm: true` or by the model.
+    if let Some(verdict) = guard::check_denylist(tool_name, args) {
+        return Some(ToolResult::error(format!(
+            "Refused by the JEV guard denylist: {tool_name} matched a hard-blocked destructive pattern ({}). This is deterministic Rust policy and cannot be overridden with confirm=true.",
+            verdict.reason
+        )));
+    }
+
+    // Layer 3 (caller confirmation) skips the model judgment entirely — no
+    // network call, no score. The denylist above still applied.
+    if guard::confirm_requested(args) {
+        log::debug!(
+            "JEV guard: confirm=true supplied by caller for {tool_name}; skipping model judgment"
+        );
+        return None;
+    }
+
+    // Layer 2: one `noul` judgment against the redacted state.
+    let client = match DecisionClient::new(&config) {
+        Ok(c) => c,
+        Err(e) => {
+            // Fail open (denylist already applied).
+            log::warn!("JEV guard skipped for {tool_name}: failed to build decision client: {e}");
+            return None;
+        }
+    };
+    match guard::assess(&client, tool_name, args).await {
+        Ok(verdict) => match verdict.action {
+            GuardAction::Allow => None,
+            GuardAction::Confirm => Some(ToolResult::error(format!(
+                "Action held for confirmation by the JEV guard: {tool_name} was scored potentially unsafe to run automatically (noul={:.2}, threshold={:.2}; {}). Nothing was executed. If this action is intended, re-call {tool_name} with the same arguments plus \"confirm\": true; otherwise drop the call.",
+                verdict.noul, config.guard_threshold, verdict.reason
+            ))),
+            // Defensive: `assess` never returns Deny (only the denylist can,
+            // and it already ran above).
+            GuardAction::Deny => Some(ToolResult::error(format!(
+                "Refused by the JEV guard: {tool_name} ({})",
+                verdict.reason
+            ))),
+        },
+        Err(e) => {
+            // `assess` fail-opens internally; this arm is defensive. Do not
+            // block the user on guard plumbing errors.
+            log::warn!("JEV guard assess failed for {tool_name}: {e} (failing open)");
+            None
         }
     }
 }

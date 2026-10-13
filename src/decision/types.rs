@@ -315,6 +315,9 @@ mod tests {
         let map = Criteria::Map(BTreeMap::from([("a".to_string(), "desc".to_string())]));
         assert_eq!(serde_json::to_value(&map).unwrap(), json!({"a": "desc"}));
         let scale = Criteria::Scale(vec!["Low".into(), "High".into()]);
-        assert_eq!(serde_json::to_value(&scale).unwrap(), json!(["Low", "High"]));
+        assert_eq!(
+            serde_json::to_value(&scale).unwrap(),
+            json!(["Low", "High"])
+        );
     }
 }

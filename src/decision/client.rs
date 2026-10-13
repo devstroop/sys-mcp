@@ -9,9 +9,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::config::JevConfig;
-use crate::decision::types::{
-    DecisionErrorEnvelope, DecisionRequest, DecisionResponse, Question,
-};
+use crate::decision::types::{DecisionErrorEnvelope, DecisionRequest, DecisionResponse, Question};
 
 /// Client for the JEV decision endpoint.
 #[derive(Clone)]
@@ -66,7 +64,10 @@ impl DecisionClient {
             .http
             .post(&self.endpoint)
             .header("Content-Type", "application/json")
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.api_key),
+            )
             .json(&body)
             .send()
             .await
@@ -108,7 +109,10 @@ impl DecisionClient {
                     }
                 }
                 Err(_) => {
-                    format!("JEV request failed with HTTP {status_code}: {}", truncate(&text, 200))
+                    format!(
+                        "JEV request failed with HTTP {status_code}: {}",
+                        truncate(&text, 200)
+                    )
                 }
             });
         }
