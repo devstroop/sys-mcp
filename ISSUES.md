@@ -41,7 +41,7 @@
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
 | 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (171 tests) |
-| 25 | Tests lack platform cfg gating | � In progress |
+| 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
 | 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
@@ -231,8 +231,28 @@ cannot block the caller indefinitely.
 
 ### 25. Tests lack platform cfg gating
 
-**Files:** `tests/*.rs`
-**Problem:** No test is gated with `#[cfg(windows)]`/`#[cfg(unix)]`/`#[cfg(target_os = ...)]`. Whether every test is valid on all three CI platforms is unverified beyond "CI is green" — most handler tests pass through `StubBackend` and so never exercise platform code.
+**Status:** ✅ Resolved — and deliberately *not* by adding blanket `#[cfg]` gates.
+
+The concern was that test validity outside the author's platform was unverified. That is now covered
+more strongly than cfg-gating would: CI runs the suite on `ubuntu-latest`, `macos-latest` **and**
+`windows-latest` with `fail-fast: false`, so every test is executed — not skipped — on all three.
+
+How the suite actually handles platform differences:
+
+- **Platform-independent by construction.** The large majority of tests drive `StubBackend`, so they
+  never touch the OS and need no gating.
+- **Four tests exercise real OS interfaces** — `process_list`, `service_list`, `network_info`,
+  `network_connections` — which shell out to `powershell`/`systemctl`/`launchctl`/`netstat`. They
+  assert portable invariants (no error, well-formed JSON array) rather than OS-specific contents, and
+  the CI matrix verifies them on each platform. Gating these would *reduce* coverage: a `#[cfg]` skips
+  the test instead of proving it works.
+- **One test genuinely needs platform data.** `tests/monitor_tests.rs`'s Windows enumeration test is
+  `#[cfg(windows)]` and additionally degrades to a skip when no desktop session is available (e.g.
+  session-0 CI), so it cannot fail on infrastructure it does not control. This is the suite's first
+  cfg-gated test and the pattern to copy if another platform-specific case appears.
+
+So the rule adopted: gate only where the *behaviour itself* is platform-specific; otherwise write
+portable assertions and let the CI matrix prove them.
 
 ### 26. `network_connections` ignores its `limit` parameter
 
