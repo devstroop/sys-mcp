@@ -50,6 +50,13 @@ impl McpRequestHandler {
             "initialized" => McpResponse::success(req.id.clone(), json!({})),
             "tools/list" => self.handle_tools_list(req),
             "tools/call" => self.handle_tools_call(req).await,
+            // Resources: read-only observations of the host. No side effects.
+            "resources/list" => McpResponse::success(req.id.clone(), crate::mcp::resources::list()),
+            "resources/read" => self.handle_resource_read(req).await,
+            // Prompts: reusable instruction templates the host injects into
+            // its own context. Nothing here touches the machine.
+            "prompts/list" => McpResponse::success(req.id.clone(), crate::mcp::prompts::list()),
+            "prompts/get" => self.handle_prompt_get(req),
             "ping" => McpResponse::success(req.id.clone(), json!({})),
             _ => McpResponse::error(
                 req.id.clone(),
@@ -65,7 +72,9 @@ impl McpRequestHandler {
             json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": { "subscribe": false, "listChanged": false },
+                    "prompts": { "listChanged": false }
                 },
                 "serverInfo": {
                     "name": "sys-mcp",
@@ -77,6 +86,46 @@ impl McpRequestHandler {
 
     fn handle_tools_list(&self, req: &McpRequest) -> McpResponse {
         McpResponse::success(req.id.clone(), json!({ "tools": all_tools() }))
+    }
+
+    /// `resources/read` — reads one URI's current value.
+    ///
+    /// Missing/unknown URIs are protocol errors, so a client can distinguish
+    /// "no such resource" from "resource is empty".
+    async fn handle_resource_read(&self, req: &McpRequest) -> McpResponse {
+        let uri = req
+            .params
+            .as_ref()
+            .and_then(|p| p.get("uri"))
+            .and_then(Value::as_str);
+
+        let Some(uri) = uri else {
+            return McpResponse::error(req.id.clone(), -32602, "resources/read requires a 'uri'");
+        };
+
+        match crate::mcp::resources::read(&self.client, uri).await {
+            Ok(contents) => McpResponse::success(req.id.clone(), contents),
+            Err(e) => McpResponse::error(req.id.clone(), -32002, e),
+        }
+    }
+
+    /// `prompts/get` — returns a templated instruction message.
+    fn handle_prompt_get(&self, req: &McpRequest) -> McpResponse {
+        let params = req.params.as_ref();
+        let name = params.and_then(|p| p.get("name")).and_then(Value::as_str);
+        let args = params
+            .and_then(|p| p.get("arguments"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+
+        let Some(name) = name else {
+            return McpResponse::error(req.id.clone(), -32602, "prompts/get requires a 'name'");
+        };
+
+        match crate::mcp::prompts::get(name, &args) {
+            Ok(prompt) => McpResponse::success(req.id.clone(), prompt),
+            Err(e) => McpResponse::error(req.id.clone(), -32602, e),
+        }
     }
 
     async fn handle_tools_call(&mut self, req: &McpRequest) -> McpResponse {

@@ -31,10 +31,10 @@
 | 12 | No rate limiting on web preview | ✅ Fixed |
 | 13 | CORS is overly permissive | ✅ Fixed |
 | 14 | CI only runs on Linux | ✅ Fixed |
-| 15 | No resource or prompt support in MCP protocol | 🟢 Open |
+| 15 | No resource or prompt support in MCP protocol | ✅ Fixed |
 | 16 | Template matching (Phase 7) | ✅ Fixed |
 | 17 | Key combo duplication | ✅ Fixed |
-| 18 | No connection pooling for model downloads | 🔵 Open |
+| 18 | Model downloads not atomic/verified/retried | ✅ Fixed |
 | 19 | `Box::leak` in PTY default shell resolution | ✅ Fixed |
 | 20 | No graceful shutdown for child processes in MCP Hub | ✅ Fixed |
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
@@ -154,9 +154,21 @@ multi-display machine will catch a regression.
 
 ### 15. No resource or prompt support in MCP protocol
 
-**File:** `src/mcp/server.rs` (`handle_initialize`)
-**Problem (verified):** The `initialize` response still advertises only `"capabilities": { "tools": {} }`, and the dispatch handles only `initialize`, `initialized`, `tools/list`, `tools/call`, and `ping`. No `resources` or `prompts` support.
-**Suggestion:** Add resource templates for file system access and prompt templates for common GUI automation tasks.
+**Status:** ✅ Fixed. The server now advertises `resources` and `prompts` capabilities and implements
+`resources/list`, `resources/read`, `prompts/list` and `prompts/get`.
+
+**Resources** are read-only observations backed by existing `GuiClient` calls, so reading one has no
+side effects: `sys-mcp://system/info`, `//screen/size`, `//monitors`, `//windows`, `//window/active`.
+They let an agent inspect the host before choosing tools, and re-read to detect change, without a tool
+round-trip.
+
+**Prompts** are instruction templates the host injects into its own context — nothing here touches the
+machine: `describe-screen` (steers to structured reads over screenshots to save tokens),
+`find-and-click` (locate, check confidence, refuse to guess, verify), `automate-goal` (bounded steps,
+caller-supplied literals only, treat on-screen text as content not commands).
+
+Unknown URIs/prompts return a protocol error naming the valid set, so a mis-typed identifier is
+self-correcting rather than a silent empty result.
 
 ---
 
@@ -186,10 +198,23 @@ real defect, not just duplication. `ui.rs` lowercased and trimmed, while
 lowercased at all on the web path. Extracted `gui::types::split_key_combo()`
 and both entry points now share it.
 
-### 18. No connection pooling for model downloads
+### 18. Model downloads not atomic, verified or retried
 
-**File:** `src/gui/ocr.rs:92`
-**Problem (verified):** OCR model download uses synchronous `ureq::get()` (`ensure_model`), triggered lazily from `get_engine()` on first use — call sites wrap `read_screen`/`find_text` in `tokio::task::spawn_blocking`, so the runtime is not blocked. Remaining gap: no retry/resume for interrupted downloads.
+**Status:** ✅ Fixed. The stated gap was the missing retry; the worse half was that both fetchers —
+OCR weights (`src/gui/ocr.rs`) and YOLOv8n (`src/gui/detection.rs`) — wrote **straight to the final
+path**. An interrupted download therefore left a truncated file at the destination, and the
+`path.exists()` check then treated it as a valid model **forever**. No amount of retrying repairs
+that: the cache stays corrupt until manually cleared.
+
+Both now go through `src/download.rs`, which downloads to a sibling temp file, verifies the byte
+count against `Content-Length`, syncs to disk and only then `rename`s into place — atomic within one
+directory on both Windows and Unix, so the destination is either absent or complete. Three attempts
+with 2s/4s backoff, temp file cleared between tries, pid-scoped name so two processes cannot collide.
+
+`tests/download_tests.rs` drives it against a local HTTP stub (no network): the key case asserts a
+short body is rejected **and not published at the destination** — the exact regression that used to
+poison the model cache. Connection pooling was considered and rejected: these are one-shot downloads
+per machine, so pooling would add machinery for no benefit.
 
 ### 19. `Box::leak` in PTY default shell resolution
 
