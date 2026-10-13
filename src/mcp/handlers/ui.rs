@@ -211,7 +211,7 @@ pub(crate) async fn handle_press_key(
     // Normalize key names to lowercase for rustautogui compatibility
     let key = raw_key.to_lowercase();
     if key.contains('+') {
-        let keys: Vec<String> = key.split('+').map(|s| s.trim().to_string()).collect();
+        let keys = split_key_combo(&key);
         client.key_combo(&keys).await.map_err(|e| e.to_string())?;
     } else {
         client.press_key(&key).await.map_err(|e| e.to_string())?;

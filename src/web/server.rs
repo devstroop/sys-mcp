@@ -486,10 +486,12 @@ async fn api_key(
     check_token(&state, &TokenQuery { token: p.token })?;
     check_rate_limit(&state)?;
     if p.key.contains('+') {
-        let keys: Vec<String> = p.key.split('+').map(String::from).collect();
+        // Same normalization as the MCP handler: lowercase + trim, so a
+        // chord behaves identically on both entry points.
+        let keys = crate::gui::types::split_key_combo(&p.key);
         state.client.key_combo(&keys).await
     } else {
-        state.client.press_key(&p.key).await
+        state.client.press_key(&p.key.to_lowercase()).await
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response())?;
     Ok("ok")
