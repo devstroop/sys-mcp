@@ -1,7 +1,11 @@
 #![allow(dead_code)]
+#[cfg(feature = "detection")]
 use crate::gui::types::*;
+#[cfg(feature = "detection")]
 use crate::gui::GuiClient;
+#[cfg(feature = "detection")]
 use crate::protocol::mcp::{ContentItem, ToolResult};
+#[cfg(feature = "detection")]
 use serde_json::Value;
 
 #[cfg(feature = "detection")]

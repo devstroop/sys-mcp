@@ -26,7 +26,9 @@
 
 use serde_json::Value;
 
-use crate::config::{GuardFailMode, JevConfig};
+#[cfg(feature = "jev")]
+use crate::config::GuardFailMode;
+use crate::config::JevConfig;
 use crate::decision::redact::redact_value;
 
 /// The `noul` question asked by the model guard.
