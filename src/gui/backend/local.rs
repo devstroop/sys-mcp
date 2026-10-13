@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use rustautogui::RustAutoGui;
+use rustautogui::{MatchMode, RustAutoGui};
 
 use crate::error::GuiError;
 use crate::gui::accessibility::AccessibilityCapability;
@@ -11,6 +11,7 @@ use crate::gui::clipboard::ClipboardCapability;
 use crate::gui::display::DisplayCapability;
 use crate::gui::input::InputCapability;
 use crate::gui::types::*;
+use crate::gui::vision::VisionCapability;
 use crate::gui::window::WindowCapability;
 use crate::platform::accessibility::PlatformAccessibility;
 use crate::platform::window::PlatformWindowManager;
@@ -458,6 +459,76 @@ impl AccessibilityCapability for LocalBackend {
     }
 }
 
+// ─── VisionCapability ──────────────────────────────────────────────────────
+
+/// Template matching via rustautogui's CPU FFT NCC path. The OpenCL feature
+/// is NOT required (and not used) here — it only accelerates Segmented mode.
+///
+/// rustautogui's documented platform limitation applies: on Windows only the
+/// main monitor is searched; on Linux all monitors are searched.
+#[async_trait]
+impl VisionCapability for LocalBackend {
+    async fn find_image(
+        &self,
+        template_encoded: Vec<u8>,
+        precision: f32,
+        region: Option<Region>,
+    ) -> Result<Vec<crate::gui::vision::ImageMatch>, GuiError> {
+        let mut autogui = self
+            .autogui
+            .lock()
+            .map_err(|e| GuiError::BackendError(e.to_string()))?;
+        // Store the template into the shared RustAutoGui instance, then
+        // search for it. `prepare_template_from_raw_encoded` decodes the
+        // bytes with image::load_from_memory (encoded input required) and
+        // fills template_data / template_width / template_height.
+        autogui
+            .prepare_template_from_raw_encoded(
+                &template_encoded,
+                region.map(|r| (r.x, r.y, r.width, r.height)),
+                MatchMode::FFT,
+            )
+            .map_err(|e| {
+                GuiError::TemplateMatchError(format!("failed to prepare template: {e}"))
+            })?;
+        let found = autogui
+            .find_image_on_screen(precision)
+            .map_err(|e| GuiError::TemplateMatchError(e.to_string()))?;
+        // (x, y) are template CENTER coordinates, correlation highest first.
+        Ok(found
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(x, y, confidence)| crate::gui::vision::ImageMatch { x, y, confidence })
+            .collect())
+    }
+
+    async fn wait_for_image(
+        &self,
+        template_encoded: Vec<u8>,
+        precision: f32,
+        region: Option<Region>,
+        timeout_ms: u64,
+    ) -> Result<(Vec<crate::gui::vision::ImageMatch>, u64), GuiError> {
+        // Our own polling loop instead of rustautogui's
+        // `loop_find_image_on_screen`: that one takes whole seconds and
+        // busy-spins the screen grab; this polls at 200ms granularity, drops
+        // the autogui lock between attempts, and treats timeout as an empty
+        // result rather than an error.
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let poll = std::time::Duration::from_millis(200);
+        loop {
+            let matches = self
+                .find_image(template_encoded.clone(), precision, region)
+                .await?;
+            if !matches.is_empty() || start.elapsed() + poll > timeout {
+                return Ok((matches, start.elapsed().as_millis() as u64));
+            }
+            tokio::time::sleep(poll).await;
+        }
+    }
+}
+
 // ─── GuiBackend trait ──────────────────────────────────────────────────────
 
 impl GuiBackend for LocalBackend {
@@ -476,6 +547,10 @@ impl GuiBackend for LocalBackend {
     }
 
     fn as_accessibility(&self) -> Option<&dyn AccessibilityCapability> {
+        Some(self)
+    }
+
+    fn as_vision(&self) -> Option<&dyn VisionCapability> {
         Some(self)
     }
 }

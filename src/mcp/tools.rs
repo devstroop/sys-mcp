@@ -268,13 +268,44 @@ pub fn all_tools() -> Vec<Value> {
                 }
             }
         }),
-        // ── Template Matching (Phase 7 — not yet implemented) ──────────
-        // vision_find_image and vision_wait_for_image are dispatched in
-        // handlers/mod.rs (implemented in handlers/vision.rs) but are
-        // intentionally NOT declared here: their handlers only return a
-        // permanent "not yet implemented" error. Keep them unregistered
-        // in tools/list until template matching is actually wired up.
-
+        // ── Template Matching ──────────────────────────────────────────
+        // Implemented via the vendored rustautogui submodule (CPU FFT
+        // normalized cross-correlation; the `opencl` feature is NOT needed).
+        // Platform limitation (rustautogui): on Windows only the main
+        // monitor is searched; on Linux all monitors are searched.
+        json!({
+            "name": "vision_find_image",
+            "description": "Search the screen for a template image using normalized cross-correlation (FFT). Provide the template as base64-encoded PNG/JPEG bytes (recommended — e.g. the output of fs_read) or as a file path; raw pixel data is rejected. Returns JSON: {found, count, matches: [{x, y, confidence}]} where (x, y) is the CENTER of the match, highest confidence first. precision is the minimum correlation (0.0 exclusive to 1.0). Platform limitation: on Windows only the main monitor is searched; on Linux all monitors are searched.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template_base64": { "type": "string", "description": "Base64-encoded PNG or JPEG template image (encoded bytes, NOT raw pixels)." },
+                    "template_path": { "type": "string", "description": "Path to a template image file (alternative to template_base64)." },
+                    "precision": { "type": "number", "description": "Minimum correlation 0.0 (exclusive) to 1.0.", "default": 0.8 },
+                    "x": { "type": "integer", "description": "Search region left edge. Requires y, width, height." },
+                    "y": { "type": "integer", "description": "Search region top edge. Requires x, width, height." },
+                    "width": { "type": "integer", "description": "Search region width. Requires x, y, height." },
+                    "height": { "type": "integer", "description": "Search region height. Requires x, y, width." }
+                }
+            }
+        }),
+        json!({
+            "name": "vision_wait_for_image",
+            "description": "Poll the screen (every 200ms) until the template image is found or timeout_ms elapses. Same template input rules as vision_find_image. Returns JSON {found, count, matches: [{x, y, confidence}], waited_ms}; on timeout found=false with an empty matches array. Platform limitation: on Windows only the main monitor is searched; on Linux all monitors are searched.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template_base64": { "type": "string", "description": "Base64-encoded PNG or JPEG template image (encoded bytes, NOT raw pixels)." },
+                    "template_path": { "type": "string", "description": "Path to a template image file (alternative to template_base64)." },
+                    "precision": { "type": "number", "description": "Minimum correlation 0.0 (exclusive) to 1.0.", "default": 0.8 },
+                    "timeout_ms": { "type": "integer", "description": "Give up after this many milliseconds (max 300000).", "default": 10000 },
+                    "x": { "type": "integer", "description": "Search region left edge. Requires y, width, height." },
+                    "y": { "type": "integer", "description": "Search region top edge. Requires x, width, height." },
+                    "width": { "type": "integer", "description": "Search region width. Requires x, y, height." },
+                    "height": { "type": "integer", "description": "Search region height. Requires x, y, width." }
+                }
+            }
+        }),
         // ── Utility ────────────────────────────────────────────────────
         json!({
             "name": "system_wait",

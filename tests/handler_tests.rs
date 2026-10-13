@@ -1050,3 +1050,200 @@ async fn test_system_wait_ignores_non_numeric_ms() {
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert_eq!(text, "Waited 500ms.");
 }
+
+// ── Template matching (vision_find_image / vision_wait_for_image) ─────────
+
+/// Encode a small solid-color PNG as base64 — valid ENCODED image bytes,
+/// which is what both tools require (raw pixel data is rejected).
+fn tiny_png_b64() -> String {
+    let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([200u8, 40, 40, 255]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner())
+}
+
+#[test]
+fn test_vision_tools_registered_in_tools_list() {
+    let tools = sys_mcp::mcp::tools::all_tools();
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+        .collect();
+    assert!(names.contains(&"vision_find_image"), "got: {names:?}");
+    assert!(names.contains(&"vision_wait_for_image"), "got: {names:?}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_missing_template() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "vision_find_image", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("template_base64 or template_path"),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_vision_find_image_template_path_not_found() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_path": "Z:\\does\\not\\exist.png"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("failed to read template_path"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_invalid_base64() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": "!!!not-base64!!!"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("not valid base64"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_rejects_raw_pixels() {
+    let client = test_client();
+    // Base64 that decodes fine but whose bytes are NOT an encoded image —
+    // e.g. an agent base64-ing raw RGBA pixel data instead of a PNG.
+    let raw_pixels =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, vec![7u8; 64]);
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": raw_pixels}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("not a decodable image"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_rejects_both_sources() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": tiny_png_b64(), "template_path": "C:\\x.png"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("not both"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_precision_out_of_range() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": tiny_png_b64(), "precision": 1.5}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("precision"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_precision_non_numeric() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": tiny_png_b64(), "precision": "high"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("precision"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_partial_region_rejected() {
+    let client = test_client();
+    // x without y/width/height — region args are all-or-nothing.
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": tiny_png_b64(), "x": 10}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("missing required argument"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_find_image_unavailable_on_stub_backend() {
+    let client = test_client();
+    // StubBackend has no VisionCapability — valid input must produce the
+    // clear "not available in this build" error. It must NOT be flagged as
+    // a permanent error: local-GUI builds do provide template matching.
+    let result = handle_tool_call(
+        &client,
+        "vision_find_image",
+        json!({"template_base64": tiny_png_b64()}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("not available in this build"), "got: {text}");
+    assert!(!text.contains("permanent error"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_wait_for_image_unavailable_on_stub_backend() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_wait_for_image",
+        json!({"template_base64": tiny_png_b64()}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("not available in this build"), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_wait_for_image_timeout_too_large() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_wait_for_image",
+        json!({"template_base64": tiny_png_b64(), "timeout_ms": 999_999}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("timeout_ms must be <="), "got: {text}");
+}
+
+#[tokio::test]
+async fn test_vision_wait_for_image_negative_timeout() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "vision_wait_for_image",
+        json!({"template_base64": tiny_png_b64(), "timeout_ms": -5}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("non-negative integer"), "got: {text}");
+}

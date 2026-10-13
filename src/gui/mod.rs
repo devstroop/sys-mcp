@@ -8,6 +8,7 @@ pub mod input;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 pub mod types;
+pub mod vision;
 pub mod window;
 
 fn get_os_version() -> String {
@@ -268,6 +269,42 @@ impl GuiClient {
                 .await
                 .map_err(|e| GuiError::DetectionError(e.to_string()))?;
         result.map_err(GuiError::DetectionError)
+    }
+
+    // ── Vision / template matching ───────────────────────────────────
+
+    fn vision(&self) -> Result<&dyn crate::gui::vision::VisionCapability, GuiError> {
+        self.backend
+            .as_vision()
+            .ok_or_else(|| GuiError::UnsupportedCapability("template matching".into()))
+    }
+
+    /// Search the screen for a template image. `template_encoded` must be
+    /// ENCODED image bytes (PNG/JPEG). On Windows only the main monitor is
+    /// searched; on Linux all monitors are searched.
+    pub async fn find_image(
+        &self,
+        template_encoded: Vec<u8>,
+        precision: f32,
+        region: Option<Region>,
+    ) -> Result<Vec<crate::gui::vision::ImageMatch>, GuiError> {
+        self.vision()?
+            .find_image(template_encoded, precision, region)
+            .await
+    }
+
+    /// Poll `find_image` until a match is found or `timeout_ms` elapses.
+    /// Returns the matches (empty on timeout) and elapsed milliseconds.
+    pub async fn wait_for_image(
+        &self,
+        template_encoded: Vec<u8>,
+        precision: f32,
+        region: Option<Region>,
+        timeout_ms: u64,
+    ) -> Result<(Vec<crate::gui::vision::ImageMatch>, u64), GuiError> {
+        self.vision()?
+            .wait_for_image(template_encoded, precision, region, timeout_ms)
+            .await
     }
 
     // ── System info ────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ use crate::gui::accessibility::AccessibilityCapability;
 use crate::gui::clipboard::ClipboardCapability;
 use crate::gui::display::DisplayCapability;
 use crate::gui::input::InputCapability;
+use crate::gui::vision::VisionCapability;
 use crate::gui::window::WindowCapability;
 
 /// Backend super-trait. Display + Input are always available for local GUI.
@@ -17,6 +18,9 @@ pub trait GuiBackend: DisplayCapability + InputCapability + Send + Sync {
         None
     }
     fn as_accessibility(&self) -> Option<&dyn AccessibilityCapability> {
+        None
+    }
+    fn as_vision(&self) -> Option<&dyn VisionCapability> {
         None
     }
 }
