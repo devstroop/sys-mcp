@@ -225,7 +225,25 @@ impl McpHub {
         if let Some(child_lock) = processes.remove(name) {
             let mut child_guard = child_lock.lock().await;
             if let Some(mut child) = child_guard.take() {
-                let _ = child.kill().await;
+                // Graceful shutdown first: dropping stdin sends EOF, which is
+                // the normal "we're done" signal for a stdio MCP server, so it
+                // can flush and exit cleanly instead of being yanked mid-write.
+                // Bounded by a timeout, then a hard kill, so a wedged child
+                // can never block the caller indefinitely.
+                drop(child.stdin.take());
+                match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+                    Ok(Ok(status)) => {
+                        log::info!("MCP server '{name}' exited gracefully ({status})");
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("MCP server '{name}' errored while waiting ({e}); killing");
+                        let _ = child.kill().await;
+                    }
+                    Err(_) => {
+                        log::warn!("MCP server '{name}' did not exit within 3s; killing");
+                        let _ = child.kill().await;
+                    }
+                }
             }
         }
 

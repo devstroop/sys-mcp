@@ -170,16 +170,19 @@ impl PtyManager {
     }
 }
 
-fn get_default_shell() -> &'static str {
+/// The shell to spawn for a new PTY session.
+///
+/// Returns an owned `String`. This previously returned `&'static str` via
+/// `Box::leak`, which leaked one allocation per spawned session — unbounded
+/// growth over the server's lifetime. `CommandBuilder::new` takes
+/// `AsRef<OsStr>`, so an owned value costs nothing here.
+fn get_default_shell() -> String {
     #[cfg(windows)]
     {
-        "powershell.exe"
+        "powershell.exe".to_string()
     }
     #[cfg(unix)]
     {
-        std::env::var("SHELL")
-            .ok()
-            .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
-            .unwrap_or("/bin/bash")
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
     }
 }

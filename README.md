@@ -29,11 +29,10 @@ cargo build --release
 
 ### Build profiles
 
-Every optional capability is a cargo feature, and the default set pulls in
-**262 crates**. If you only need a subset, a slim build is **168 crates** — about
-a third less to compile and link.
+Every optional capability is a cargo feature. The default set pulls in **223
+crates**; a slim build needs only **168**.
 
-Measured dependency cost per feature (crate counts, default build = 262):
+Measured dependency cost per feature (crate counts, default build = 223):
 
 | Feature | Crates | Adds | Provides |
 |---|---|---|---|
@@ -43,15 +42,19 @@ Measured dependency cost per feature (crate counts, default build = 262):
 | `ocr` | 196 | +28 | `screen_read`, `screen_find_text`, `screen_scroll_to_text` |
 | `detection` | 224 | +56 | `detect_objects`, `detect_click_object` |
 
-`detection` is the single heaviest feature (22% of the whole build) and it also
-downloads a ~12 MB YOLOv8n model on first use, so it is worth turning off if you
-do not need object detection:
+`detection` is deliberately **not** in the default set: at +56 crates it is the
+heaviest feature by a wide margin — nearly doubling a slim build on its own —
+and it downloads a ~12 MB YOLOv8n model on first use. Enable it if you need
+object detection:
 
 ```bash
-# Everything (default)
+# Default: core automation + OCR + clipboard + web preview (223 crates)
 cargo build --release
 
-# Slim: core automation only
+# Object detection on top of the default
+cargo build --release --features detection
+
+# Slim: core automation only (168 crates)
 cargo build --release --no-default-features
 
 # Pick exactly what you need

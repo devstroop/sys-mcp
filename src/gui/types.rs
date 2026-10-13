@@ -19,6 +19,21 @@ pub struct Screenshot {
     pub height: u32,
 }
 
+/// Split a key chord like `Ctrl+Shift+S` into its normalized key names.
+///
+/// Normalizes case and trims whitespace around each key so `Ctrl + S` and
+/// `ctrl+s` produce the same vector. Every entry point that accepts a chord
+/// must use this: the MCP handler and the web preview previously normalized
+/// differently, so `Ctrl + S` worked over MCP but sent `["ctrl ", " s"]`
+/// (and failed) over the web API.
+pub fn split_key_combo(key: &str) -> Vec<String> {
+    key.to_lowercase()
+        .split('+')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Region {
     pub x: u32,
@@ -129,4 +144,28 @@ pub struct SystemInfo {
     pub screen_width: u32,
     pub screen_height: u32,
     pub capabilities: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_key_combo;
+
+    #[test]
+    fn split_normalizes_case_and_whitespace() {
+        // The regression this guards: the web preview used to skip both
+        // lowercasing and trimming, so "Ctrl + S" produced ["ctrl ", " s"]
+        // and failed, while the MCP handler handled it fine.
+        assert_eq!(split_key_combo("Ctrl+Shift+S"), vec!["ctrl", "shift", "s"]);
+        assert_eq!(split_key_combo("ctrl + s"), vec!["ctrl", "s"]);
+        assert_eq!(split_key_combo(" CTRL+S "), vec!["ctrl", "s"]);
+        assert_eq!(split_key_combo("s"), vec!["s"]);
+    }
+
+    #[test]
+    fn split_drops_empty_segments() {
+        // A stray or doubled '+' must not yield an empty key name, which
+        // would reach the backend and fail validation.
+        assert_eq!(split_key_combo("ctrl++s"), vec!["ctrl", "s"]);
+        assert_eq!(split_key_combo("+"), Vec::<String>::new());
+    }
 }

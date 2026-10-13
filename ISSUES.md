@@ -1,6 +1,6 @@
 # Issues & Next-Phase Development Gaps (sys-mcp)
 
-**Last verified: 2026-10-12** — every status below was checked against the code in this worktree.
+**Last verified: 2026-10-13** — every status below was checked against the code in this worktree.
 
 ## Priority Legend
 
@@ -22,7 +22,7 @@
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (66 tests) |
+| 6 | Test coverage is critically low | ✅ Fixed (171 tests) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -33,16 +33,19 @@
 | 14 | CI only runs on Linux | ✅ Fixed |
 | 15 | No resource or prompt support in MCP protocol | 🟢 Open |
 | 16 | Template matching (Phase 7) | 🔵 Open |
-| 17 | Key combo duplication | 🔵 Open |
+| 17 | Key combo duplication | ✅ Fixed |
 | 18 | No connection pooling for model downloads | 🔵 Open |
-| 19 | `Box::leak` in PTY default shell resolution | 🔵 Open |
-| 20 | No graceful shutdown for child processes in MCP Hub | 🔵 Open |
-| 21 | Stale `gui_*` tool-name references after tool rename | 🟡 Open (fix on branch `fix/tool-descriptions`, not merged) |
-| 22 | Blocking process calls inside async handlers | 🟡 Open (fix on branch `fix/async-blocking`, not merged) |
-| 23 | `shell_exec` fixed 500ms wait loses output | 🔴 Open (fix on branch `fix/async-blocking`, not merged) |
-| 24 | Tool coverage gap (22 of 64 tools tested) | 🟡 Open (in progress on branch `test/destructive-tools`) |
+| 19 | `Box::leak` in PTY default shell resolution | ✅ Fixed |
+| 20 | No graceful shutdown for child processes in MCP Hub | ✅ Fixed |
+| 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
+| 22 | Blocking process calls inside async handlers | ✅ Fixed |
+| 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (171 tests) |
 | 25 | Tests lack platform cfg gating | 🟢 Open |
-| 26 | `network_connections` ignores its `limit` parameter | 🟢 Open |
+| 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
+| 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
+| 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
+| 29 | `detection` feature made opt-in (heaviest feature, +56 crates) | ✅ Fixed |
 
 ---
 
@@ -146,8 +149,12 @@
 
 ### 17. Key combo duplication
 
-**Files:** `src/mcp/handlers/ui.rs`, `src/gui/mod.rs`, `src/web/server.rs`
-**Problem (verified):** `handle_press_key` (`keyboard_press`) splits the key string on `+` in the handler and calls `client.key_combo()`, but `GuiClient::key_combo()` is also a public method called directly from `src/web/server.rs`. Key-combo parsing lives in more than one place.
+**Status:** ✅ Fixed — the two call sites normalized *differently*, which was a
+real defect, not just duplication. `ui.rs` lowercased and trimmed, while
+`web/server.rs` did neither, so `Ctrl + S` worked over MCP but sent
+`["ctrl ", " s"]` (and failed) over the web API, and single keys were not
+lowercased at all on the web path. Extracted `gui::types::split_key_combo()`
+and both entry points now share it.
 
 ### 18. No connection pooling for model downloads
 
@@ -156,13 +163,16 @@
 
 ### 19. `Box::leak` in PTY default shell resolution
 
-**File:** `src/terminal/pty.rs:182`
-**Problem (verified):** The `$SHELL` env var is leaked via `Box::leak` to produce a `&'static str`. Process-lifetime-only leak; worth replacing with owned data.
+**Status:** ✅ Fixed — `get_default_shell()` now returns an owned `String`.
+The leak was per-spawn (one allocation per PTY session), so it grew over the
+server's lifetime rather than being a one-off.
 
 ### 20. No graceful shutdown for child processes in MCP Hub
 
-**File:** `src/mcp/hub.rs` (`stop_server`)
-**Problem (verified):** `stop_server()` calls `child.kill().await` directly — no graceful SIGTERM on Unix, no draining of pending I/O, no wait beyond `kill`.
+**Status:** ✅ Fixed — `stop_server()` now drops the child's stdin (sending EOF,
+which is the normal shutdown signal for a stdio MCP server), waits up to 3s
+for a clean exit, and only then falls back to `kill()`. A wedged child still
+cannot block the caller indefinitely.
 
 ### 25. Tests lack platform cfg gating
 
