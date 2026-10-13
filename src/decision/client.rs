@@ -48,14 +48,70 @@ impl DecisionClient {
     ///
     /// `model` overrides the configured default when set. Errors are
     /// human-readable and actionable; the API key never appears in them.
+    /// Send a decision request, recording it in the cost ledger under the
+    /// generic `decision` tag.
     pub async fn decide(
         &self,
         state: Value,
         questions: std::collections::BTreeMap<String, Question>,
         model: Option<&str>,
     ) -> Result<DecisionResponse, String> {
+        self.decide_tag(state, questions, model, "decision").await
+    }
+
+    /// [`decide`] with an explicit ledger tag, so callers can tell apart what
+    /// spent the tokens (guard checks, ranking batches, direct decisions).
+    ///
+    /// Every call — success or failure — is recorded with its token usage and
+    /// latency, because a decision layer that quietly costs more than it saves
+    /// is exactly what the ledger exists to expose.
+    pub async fn decide_tag(
+        &self,
+        state: Value,
+        questions: std::collections::BTreeMap<String, Question>,
+        model: Option<&str>,
+        tag: &str,
+    ) -> Result<DecisionResponse, String> {
+        let started = std::time::Instant::now();
+        let model_name = model.unwrap_or(&self.default_model).to_string();
+
+        match self.decide_inner(state, questions, &model_name).await {
+            Ok(response) => {
+                // `usage` is optional in the contract; absent means the
+                // gateway did not report it, not that the call was free.
+                let (in_tok, out_tok) = response
+                    .usage
+                    .as_ref()
+                    .map(|u| (u.input_tokens, u.output_tokens))
+                    .unwrap_or((0, 0));
+                crate::decision::stats::record(
+                    tag,
+                    &model_name,
+                    in_tok,
+                    out_tok,
+                    started.elapsed(),
+                    true,
+                );
+                Ok(response)
+            }
+            Err(e) => {
+                // Failures still cost latency and often tokens upstream, so
+                // they are recorded too — with zeroes for usage because the
+                // response never arrived.
+                crate::decision::stats::record(tag, &model_name, 0, 0, started.elapsed(), false);
+                Err(e)
+            }
+        }
+    }
+
+    async fn decide_inner(
+        &self,
+        state: Value,
+        questions: std::collections::BTreeMap<String, Question>,
+        model: &str,
+    ) -> Result<DecisionResponse, String> {
         let body = DecisionRequest {
-            model: model.unwrap_or(&self.default_model).to_string(),
+            model: model.to_string(),
             state,
             questions,
         };

@@ -10,14 +10,26 @@
 //! - [`guard`] — opt-in risk guard for destructive tools. The denylist and
 //!   verdict types compile without any feature flag; only the model-backed
 //!   `assess` needs `jev`.
+//! - [`stats`] — cost ledger: every call's tokens and latency, so a decision
+//!   layer that costs more than it saves is visible rather than assumed away.
+//! - [`rank`] — Phase 3 relevance ranking of large text blocks (requires `jev`).
+//! - [`ui_loop`] — Phase 4 bounded GUI action loop (requires `jev`); the only
+//!   module that drives input off a model judgment, so it carries the
+//!   strictest gates (completion is `likely_done` never `done`, irreversible
+//!   actions held for confirmation, caller-supplied literals only).
 //! - `client` — async HTTP client (requires the `jev` cargo feature).
 
 pub mod guard;
 pub mod redact;
+pub mod stats;
 pub mod types;
 
 #[cfg(feature = "jev")]
 pub mod client;
+#[cfg(feature = "jev")]
+pub mod rank;
+#[cfg(feature = "jev")]
+pub mod ui_loop;
 
 use std::sync::OnceLock;
 

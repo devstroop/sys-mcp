@@ -136,7 +136,13 @@ async fn every_declared_tool_is_dispatchable() {
 #[tokio::test]
 async fn feature_gated_tools_stay_visible_and_fail_explicitly() {
     let client = GuiClient::new(StubBackend);
-    for name in ["screen_read", "detect_objects", "web_preview", "decision"] {
+    for name in [
+        "screen_read",
+        "detect_objects",
+        "web_preview",
+        "decision",
+        "ui_decide",
+    ] {
         let declared = declared_tools().iter().any(|t| tool_name(t) == name);
         assert!(
             declared,
@@ -149,5 +155,37 @@ async fn feature_gated_tools_stay_visible_and_fail_explicitly() {
             !text.contains("unknown tool"),
             "'{name}' must not report 'unknown tool'"
         );
+    }
+}
+
+/// `ui_decide` is reachable with an actionable message in every build:
+/// feature-off → rebuild hint; feature-on but loop-flag-off (the default) →
+/// opt-in hint. Both are asserted conditionally so the same test holds for
+/// every feature combination CI builds.
+#[tokio::test]
+async fn ui_decide_reachable_with_actionable_availability_message() {
+    let client = GuiClient::new(StubBackend);
+    let result = handle_tool_call(&client, "ui_decide", json!({ "goal": "noop" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = joined_text(&result);
+
+    #[cfg(not(feature = "jev"))]
+    assert!(
+        text.contains("not compiled in") && text.contains("--features jev"),
+        "got: {text}"
+    );
+
+    #[cfg(feature = "jev")]
+    {
+        if std::env::var("SYS_MCP_JEV_UI_LOOP").is_err() {
+            // Opt-in flag off (the default) — must explain how to enable,
+            // and must never leak key material.
+            assert!(text.contains("--jev-ui-loop"), "got: {text}");
+            assert!(text.contains("SYS_MCP_JEV_UI_LOOP"), "got: {text}");
+            assert!(!text.to_lowercase().contains("api key"), "got: {text}");
+        }
+        // With the flag on the call proceeds into argument validation;
+        // either way it is an explicit, actionable failure here (no goal).
+        assert!(!text.contains("unknown tool"), "got: {text}");
     }
 }

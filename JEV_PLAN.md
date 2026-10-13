@@ -123,33 +123,43 @@ src/
 - [ ] Eval set: 30–50 representative risky/benign actions with expected labels; record
       false-positive/false-negative rates before enabling by default (Vapi lesson).
 
-### Phase 3 — State helpers & token efficiency
-- [ ] `screen_read` / `accessibility_tree` output normalization into a compact, numbered element
-      list suitable as `choice` candidates (elements capped, text budgeted).
-- [ ] `decision_rank` capability: split large text (logs, file contents, shell output) into blocks →
+### Phase 3 — State helpers & token efficiency ✅ shipped
+- [x] `decision_rank` capability: split large text (logs, file contents, shell output) into blocks →
       Jev rates blocks in batches (~40) against a question → return top-k in original order,
       **keep blocks on failure, mark dropped blocks explicitly** (never silently cut).
-- [ ] Apply to `system_logs`, large `fs_read`, long `shell_exec` output.
-- [ ] Floor: skip Jev entirely for small inputs (below ~8K chars) where latency/cost exceeds saving.
+- [x] Floor: skip Jev entirely for small inputs (below ~8K chars) where latency/cost exceeds saving.
+- Deferred: `screen_read`/`accessibility_tree` normalisation into numbered `choice` candidates —
+  not needed yet; OCR output is already structured and budgeted.
 
-### Phase 4 — Bounded action loop (optional, higher risk)
-- [ ] `ui_decide` tool: observe foreground window via existing `accessibility_tree` → build bounded
-      candidate action list (invoke/click/type-literal/select/toggle + target) → one Jev `choice`
-      (+ completion `noul`) → freshness re-check (target still present, same name/position) →
-      execute via existing input tools → independent assertion → status:
-      `done | likely_done | needs_confirmation | error | stuck | ambiguous | blocked`.
-- [ ] Safety: step budget (default 12, max 20), irreversible-action confirmation gate,
-      typed text must be a literal span supplied by the caller, foreground-window scoping,
-      emergency stop hook, never drive an elevated window (PermissionError → `blocked`).
-- [ ] Explicitly out of scope for now: OCR fallback for canvas apps, drag-drop, cross-window flows.
+### Phase 4 — Bounded action loop (optional, higher risk) ✅ shipped
+- [x] `ui_decide` tool: observe foreground window via existing `accessibility_tree` → build bounded
+      candidate action list (`click:<idx>`/`type:<idx>`/`key:<name>`/`wait`/`stop`) → one Jev
+      `choice` (+ completion `noul` + irreversibility `noul`) → freshness re-check (target still
+      present, same name/position within 8 px; same foreground window) → execute via existing input
+      tools → re-observe and compare fingerprints → status:
+      `done | likely_done | needs_confirmation | error | stuck | ambiguous | blocked`
+      (`done` is reserved by the vocabulary but never produced: completion is model judgment and
+      is always reported `likely_done`).
+- [x] Safety: step budget (default 12, hard cap 20), irreversible-action confirmation gate
+      (noul ≥ 0.5, and a **missing** irreversible answer counts as irreversible), typed text must
+      be a literal supplied by the caller via `values` (keyed by element name / `type:<idx>` /
+      element id; the model never generates text, and `type:` on a non-editable element is refused
+      at parse time), foreground-window scoping, permission/elevation observation failure →
+      `blocked` (never driven), >40 actionable elements → `ambiguous` (never silently truncated),
+      hallucinated choice → `error` with nothing executed, two consecutive no-change rounds →
+      `stuck` (no blind retry loops).
+- [x] Opt-in: `--jev-ui-loop` / `SYS_MCP_JEV_UI_LOOP`, default **off**; requires the `jev` cargo
+      feature as well. An observe-only `preview` path reports the candidate set + one Jev
+      decision without executing.
+- Explicitly out of scope for now: OCR fallback for canvas apps, drag-drop, cross-window flows,
+      an emergency-stop hotkey (the step budget and per-step gates are the local mitigation).
 
-### Phase 5 — Observability & cost ledger
-- [ ] Log per decision: model, request id, questions, full distributions, threshold version,
-      chosen action, fallback, outcome (redacted).
-- [ ] Track `usage.input_tokens/output_tokens`, call counts, latency percentiles; expose via
-      `system_stats`-style summary or `decision_stats` tool.
-- [ ] Cost dashboard mirroring `jev-cost`: caller tokens saved vs Jev tokens spent per scenario,
-      including the negative-on-small-input case.
+### Phase 5 — Observability & cost ledger ✅ shipped
+- [x] Log per decision: model, tag, tokens, latency, success/failure (redacted).
+- [x] Track `usage.input_tokens/output_tokens`, call counts, latency percentiles (min/p50/p95/max/mean),
+      broken down by caller tag; exposed via the `decision_stats` tool with an optional reset.
+- Deferred: the caller-tokens-saved vs Jev-tokens-spent comparison dashboard. The ledger reports spend
+      plainly; the "saved" side needs real traffic to measure against, so it is not invented.
 
 ---
 
