@@ -1,5 +1,7 @@
 pub mod config;
 pub mod decision;
+#[cfg(any(feature = "ocr", feature = "detection"))]
+pub mod download;
 pub mod error;
 pub mod gui;
 pub mod mcp;

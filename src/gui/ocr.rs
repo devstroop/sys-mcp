@@ -89,15 +89,10 @@ fn ensure_model(name: &str) -> Result<PathBuf, GuiError> {
     let url = format!("https://ocrs-models.s3-accelerate.amazonaws.com/{name}");
     log::info!("downloading OCR model: {url} -> {}", path.display());
 
-    let resp = ureq::get(&url)
-        .call()
-        .map_err(|e| GuiError::OcrError(format!("failed to download OCR model {name}: {e}")))?;
-
-    let mut body = resp.into_body();
-    let mut file = std::fs::File::create(&path)
-        .map_err(|e| GuiError::OcrError(format!("failed to create {}: {e}", path.display())))?;
-    std::io::copy(&mut body.as_reader(), &mut file)
-        .map_err(|e| GuiError::OcrError(format!("failed to write model {name}: {e}")))?;
+    // Atomic + verified + retried: a partial download can no longer leave a
+    // truncated file behind that `path.exists()` would then treat as valid.
+    crate::download::download_verified(&url, &path, &format!("OCR model {name}"))
+        .map_err(GuiError::OcrError)?;
 
     log::info!("OCR model downloaded: {}", path.display());
     Ok(path)
