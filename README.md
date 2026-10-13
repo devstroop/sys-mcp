@@ -27,6 +27,41 @@ cargo build --release
 # Binary: target/release/sys-mcp (or sys-mcp.exe on Windows)
 ```
 
+### Build profiles
+
+Every optional capability is a cargo feature, and the default set pulls in
+**262 crates**. If you only need a subset, a slim build is **168 crates** — about
+a third less to compile and link.
+
+Measured dependency cost per feature (crate counts, default build = 262):
+
+| Feature | Crates | Adds | Provides |
+|---|---|---|---|
+| *(none)* | 168 | — | core: screen, input, windows, fs, shell, process/service, monitoring |
+| `clipboard` | 168 | ~5 | `clipboard_get` / `clipboard_set` |
+| `web-preview` | 195 | +27 | `web_preview`, HTTP transport |
+| `ocr` | 196 | +28 | `screen_read`, `screen_find_text`, `screen_scroll_to_text` |
+| `detection` | 224 | +56 | `detect_objects`, `detect_click_object` |
+
+`detection` is the single heaviest feature (22% of the whole build) and it also
+downloads a ~12 MB YOLOv8n model on first use, so it is worth turning off if you
+do not need object detection:
+
+```bash
+# Everything (default)
+cargo build --release
+
+# Slim: core automation only
+cargo build --release --no-default-features
+
+# Pick exactly what you need
+cargo build --release --no-default-features --features "ocr,clipboard"
+```
+
+Tools belonging to a disabled feature stay listed in `tools/list` and return a
+clear "not available in this build" error when called, so an agent can discover
+the full surface regardless of how the binary was built.
+
 ## Tools
 
 ### Display
