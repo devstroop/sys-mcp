@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use crate::config::{ServerConfig, TransportMode};
 use crate::gui::GuiClient;
 use crate::mcp::handlers::handle_tool_call;
+#[cfg(feature = "web-preview")]
 use crate::mcp::session::create_session_manager;
 use crate::mcp::tools::all_tools;
 use crate::protocol::mcp::{McpRequest, McpResponse};
@@ -181,8 +182,17 @@ impl GuiMcpServer {
             TransportMode::Stdio => {
                 self.run_stdio().await?;
             }
+            #[cfg(feature = "web-preview")]
             TransportMode::Http => {
                 self.run_http().await?;
+            }
+            // The HTTP transport is built on axum, which only exists when
+            // the `web-preview` feature is compiled in.
+            #[cfg(not(feature = "web-preview"))]
+            TransportMode::Http => {
+                anyhow::bail!(
+                    "HTTP transport requires the 'web-preview' cargo feature — rebuild with --features web-preview"
+                );
             }
         }
 
@@ -218,6 +228,7 @@ impl GuiMcpServer {
         Ok(())
     }
 
+    #[cfg(feature = "web-preview")]
     async fn run_http(&self) -> anyhow::Result<()> {
         let session_mgr =
             create_session_manager(self.config.max_sessions, self.config.session_ttl_secs);

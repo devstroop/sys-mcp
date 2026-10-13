@@ -45,6 +45,11 @@ dirs-next = { version = "2", optional = true }
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
 
+# JEV decision client (optional, off by default)
+# rustls so no OpenSSL toolchain is needed on any platform; the local
+# gateway is plain http, remote hosted endpoints are https.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+
 # Clipboard (cross-platform)
 arboard = { version = "3", optional = true }
 
@@ -105,5 +110,8 @@ ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
 clipboard = ["dep:arboard"]
 web-preview = ["dep:axum", "dep:tower-http"]
 detection = ["dep:tract-onnx", "dep:ureq", "dep:dirs-next"]
+# JEV (TypeSafe System One) decision tool. Intentionally NOT in the
+# default feature set yet — enable with --features jev.
+jev = ["dep:reqwest"]
 opencl = ["rustautogui/opencl"]
 ml = []

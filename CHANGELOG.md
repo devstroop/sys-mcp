@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **JEV decision layer** (cargo feature `jev`, off by default):
+  - `decision` tool — evaluate a state against typed JEV (`/v1/systemone`)
+    questions (`noul` / `choice` / `score`) with secret redaction before send
+  - Opt-in guardrails for destructive tools (`--jev-guardrails`, default off):
+    a hardcoded Rust denylist (offline, model-independent) plus a JEV `noul`
+    risk check that holds calls for confirmation (`confirm: true` to proceed);
+    model failure fails open, the denylist never does
+  - Guarded by default when enabled: `shell_exec`, `fs_delete`, `process_kill`,
+    `service_stop`, `service_start`, `process_start`
+  - New config: `--jev-guardrails` / `SYS_MCP_JEV_GUARDRAILS`,
+    `--jev-guard-threshold` / `SYS_MCP_JEV_GUARD_THRESHOLD` (default 0.5),
+    `--jev-guard-tools` / `SYS_MCP_JEV_GUARD_TOOLS`
+
 - **File System** tools:
   - `gui_read_file` — Read file as base64
   - `gui_write_file` — Write base64-encoded content to file

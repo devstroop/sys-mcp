@@ -1,4 +1,5 @@
 pub mod config;
+pub mod decision;
 pub mod error;
 pub mod gui;
 pub mod mcp;
