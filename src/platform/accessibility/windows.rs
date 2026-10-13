@@ -1,6 +1,5 @@
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
@@ -48,13 +47,24 @@ fn control_type_to_role(control_type: UIA_CONTROLTYPE_ID) -> String {
 }
 
 pub struct PlatformAccessibility {
-    automation: IUIAutomation,
+    // ManuallyDrop so Drop can release the COM pointer at a controlled moment.
+    // Left as a plain field it would be dropped AFTER Drop::drop ran, i.e.
+    // after CoUninitialize — see the Drop impl below.
+    automation: std::mem::ManuallyDrop<IUIAutomation>,
 }
 
 impl PlatformAccessibility {
     pub fn new() -> Result<Self, GuiError> {
         unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED)
+            // COM must be initialized MULTITHREADED (MTA), not apartment-
+            // threaded. This type is `unsafe impl Send + Sync` and is held by
+            // `LocalBackend`, which tokio moves between worker threads — so the
+            // `IUIAutomation` pointer gets released on a *different* thread
+            // from the one that created it. An STA pointer is thread-affine,
+            // and releasing it off-apartment faults with STATUS_ACCESS_VIOLATION
+            // (0xc0000005) on drop, crashing the process at shutdown. MTA
+            // objects are valid to release from any thread. UIA supports MTA.
+            CoInitializeEx(None, COINIT_MULTITHREADED)
                 .ok()
                 .map_err(|e| GuiError::PlatformError(format!("COM init failed: {e}")))?;
         }
@@ -64,7 +74,9 @@ impl PlatformAccessibility {
                 .map_err(|e| GuiError::PlatformError(format!("UIAutomation create failed: {e}")))?
         };
 
-        Ok(Self { automation })
+        Ok(Self {
+            automation: std::mem::ManuallyDrop::new(automation),
+        })
     }
 
     fn get_element_name(element: &IUIAutomationElement) -> Option<String> {
@@ -298,6 +310,14 @@ impl PlatformAccessibility {
 impl Drop for PlatformAccessibility {
     fn drop(&mut self) {
         unsafe {
+            // Order matters and was previously inverted, which segfaulted the
+            // process with STATUS_ACCESS_VIOLATION (0xc0000005) on every
+            // LocalBackend shutdown. Rust drops fields AFTER this body, so the
+            // old code ran CoUninitialize() and only then released the
+            // IUIAutomation pointer — releasing a COM object after its
+            // apartment is gone faults. Release the pointer first, then tear
+            // down COM.
+            std::mem::ManuallyDrop::drop(&mut self.automation);
             CoUninitialize();
         }
     }
