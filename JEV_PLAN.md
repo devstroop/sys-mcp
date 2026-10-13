@@ -97,7 +97,7 @@ src/
 
 ## 4. Phases
 
-### Phase 1 — Decision tool (foundation)
+### Phase 1 — Decision tool (foundation) ✅ shipped
 - [ ] Config block `jev` in config file + env override (`JEV_ENDPOINT`, `JEV_API_KEY`, `JEV_MODEL`),
       default model `jev-1.13-free`; key never appears in tool output.
 - [ ] `decision/types.rs`: request `{model, state, questions}` and typed answers
@@ -111,7 +111,7 @@ src/
 - [ ] Unit tests with fixture payloads (offline) + one live integration test behind an env flag.
 - [ ] Docs: README section + example curl/task.
 
-### Phase 2 — Guardrails on destructive tools
+### Phase 2 — Guardrails on destructive tools ✅ shipped
 - [ ] `decision_guard` internal helper: given an action descriptor + context, ask 1–2 `noul`
       questions (reversible? policy-violating? urgent?).
 - [ ] Wrap high-risk handlers: `shell_exec` (dangerous command classes), `fs_delete`,
