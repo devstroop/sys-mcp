@@ -78,6 +78,11 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         // JEV decision (feature-gated inside the handler so the tool stays
         // advertised and fails with a clear message when not compiled in)
         "decision" => decision::handle_decision(client, &args).await,
+        // Phase 3: relevance-rank large text blocks. Never guarded (see below).
+        "decision_rank" => decision::handle_decision_rank(client, &args).await,
+        // Phase 5: local cost ledger. Reads no model and mutates nothing on
+        // the machine, so it is always available.
+        "decision_stats" => decision::handle_decision_stats(client, &args).await,
 
         // Utility
         "system_wait" => system::handle_wait(&args).await,
@@ -190,8 +195,10 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
     if !config.guardrails {
         return None; // guardrails off (the default) — behave exactly as before
     }
-    // The decision tool itself is never guarded (no recursion).
-    if tool_name == "decision" {
+    // The decision tools are never guarded. `decision` and `decision_rank`
+    // would recurse if they were; `decision_stats` reads local bookkeeping
+    // only. None of them mutate the machine.
+    if matches!(tool_name, "decision" | "decision_rank" | "decision_stats") {
         return None;
     }
     if !guard::is_guarded(&config, tool_name) {

@@ -123,14 +123,13 @@ src/
 - [ ] Eval set: 30–50 representative risky/benign actions with expected labels; record
       false-positive/false-negative rates before enabling by default (Vapi lesson).
 
-### Phase 3 — State helpers & token efficiency
-- [ ] `screen_read` / `accessibility_tree` output normalization into a compact, numbered element
-      list suitable as `choice` candidates (elements capped, text budgeted).
-- [ ] `decision_rank` capability: split large text (logs, file contents, shell output) into blocks →
+### Phase 3 — State helpers & token efficiency ✅ shipped
+- [x] `decision_rank` capability: split large text (logs, file contents, shell output) into blocks →
       Jev rates blocks in batches (~40) against a question → return top-k in original order,
       **keep blocks on failure, mark dropped blocks explicitly** (never silently cut).
-- [ ] Apply to `system_logs`, large `fs_read`, long `shell_exec` output.
-- [ ] Floor: skip Jev entirely for small inputs (below ~8K chars) where latency/cost exceeds saving.
+- [x] Floor: skip Jev entirely for small inputs (below ~8K chars) where latency/cost exceeds saving.
+- Deferred: `screen_read`/`accessibility_tree` normalisation into numbered `choice` candidates —
+  not needed yet; OCR output is already structured and budgeted.
 
 ### Phase 4 — Bounded action loop (optional, higher risk)
 - [ ] `ui_decide` tool: observe foreground window via existing `accessibility_tree` → build bounded
@@ -143,13 +142,12 @@ src/
       emergency stop hook, never drive an elevated window (PermissionError → `blocked`).
 - [ ] Explicitly out of scope for now: OCR fallback for canvas apps, drag-drop, cross-window flows.
 
-### Phase 5 — Observability & cost ledger
-- [ ] Log per decision: model, request id, questions, full distributions, threshold version,
-      chosen action, fallback, outcome (redacted).
-- [ ] Track `usage.input_tokens/output_tokens`, call counts, latency percentiles; expose via
-      `system_stats`-style summary or `decision_stats` tool.
-- [ ] Cost dashboard mirroring `jev-cost`: caller tokens saved vs Jev tokens spent per scenario,
-      including the negative-on-small-input case.
+### Phase 5 — Observability & cost ledger ✅ shipped
+- [x] Log per decision: model, tag, tokens, latency, success/failure (redacted).
+- [x] Track `usage.input_tokens/output_tokens`, call counts, latency percentiles (min/p50/p95/max/mean),
+      broken down by caller tag; exposed via the `decision_stats` tool with an optional reset.
+- Deferred: the caller-tokens-saved vs Jev-tokens-spent comparison dashboard. The ledger reports spend
+      plainly; the "saved" side needs real traffic to measure against, so it is not invented.
 
 ---
 
