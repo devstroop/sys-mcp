@@ -55,7 +55,9 @@
 
 **File:** `src/mcp/handlers/shell.rs` (`handle_shell_exec`)
 **Problem (verified):** After sending the command and closing the PTY, the handler sleeps a fixed 500ms and then reads the output buffer. Any command slower than 500ms silently loses or truncates its output. There is no completion detection (no exit status check, no read-until-EOF).
-**Status:** Fix in progress on branch `fix/async-blocking` (not merged as of this writing).
+**Status:** ✅ Fixed — the fixed 500ms sleep was replaced with quiet-period polling (50ms poll,
+250ms of silence to consider the command finished, 30s hard cap), so slower commands no longer lose
+output.
 **Severity:** 🔴 Critical — silently incorrect results.
 
 ---
@@ -78,14 +80,16 @@
 
 **Files:** `src/mcp/tools.rs`, `src/mcp/server.rs`
 **Problem:** Tools were renamed to a category scheme (`gui_screenshot` → `screen_capture`, etc.), but many tool descriptions still reference the old names (`gui_read_screen`, `gui_screenshot`, `gui_click`, `gui_list_windows`, `gui_shell_open`/`gui_shell_write`, `gui_delete_dir`, `gui_detect_objects`, …). Worse, this is functional in one place: `src/mcp/server.rs` special-cases the tool name `gui_web_preview`, but `tools.rs` advertises the tool as `web_preview` — so the advertised `web_preview` tool falls through to `handle_tool_call`, hits no dispatch arm, and returns "unknown tool".
-**Status:** Fix in progress on branch `fix/tool-descriptions` (not merged as of this writing).
+**Status:** ✅ Fixed — all 24 stale references corrected across `tools.rs` and the handlers, and
+`server.rs` now dispatches `web_preview` under its advertised name.
 **Severity:** 🟡 High — misleading docs for agent callers plus one uncallable advertised tool.
 
 ### 22. Blocking process calls inside async handlers
 
 **Files:** `src/mcp/handlers/system.rs`, `src/system.rs`, `src/sysinfo.rs`
 **Problem (verified):** Handlers such as `handle_process_list`, `handle_service_list`, `handle_network_info`, `handle_system_stats`, and `handle_system_logs` call synchronous functions directly inside `async fn` without `spawn_blocking`. Those functions shell out with blocking `std::process::Command::output()` (`sc`, `systemctl`, `launchctl`, `powershell`, `netstat`, `ss`, `top`, `df`, `journalctl`, `log`, …). Long-running commands block a tokio worker thread for their whole duration.
-**Status:** Fix in progress on branch `fix/async-blocking` (not merged as of this writing).
+**Status:** ✅ Fixed — all 12 blocking calls in the system handlers are wrapped in
+`tokio::task::spawn_blocking`, matching the pattern already used in `ocr.rs` and `shell.rs`.
 **Severity:** 🟡 High — runtime stall under load, slow tools.
 
 ### 24. Tool coverage gap (22 of 64 tools tested)
