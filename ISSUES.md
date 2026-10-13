@@ -144,6 +144,16 @@
 
 ### 16. Template matching (Phase 7)
 
+**Status:** ✅ Fixed — both handlers now run over rustautogui's CPU FFT
+normalized-cross-correlation path (no OpenCL feature needed), and both
+tools are declared in `tools/list` with full schemas. New `VisionCapability`
+backend trait (`src/gui/vision.rs`); the template is accepted as
+base64-encoded PNG/JPEG (matching `fs_read` output) or a file path, with
+encoded-input validation that rejects raw pixel data with a clear error.
+Platform limitation (documented by rustautogui, now in the tool
+descriptions and responses): on Windows only the main monitor is searched;
+on Linux all monitors.
+
 **Files:** `src/mcp/handlers/vision.rs`, `src/mcp/tools.rs`
 **Problem (verified):** `handle_find_image` and `handle_wait_for_image` in `vision.rs` return a permanent "Template matching not yet implemented" error, and their schemas are hidden from `tools/list` (comment block in `tools.rs`). The `rustautogui` submodule contains template-matching implementations (`src/core/template_match/`: slow NCC, segmented NCC, FFT NCC, OpenCL variants) that still need wiring into the handlers and re-exposing in `tools.rs`.
 
@@ -194,9 +204,8 @@ Current state of the planned feature phases:
 - All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). Both tools are live in the dispatch and in `tools/list` (see issue #4).
 - Remaining: `get_element_properties` / `invoke_element_action` unsupported on all platforms; Linux ignores `window_id` and uses blocking D-Bus calls.
 
-### Phase 7 — Template Matching 🔓 Unfinished (the one open phase)
-- Wire up `rustautogui` template matching in `vision_find_image` / `vision_wait_for_image` (`src/mcp/handlers/vision.rs`).
-- Re-expose the hidden tool schemas in `tools.rs` (issue #16).
+### Phase 7 — Template Matching ✅ Done
+- `vision_find_image` / `vision_wait_for_image` wired to rustautogui's CPU FFT NCC path via the new `VisionCapability` backend trait; both tool schemas exposed in `tools/list` (issue #16).
 
 ### Phase 8 — Window Management: Linux + macOS ✅ Done
 - Linux: `x11rb`-based implementation with EWMH atoms (`_NET_CLIENT_LIST`, `_NET_WM_STATE`, …). X11 only — no Wayland support.
