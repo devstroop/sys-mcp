@@ -27,7 +27,7 @@
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
 | 10 | ANSI escape stripping is heuristic | ✅ Fixed |
-| 11 | Multi-monitor support is incomplete | 🟢 Open |
+| 11 | Multi-monitor support is incomplete | ✅ Fixed (Windows) |
 | 12 | No rate limiting on web preview | ✅ Fixed |
 | 13 | CORS is overly permissive | ✅ Fixed |
 | 14 | CI only runs on Linux | ✅ Fixed |
@@ -41,7 +41,7 @@
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
 | 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (171 tests) |
-| 25 | Tests lack platform cfg gating | 🟢 Open |
+| 25 | Tests lack platform cfg gating | � In progress |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
 | 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
@@ -117,8 +117,23 @@
 
 ### 11. Multi-monitor support is incomplete
 
-**File:** `src/gui/backend/local.rs` (`list_monitors`)
-**Problem (verified):** `list_monitors()` always returns exactly one synthetic monitor (`id: 0`, `name: "Primary"`, `primary: true`, `position: (0,0)`) sized from `get_screen_size()`. Real per-monitor enumeration is not plumbed through from `rustautogui`.
+**Status:** ✅ Fixed on Windows. `list_monitors` previously returned one synthetic
+`"Primary"` entry sized from `get_screen_size()`, so a secondary display was
+invisible and any coordinate relative to it was unusable. Windows now enumerates
+for real via `EnumDisplayMonitors` + `GetMonitorInfoW`, implemented against the
+Win32 GDI API already enabled in `Cargo.toml` rather than through `rustautogui`
+(which only reports the primary display's size) — so no vendored-submodule change
+was required. **Non-Windows still reports primary only**, now stated explicitly
+rather than implied complete.
+
+Gotcha recorded: `GetMonitorInfoW` only populates `szDevice` when `cbSize` is
+`sizeof(MONITORINFOEXW)`. Passing `sizeof(MONITORINFO)` — which the struct's
+`MONITORINFO` head invites — silently yields an empty device name.
+
+Verified live on a single-display host (`\\.\DISPLAY1`, 3440×1440 at (0,0),
+clean shutdown). The multi-monitor branch is therefore exercised by construction,
+not observation; `tests/monitor_tests.rs` asserts the invariants so a genuine
+multi-display machine will catch a regression.
 
 ### 12. No rate limiting on web preview — ✅ Fixed
 

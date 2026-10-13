@@ -144,24 +144,115 @@ impl DisplayCapability for LocalBackend {
     }
 
     async fn list_monitors(&self) -> Result<Vec<MonitorInfo>, GuiError> {
-        let (w, h) = {
-            let autogui = self
-                .autogui
-                .lock()
-                .map_err(|e| GuiError::BackendError(e.to_string()))?;
-            autogui.get_screen_size()
-        };
-        Ok(vec![MonitorInfo {
-            id: 0,
-            name: "Primary".to_string(),
-            primary: true,
-            resolution: Resolution {
-                width: w as u32,
-                height: h as u32,
-            },
-            position: (0, 0),
-        }])
+        // Windows enumerates every attached display; elsewhere rustautogui only
+        // reports the primary display's size, so secondary monitors are not
+        // enumerable yet and are reported as the single primary entry rather
+        // than inventing data.
+        #[cfg(windows)]
+        {
+            enumerate_monitors()
+        }
+        #[cfg(not(windows))]
+        {
+            let (w, h) = {
+                let autogui = self
+                    .autogui
+                    .lock()
+                    .map_err(|e| GuiError::BackendError(e.to_string()))?;
+                autogui.get_screen_size()
+            };
+            Ok(vec![MonitorInfo {
+                id: 0,
+                name: "Primary".to_string(),
+                primary: true,
+                resolution: Resolution {
+                    width: w as u32,
+                    height: h as u32,
+                },
+                position: (0, 0),
+            }])
+        }
     }
+}
+
+/// Enumerate the attached monitors.
+///
+/// `MonitorInfo` has always existed in the type system and `list_monitors`
+/// has always promised a `Vec`, but the local backend stubbed it with a single
+/// synthetic "Primary" entry built from `get_screen_size()` — so a secondary
+/// display was invisible to callers and any coordinate relative to it was
+/// unusable.
+///
+/// Windows uses `EnumDisplayMonitors` + `GetMonitorInfoW` directly. This is
+/// deliberately NOT routed through `rustautogui`, which only exposes
+/// `get_screen_size()` for the primary display; no submodule change needed.
+#[cfg(windows)]
+fn enumerate_monitors() -> Result<Vec<MonitorInfo>, GuiError> {
+    use windows::Win32::Foundation::{BOOL, LPARAM, RECT, TRUE};
+    use windows::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
+    };
+    // MONITORINFOF_PRIMARY lives with the windowing constants, not in Gdi.
+    use windows::Win32::UI::WindowsAndMessaging::MONITORINFOF_PRIMARY;
+
+    // LPARAM carries a pointer to this Vec; the callback pushes into it. The
+    // pointer stays valid for the duration of the synchronous call, and
+    // EnumDisplayMonitors does not retain it.
+    let mut monitors: Vec<MonitorInfo> = Vec::new();
+
+    unsafe extern "system" fn enum_proc(
+        hmon: HMONITOR,
+        _hdc: HDC,
+        _clip: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let out = &mut *(data.0 as *mut Vec<MonitorInfo>);
+
+        let mut info: MONITORINFOEXW = MONITORINFOEXW::default();
+        // cbSize must be the size of MONITORINFOEXW, not its MONITORINFO head:
+        // Windows branches on it, and with the smaller size it treats the
+        // struct as plain MONITORINFO and never writes szDevice (leaving the
+        // device name empty).
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+
+        if GetMonitorInfoW(hmon, &mut info.monitorInfo).as_bool() {
+            let r = info.monitorInfo.rcMonitor;
+            // szDevice is a fixed NUL-terminated wchar buffer, not a WStr, so
+            // decode it manually rather than assuming a helper exists.
+            let len = info
+                .szDevice
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(info.szDevice.len());
+            let name = String::from_utf16_lossy(&info.szDevice[..len]);
+
+            out.push(MonitorInfo {
+                id: out.len() as u32,
+                name,
+                primary: info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0,
+                resolution: Resolution {
+                    width: (r.right - r.left).max(0) as u32,
+                    height: (r.bottom - r.top).max(0) as u32,
+                },
+                position: (r.left, r.top),
+            });
+        }
+        TRUE
+    }
+
+    let param = LPARAM(&mut monitors as *mut Vec<MonitorInfo> as isize);
+    unsafe {
+        EnumDisplayMonitors(None, None, Some(enum_proc), param)
+            .ok()
+            .map_err(|e| GuiError::PlatformError(format!("monitor enumeration failed: {e}")))?;
+    }
+
+    if monitors.is_empty() {
+        return Err(GuiError::PlatformError(
+            "monitor enumeration returned no displays".to_string(),
+        ));
+    }
+    Ok(monitors)
 }
 
 // ─── InputCapability ───────────────────────────────────────────────────────
