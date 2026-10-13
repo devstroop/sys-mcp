@@ -107,8 +107,10 @@ const COCO_LABELS: &[&str] = &[
     "toothbrush",
 ];
 
+// NOTE: `yolov8n.onnx` does not exist on the v8.2.0 tag (that URL 404s, so
+// detection could never fetch its model). The asset lives on v8.4.0.
 const MODEL_URL: &str =
-    "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx";
+    "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx";
 
 const MODEL_INPUT_SIZE: u32 = 640;
 const CONFIDENCE_THRESHOLD: f32 = 0.25;
@@ -240,8 +242,11 @@ pub fn detect_objects(screenshot: &super::types::Screenshot) -> Result<Detection
         .run(tvec!(input_tensor.into()))
         .map_err(|e| format!("inference: {e}"))?;
 
+    // tract 0.23 removed TValue::to_array_view(); the sanctioned path is
+    // Tensor::try_as_plain_ram() -> PlainView::to_array_view().
     let output = result[0]
-        .to_array_view::<f32>()
+        .try_as_plain_ram()
+        .and_then(|plain| plain.to_array_view::<f32>())
         .map_err(|e| format!("output view: {e}"))?;
 
     let num_detections = output.shape()[2] as usize;

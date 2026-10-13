@@ -32,7 +32,7 @@ rustautogui = { path = "rustautogui", default-features = false, features = ["ful
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Object detection
-tract-onnx = { version = "0.22", optional = true }
+tract-onnx = { version = "0.23", optional = true }
 
 # OCR (optional, on by default)
 ocrs = { version = "0.10", default-features = false, optional = true }
