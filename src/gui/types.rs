@@ -10,7 +10,10 @@ pub struct Resolution {
 
 #[derive(Debug, Clone)]
 pub struct Screenshot {
-    /// Raw RGBA pixel data from screen capture.
+    /// PNG-encoded image bytes, as produced by the backend and consumed by
+    /// every downstream caller (`image::load_from_memory`, and base64-encoded
+    /// verbatim as `image/png` in tool responses). This is NOT raw pixel
+    /// data — decoding it yourself would be wrong.
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
