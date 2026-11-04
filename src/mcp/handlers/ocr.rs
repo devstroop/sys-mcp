@@ -5,7 +5,7 @@ use crate::gui::ocr;
 use crate::gui::types::*;
 use crate::gui::GuiClient;
 #[cfg(feature = "ocr")]
-use crate::mcp::handlers::{str_arg, u32_arg};
+use crate::mcp::handlers::{json_compact, json_pretty, str_arg, u32_arg};
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
 
@@ -65,28 +65,36 @@ pub(crate) async fn handle_read_screen(
             ),
             "lines" => {
                 // Lines with bounding boxes but no word-level detail
-                let lines_data: Vec<serde_json::Value> = result.lines.iter().map(|l| {
-                    serde_json::json!({
-                        "text": l.text,
-                        "x": l.x, "y": l.y,
-                        "width": l.width, "height": l.height,
-                        "cx": l.x + l.width / 2,
-                        "cy": l.y + l.height / 2,
+                let lines_data: Vec<serde_json::Value> = result
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        serde_json::json!({
+                            "text": l.text,
+                            "x": l.x, "y": l.y,
+                            "width": l.width, "height": l.height,
+                            "cx": l.x + l.width / 2,
+                            "cy": l.y + l.height / 2,
+                        })
                     })
-                }).collect();
+                    .collect();
+                let coordinates = json_compact(&lines_data)?;
                 format!(
                     "{scope}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for mouse_click):\n{}",
                     result.lines.len(),
                     result.text,
-                    serde_json::to_string(&lines_data).unwrap_or_default(),
+                    coordinates,
                 )
             }
-            _ => format!(
-                "{scope}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for mouse_click):\n{}",
-                result.lines.len(),
-                result.text,
-                serde_json::to_string(&result.lines).unwrap_or_default(),
-            ),
+            _ => {
+                let structured = json_compact(&result.lines)?;
+                format!(
+                    "{scope}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for mouse_click):\n{}",
+                    result.lines.len(),
+                    result.text,
+                    structured,
+                )
+            }
         };
         Ok(ToolResult::text(summary))
     }
@@ -118,10 +126,11 @@ pub(crate) async fn handle_find_text(
                 query
             )))
         } else {
+            let locations = json_pretty(&matches)?;
             let summary = format!(
                 "Found {} match(es). Use cx/cy coordinates directly with mouse_click.\n{}",
                 matches.len(),
-                serde_json::to_string_pretty(&matches).unwrap_or_default()
+                locations
             );
             Ok(ToolResult::text(summary))
         }
@@ -185,11 +194,10 @@ pub(crate) async fn handle_scroll_to_text(
                 .map_err(|e| e.to_string())?;
 
             if !matches.is_empty() {
+                let locations = json_pretty(&matches)?;
                 return Ok(ToolResult::text(format!(
                     "Found '{}' after {} scroll(s). Use cx/cy with mouse_click.\n{}",
-                    query,
-                    i,
-                    serde_json::to_string_pretty(&matches).unwrap_or_default()
+                    query, i, locations
                 )));
             }
 

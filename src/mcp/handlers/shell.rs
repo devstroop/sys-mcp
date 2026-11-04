@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::gui::GuiClient;
-use crate::mcp::handlers::str_arg;
+use crate::mcp::handlers::{json_pretty, str_arg};
 use crate::protocol::mcp::ToolResult;
 use crate::terminal::{PtyManager, TerminalHandle};
 use serde_json::Value;
@@ -85,8 +85,8 @@ pub(crate) async fn handle_shell_exec(
     let _ = PTY_MANAGER.close(&session_id).await;
 
     // Get output
-    let output = spawn_blocking_get_buffer(output_buffer).await;
-    let output_str = String::from_utf8(output).unwrap_or_default();
+    let output = spawn_blocking_get_buffer(output_buffer).await?;
+    let output_str = String::from_utf8_lossy(&output).into_owned();
 
     // Clean up ANSI escape codes for display
     let cleaned = strip_ansi_codes(&output_str);
@@ -179,8 +179,8 @@ pub(crate) async fn handle_shell_read(
             .clone()
     };
 
-    let output = spawn_blocking_get_buffer(output_buffer).await;
-    let output_str = String::from_utf8(output).unwrap_or_default();
+    let output = spawn_blocking_get_buffer(output_buffer).await?;
+    let output_str = String::from_utf8_lossy(&output).into_owned();
     let cleaned = strip_ansi_codes(&output_str);
 
     Ok(ToolResult::text(cleaned))
@@ -212,19 +212,22 @@ pub(crate) async fn handle_shell_list(_client: &GuiClient) -> Result<ToolResult,
         .map_err(|e| format!("sessions poisoned: {}", e))?;
     let ids: Vec<String> = sessions.keys().cloned().collect();
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&ids).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&ids)?))
 }
 
-async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Vec<u8> {
+/// Drain the PTY output buffer off the async runtime.
+///
+/// A panic here means the buffer mutex was poisoned by the reader task, so the
+/// bytes we do return are untrustworthy; it surfaces as an error instead of the
+/// `unwrap_or_default()` that used to report a poisoned session as "no output".
+async fn spawn_blocking_get_buffer(buf: Arc<Mutex<Vec<u8>>>) -> Result<Vec<u8>, String> {
     let buf_clone = buf.clone();
     tokio::task::spawn_blocking(move || {
         let mut guard = buf_clone.lock().unwrap();
         std::mem::take(&mut *guard)
     })
     .await
-    .unwrap_or_default()
+    .map_err(|e| format!("terminal output reader failed: {e}"))
 }
 
 fn strip_ansi_codes(s: &str) -> String {

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::gui::GuiClient;
-use crate::mcp::handlers::str_arg;
+use crate::mcp::handlers::{json_pretty, opt_str_array, str_arg};
 use crate::mcp::hub::McpHub;
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
@@ -20,16 +20,12 @@ pub(crate) async fn handle_mcp_discover(_client: &GuiClient) -> Result<ToolResul
         }
     }
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&all_discovered).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&all_discovered)?))
 }
 
 pub(crate) async fn handle_mcp_list(_client: &GuiClient) -> Result<ToolResult, String> {
     let servers = MCP_HUB.list_servers().await;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&servers).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&servers)?))
 }
 
 pub(crate) async fn handle_mcp_register(
@@ -39,15 +35,7 @@ pub(crate) async fn handle_mcp_register(
     let name = str_arg(args, "name")?;
     let command = str_arg(args, "command")?;
 
-    let args: Vec<String> = args
-        .get("args")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let args = opt_str_array(args, "args")?;
 
     let config = crate::mcp::hub::McpServerConfig {
         command: command.to_string(),
@@ -57,9 +45,7 @@ pub(crate) async fn handle_mcp_register(
     };
 
     let info = MCP_HUB.register(name.to_string(), config).await?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&info)?))
 }
 
 pub(crate) async fn handle_mcp_unregister(
@@ -101,16 +87,12 @@ pub(crate) async fn handle_mcp_stop(
 
 pub(crate) async fn handle_mcp_tools(_client: &GuiClient) -> Result<ToolResult, String> {
     let tools = MCP_HUB.list_all_tools().await;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&tools).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&tools)?))
 }
 
 pub(crate) async fn handle_mcp_tool_groups(_client: &GuiClient) -> Result<ToolResult, String> {
     let groups = MCP_HUB.get_tool_groups().await;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&groups).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&groups)?))
 }
 
 pub(crate) async fn handle_mcp_exec(

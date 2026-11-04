@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use crate::gui::GuiClient;
-use crate::mcp::handlers::str_arg;
 use crate::mcp::handlers::ui;
+use crate::mcp::handlers::{json_pretty, str_arg};
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
 use std::fs;
@@ -124,9 +124,7 @@ pub(crate) async fn handle_list_dir(
         }
     });
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&entries).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&entries)?))
 }
 
 pub(crate) async fn handle_file_exists(

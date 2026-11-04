@@ -3,7 +3,7 @@
 use crate::gui::ocr;
 use crate::gui::types::*;
 use crate::gui::GuiClient;
-use crate::mcp::handlers::{opt_u32, parse_button, str_arg, u32_arg};
+use crate::mcp::handlers::{json_pretty, opt_u32, parse_button, str_arg, u32_arg};
 use crate::protocol::mcp::{ContentItem, ToolResult};
 use serde_json::Value;
 
@@ -103,9 +103,7 @@ pub(crate) async fn handle_get_screen_size(client: &GuiClient) -> Result<ToolRes
 
 pub(crate) async fn handle_list_monitors(client: &GuiClient) -> Result<ToolResult, String> {
     let monitors = client.list_monitors().await.map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&monitors).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&monitors)?))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

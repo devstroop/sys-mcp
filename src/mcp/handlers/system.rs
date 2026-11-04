@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::gui::GuiClient;
-use crate::mcp::handlers::{str_arg, u64_arg};
+use crate::mcp::handlers::{json_pretty, opt_str_array, str_arg, u64_arg};
 use crate::protocol::mcp::ToolResult;
 use crate::sysinfo::ProcessManager;
 use crate::system::{LogViewer, NetworkManager, ServiceManager, SystemMonitor};
@@ -8,9 +8,7 @@ use serde_json::Value;
 
 pub(crate) async fn handle_system_info(client: &GuiClient) -> Result<ToolResult, String> {
     let info = client.system_info().await.map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&info).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&info)?))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -35,9 +33,7 @@ pub(crate) async fn handle_process_list(
         .map_err(|e| format!("Process list task failed: {e}"))?;
     processes.truncate(limit);
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&processes).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&processes)?))
 }
 
 pub(crate) async fn handle_process_kill(
@@ -63,9 +59,7 @@ pub(crate) async fn handle_process_info(
         .await
         .map_err(|e| format!("Process info task failed: {e}"))??;
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&info)?))
 }
 
 pub(crate) async fn handle_process_start(
@@ -73,15 +67,7 @@ pub(crate) async fn handle_process_start(
     args: &Value,
 ) -> Result<ToolResult, String> {
     let command = str_arg(args, "command")?.to_string();
-    let args: Vec<String> = args
-        .get("args")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let args = opt_str_array(args, "args")?;
 
     let command_name = command.clone();
     let pid = tokio::task::spawn_blocking(move || ProcessManager::start_process(&command, args))
@@ -105,9 +91,7 @@ pub(crate) async fn handle_service_list(_client: &GuiClient) -> Result<ToolResul
     let services = tokio::task::spawn_blocking(ServiceManager::list_services)
         .await
         .map_err(|e| format!("Service list task failed: {e}"))?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&services).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&services)?))
 }
 
 pub(crate) async fn handle_service_start(
@@ -141,9 +125,7 @@ pub(crate) async fn handle_service_status(
     let status = tokio::task::spawn_blocking(move || ServiceManager::service_status(&name))
         .await
         .map_err(|e| format!("Service status task failed: {e}"))??;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&status).unwrap_or("{}".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&status)?))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -154,9 +136,7 @@ pub(crate) async fn handle_network_info(_client: &GuiClient) -> Result<ToolResul
     let info = tokio::task::spawn_blocking(NetworkManager::get_info)
         .await
         .map_err(|e| format!("Network info task failed: {e}"))??;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&info).unwrap_or("{}".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&info)?))
 }
 
 pub(crate) async fn handle_network_connections(
@@ -171,9 +151,7 @@ pub(crate) async fn handle_network_connections(
         .await
         .map_err(|e| format!("Network connections task failed: {e}"))?;
     connections.truncate(limit);
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&connections).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&connections)?))
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // System Monitoring
@@ -183,17 +161,13 @@ pub(crate) async fn handle_system_stats(_client: &GuiClient) -> Result<ToolResul
     let stats = tokio::task::spawn_blocking(SystemMonitor::get_stats)
         .await
         .map_err(|e| format!("System stats task failed: {e}"))??;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&stats).unwrap_or("{}".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&stats)?))
 }
 pub(crate) async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult, String> {
     let usage = tokio::task::spawn_blocking(SystemMonitor::get_disk_usage)
         .await
         .map_err(|e| format!("Disk usage task failed: {e}"))?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&usage).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&usage)?))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -210,7 +184,5 @@ pub(crate) async fn handle_system_logs(
     let logs = tokio::task::spawn_blocking(move || LogViewer::get_system_logs(count, level))
         .await
         .map_err(|e| format!("System logs task failed: {e}"))?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&logs).unwrap_or("[]".to_string()),
-    ))
+    Ok(ToolResult::text(json_pretty(&logs)?))
 }

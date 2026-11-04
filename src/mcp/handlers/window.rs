@@ -1,14 +1,12 @@
 #![allow(dead_code)]
 use crate::gui::GuiClient;
-use crate::mcp::handlers::{str_arg, u64_arg};
+use crate::mcp::handlers::{json_pretty, str_arg, u64_arg};
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
 
 pub(crate) async fn handle_list_windows(client: &GuiClient) -> Result<ToolResult, String> {
     let windows = client.list_windows().await.map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&windows).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&windows)?))
 }
 
 pub(crate) async fn handle_get_active_window(client: &GuiClient) -> Result<ToolResult, String> {
@@ -16,9 +14,7 @@ pub(crate) async fn handle_get_active_window(client: &GuiClient) -> Result<ToolR
         .get_active_window()
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&window).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&window)?))
 }
 
 pub(crate) async fn handle_focus_window(
@@ -116,9 +112,7 @@ pub(crate) async fn handle_find_windows(
     if windows.is_empty() {
         Ok(ToolResult::text(format!("No windows matching '{query}'.")))
     } else {
-        Ok(ToolResult::text(
-            serde_json::to_string_pretty(&windows).unwrap_or_default(),
-        ))
+        Ok(ToolResult::text(json_pretty(&windows)?))
     }
 }
 

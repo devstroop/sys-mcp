@@ -59,7 +59,7 @@ it was read from.
 | 37 | Windows window enumeration never resolves `process_name` | ✅ Fixed |
 | 38 | Windows accessibility exposes no value/description/state and only Invoke + Window patterns | ✅ Fixed |
 | 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | ✅ Fixed |
-| 40 | Serialization failures return an empty tool payload instead of an error | 🟡 Open |
+| 40 | Serialization failures return an empty tool payload instead of an error | ✅ Fixed |
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | 🟡 Open |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | 🟢 Open |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Open |
@@ -210,9 +210,15 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 ### 40. Serialization failures return an empty tool payload instead of an error
 
-**Files:** `src/mcp/handlers/window.rs`, `src/mcp/handlers/accessibility.rs`, `src/mcp/handlers/ocr.rs`
-**Problem (verified 2026-11-05):** nine handler sites serialize with `serde_json::to_string[_pretty](…).unwrap_or_default()`. `unwrap_or_default()` on `String` is `""`, and because the `Ok` arm is taken the `ToolResult` carries **no `is_error` flag** and no text. An agent that receives an empty result from `window_list` reads it as "no windows are open", from `accessibility_find` as "no matching element", from `screen_find_text` as "the text is not on screen" — the exact false-absence conclusion issue #34 warns about, manufactured inside the handler rather than by the model. `src/mcp/handlers/system.rs` already does this correctly by falling back to `"[]"` / `"{}"`.
-**Status:** 🟡 Open — propagate serialization failure as `Err` (it is a bug, not an empty state), or at minimum fall back to a typed empty sentinel; never return a bare empty string.
+**Files:** `src/mcp/handlers/*.rs` (`window.rs`, `accessibility.rs`, `ocr.rs`, `system.rs`, `ui.rs`, `filesystem.rs`, `mcp_hub.rs`, `shell.rs`, `decision.rs`, `ui_loop.rs`)
+**Problem (verified 2026-11-05):** nine handler sites serialize with `serde_json::to_string[_pretty](…).unwrap_or_default()`. `unwrap_or_default()` on `String` is `""`, and because the `Ok` arm is taken the `ToolResult` carries **no `is_error` flag** and no text. An agent that receives an empty result from `window_list` reads it as "no windows are open", from `accessibility_find` as "no matching element", from `screen_find_text` as "the text is not on screen" — the exact false-absence conclusion issue #34 warns about, manufactured inside the handler rather than by the model.
+**Status:** ✅ Fixed — `json_pretty` / `json_compact` in `src/mcp/handlers/mod.rs` return `Result<String, String>` and every serialization site now propagates with `?`, so a serialize bug is reported as an error instead of posing as an empty result. The sweep found the pattern in more places than the original nine and they are fixed too:
+- `unwrap_or("[]".to_string())` / `unwrap_or("{}".to_string())` in `system.rs` (10 sites), `filesystem.rs`, `mcp_hub.rs`, `shell.rs` — the issue text called these "already correct", but a sentinel is **indistinguishable from a genuinely empty list**, which is the same false absence in a nicer costume. They propagate now.
+- `unwrap_or_else(|_| payload.to_string())` in `decision.rs` (3 sites) — fallback was dead code (`json!` values always serialize), and `ui_loop.rs`'s `to_value(&outcome).unwrap_or_else(… { "status": "error" })` fabricated an error-shaped *success* payload.
+- `String::from_utf8(buffer).unwrap_or_default()` in `shell.rs` (2 sites): one non-UTF-8 byte — routine for a cp850 box-drawing character in a Windows PTY — erased the **entire** `shell_exec` / `shell_read` output. Now `from_utf8_lossy`, which keeps every line and substitutes U+FFFD for the byte that is not valid.
+- `opt_str_array` in `mod.rs` replaces the `args.get("args").and_then(as_array).map(…).unwrap_or_default()` idiom in `process_start` and `mcp_register`: a present-but-not-an-array value (a string, an object) used to be absorbed into *no arguments*, so the process or child MCP server started without the caller's arguments and the tool reported success. Non-string elements are rejected too instead of being dropped by `filter_map`. Covered by three tests in `tests/handler_tests.rs`.
+- `spawn_blocking_get_buffer` in `shell.rs` returns `Result` now; the old `unwrap_or_default()` reported a poisoned output mutex as "no output".
+**Not fixed here, recorded as remaining:** `src/system.rs` and `src/sysinfo.rs` read command output through nested `if let Ok(text) = String::from_utf8(output.stdout)`, so a parse failure skips the branch and the function returns an empty vec — same family, but inside the platform command layer rather than the tool handlers, and fixing it means threading errors through `SystemMonitor` / `ProcessManager` return types. The `--jev-guard-tools` denylist work in #35 is unaffected.
 **Severity:** 🟡 High — silent-absence answers are worse than errors for an autonomous caller.
 
 ### 41. `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]`

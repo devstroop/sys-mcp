@@ -327,10 +327,61 @@ pub(crate) fn opt_u32(args: &Value, key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+/// Optional array-of-strings argument.
+///
+/// Absent (or `null`) yields an empty `Vec`, which is what callers mean by
+/// "no arguments". A value that is present but not an array is rejected rather
+/// than absorbed: `as_array()` returns `None` for a string, a number or an
+/// object, so `unwrap_or_default()` used to discard a misspelled argument list
+/// and start the process or child server with *no* arguments at all — the tool
+/// then reported success for a command that never got the caller's input.
+pub(crate) fn opt_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(arr)) => Ok(arr
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| format!("invalid argument: '{key}' must contain only strings"))
+            })
+            .collect::<Result<Vec<String>, String>>()?),
+        Some(_) => Err(format!(
+            "invalid argument: '{key}' must be an array of strings"
+        )),
+    }
+}
+
 pub(crate) fn parse_button(args: &Value) -> MouseButton {
     match args.get("button").and_then(Value::as_str).unwrap_or("left") {
         "right" => MouseButton::Right,
         "middle" => MouseButton::Middle,
         _ => MouseButton::Left,
     }
+}
+
+// ─── Result serialization helpers ───────────────────────────────────────
+
+/// Serialize a tool payload into its text content.
+///
+/// A failure here is a bug in this process, not a state of the user's machine,
+/// so it surfaces as an error instead of being absorbed: `unwrap_or_default()`
+/// on a `String` is `""`, and an empty result carrying no `is_error` flag is
+/// read by an agent as "no windows are open" or "no element matched" — a false
+/// absence manufactured by the tool itself, which is worse than an error for an
+/// autonomous caller.
+///
+/// [`json_pretty`] keeps the indentation the standalone reads use;
+/// [`json_compact`] is for payloads embedded inside a larger text summary,
+/// where pretty-printing would multiply tokens for no benefit.
+pub(crate) fn json_pretty<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map_err(|e| format!("failed to serialize the tool result: {e}"))
+}
+
+/// See [`json_pretty`]. Only the OCR summaries embed JSON inside text today,
+/// so a slim build without the `ocr` feature has no caller.
+#[cfg(feature = "ocr")]
+pub(crate) fn json_compact<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|e| format!("failed to serialize the tool result: {e}"))
 }

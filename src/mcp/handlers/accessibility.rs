@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use crate::gui::types::*;
 use crate::gui::GuiClient;
+use crate::mcp::handlers::json_pretty;
 use crate::protocol::mcp::ToolResult;
 use serde_json::Value;
 
@@ -17,9 +18,7 @@ pub(crate) async fn handle_accessibility_tree(
         .get_accessibility_tree(window_id, max_depth)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&tree).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&tree)?))
 }
 
 pub(crate) async fn handle_find_ui_element(
@@ -42,7 +41,7 @@ pub(crate) async fn handle_find_ui_element(
         Ok(ToolResult::text(format!(
             "Found {} element(s). Use cx/cy with mouse_click.\n{}",
             elements.len(),
-            serde_json::to_string_pretty(&elements).unwrap_or_default()
+            json_pretty(&elements)?
         )))
     }
 }
@@ -58,9 +57,7 @@ pub(crate) async fn handle_element_properties(
         .get_element_properties(id)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&node).unwrap_or_default(),
-    ))
+    Ok(ToolResult::text(json_pretty(&node)?))
 }
 
 /// Invoke a named action on an element resolved by id (e.g. "invoke"/"press"
@@ -81,5 +78,6 @@ pub(crate) async fn handle_element_action(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Template matching handlers
+// (the vision/template-matching handlers live in `vision.rs`; this module is
+// accessibility only — see issue #45 for the stale banner this used to be)
 // ═══════════════════════════════════════════════════════════════════════════

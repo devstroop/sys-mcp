@@ -762,6 +762,72 @@ async fn test_process_start_nonexistent_command_errors() {
     assert!(text.contains("Failed to spawn"), "got: {text}");
 }
 
+// ─── Optional array arguments are validated, not absorbed (issue #40) ──────
+
+#[tokio::test]
+async fn test_process_start_rejects_non_array_args() {
+    let client = test_client();
+    // `args` given as a string instead of an array: the old code read
+    // `as_array()` -> None -> `unwrap_or_default()` and silently started the
+    // process with *no* arguments, then reported success. Rejected now, and
+    // before any spawn (the command below cannot exist either, so nothing can
+    // run even if the ordering regressed).
+    let result = handle_tool_call(
+        &client,
+        "process_start",
+        json!({"command": "sys_mcp_definitely_not_a_real_binary_xyz", "args": "--version"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must be an array of strings"),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_process_start_rejects_non_string_elements() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "process_start",
+        json!({"command": "sys_mcp_definitely_not_a_real_binary_xyz", "args": ["ok", 7]}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must contain only strings"),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_register_rejects_non_array_args() {
+    let client = test_client();
+    // Registration only writes to the in-process hub, so a *valid* call here
+    // cannot spawn anything; the invalid one must fail before that write.
+    let invalid = handle_tool_call(
+        &client,
+        "mcp_register",
+        json!({"name": "args-validation-probe", "command": "npx", "args": {"a": 1}}),
+    )
+    .await;
+    assert_eq!(invalid.is_error, Some(true));
+    let text = invalid.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must be an array of strings"),
+        "got: {text}"
+    );
+    let info = handle_tool_call(&client, "mcp_list", json!({})).await;
+    let listed = info.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        !listed.contains("args-validation-probe"),
+        "a rejected registration must not reach the hub: {listed}"
+    );
+}
+
 #[tokio::test]
 async fn test_service_start_nonexistent_service_errors() {
     let client = test_client();
