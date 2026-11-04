@@ -39,14 +39,14 @@ pub fn all_tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "x": { "type": "integer", "description": "Region X (optional — omit for full screen)." },
-                    "y": { "type": "integer", "description": "Region Y." },
-                    "width": { "type": "integer", "description": "Region width." },
-                    "height": { "type": "integer", "description": "Region height." },
+                    "x": { "type": "integer", "description": "Region X. A region read needs all four of x, y, width, height — omit all four to OCR the whole screen." },
+                    "y": { "type": "integer", "description": "Region Y (required with x, width, height)." },
+                    "width": { "type": "integer", "description": "Region width, greater than zero (required with x, y, height)." },
+                    "height": { "type": "integer", "description": "Region height, greater than zero (required with x, y, width)." },
                     "detail": {
                         "type": "string",
                         "enum": ["full", "lines", "text"],
-                        "description": "Response detail level. 'text' = plain text only (smallest), 'lines' = text per line with bounding boxes (no words), 'full' = lines + word-level coordinates (default).",
+                        "description": "Response detail level. 'text' = plain text only (smallest), 'lines' = text per line with bounding boxes (no words), 'full' = lines + word-level coordinates (default). Any other value is rejected rather than treated as 'full'.",
                         "default": "full"
                     }
                 }

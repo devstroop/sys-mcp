@@ -1446,3 +1446,45 @@ async fn test_vision_wait_for_image_negative_timeout() {
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("non-negative integer"), "got: {text}");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// screen_read argument validation
+//
+// These only exercise arguments that must be refused, and `screen_read` checks
+// them before it captures a screen or loads an OCR model — so no test here can
+// reach the model download. That ordering is part of the contract.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_rejects_half_a_region() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "x": 10, "y": 20 })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("all four of x, y, width and height"),
+        "got: {text}"
+    );
+    assert!(text.contains("missing: width, height"), "got: {text}");
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_rejects_unknown_detail_and_zero_sized_region() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "detail": "txt" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("full, lines, text"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_read",
+        json!({ "x": 0, "y": 0, "width": 0, "height": 50 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("positive width and height"), "got: {text}");
+}

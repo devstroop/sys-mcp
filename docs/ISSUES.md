@@ -61,7 +61,7 @@ it was read from.
 | 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | ✅ Fixed |
 | 40 | Serialization failures return an empty tool payload instead of an error | ✅ Fixed |
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | ✅ Fixed |
-| 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | 🟢 Open |
+| 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Open |
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Open |
 | 45 | Documentation that contradicts the shipped behavior | 🟢 Open |
@@ -333,8 +333,15 @@ self-correcting rather than a silent empty result.
 ### 42. `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch
 
 **File:** `src/mcp/handlers/ocr.rs` (`handle_read_screen`)
-**Problem (verified 2026-11-05):** region mode is chosen by `args.get("x").is_some()`. A caller that sends `width`/`height` without `x` gets a **full-screen** read with those arguments silently ignored — and then a `Screen 1920x1080` header for a request that looked scoped. Conversely `x` without the rest errors as "missing required argument", which is at least loud. `detail` is matched as `"text" | "lines" | _`, so any typo (`"full"` is not a listed enum value in the schema, `"detailled"`, `"Lines"`) falls through to the default arm — the word-level serialization, the largest and slowest payload — instead of an error.
-**Status:** 🟡 Open — enter region mode only when all four coordinates are present, reject a partial region explicitly, and validate `detail` against the declared enum.
+**Problem (verified 2026-11-05):** region mode is chosen by `args.get("x").is_some()`. A caller that sends `width`/`height` without `x` gets a **full-screen** read with those arguments silently ignored — and then a `Screen 1920x1080` header for a request that looked scoped. Conversely `x` without the rest errors as "missing required argument", which is at least loud. `detail` is matched as `"text" | "lines" | _`, so any typo (`"detailled"`, `"Lines"`, `"txt"`) falls through to the default arm — the word-level serialization, the largest and slowest payload — instead of an error.
+**Status:** ✅ Fixed (2026-11-05)
+- `parse_region()` selects region mode on **any** of `x`/`y`/`width`/`height` being present, and requires all four. A partial region is refused naming exactly the missing keys and naming the way to get the whole-screen read back ("Omit all four to OCR the whole screen"). Absent-or-null for all four is whole-screen mode, so `{"x": null}` is not treated as a region request that then fails on `x`.
+- Coordinates must be non-negative integers (`"10"`, `-1`, `1.5`, `true` are all refused per key), and `width`/`height` must be greater than zero. A zero-sized crop is a rectangle that contains no pixels, so it cannot answer a question about the screen; it is refused as an argument error instead of going through the capture. (Not measured on the old build — the old code reached `screenshot_region` with whatever numbers arrived.)
+- `parse_detail()` returns a `Detail` enum with arms for `text`/`lines`/`full` only, trimmed and case-insensitive. An unknown string or a non-string `detail` is refused listing the three values instead of paying for word-level coordinates the caller had asked not to receive. `Detail::Full` still matches the declared `"default": "full"`.
+- Both parsers run **before** `client.screenshot()`, so a malformed call costs nothing instead of an 8-second OCR pass. Verified, not asserted: the two handler-level tests finish in 0.00s while a real full-screen `screen_read` on this machine measures 6-10s (issue #31).
+- Schema descriptions in `src/mcp/tools.rs` now state the all-four-or-none rule, the positive size requirement, and that an unlisted `detail` is rejected. (`detail` was already declared as `enum ["full", "lines", "text"]` with `default: "full"`; the earlier draft of this issue wrongly implied `"full"` was missing from the enum.)
+- Tests: 6 unit tests in `src/mcp/handlers/ocr.rs` (`#[cfg(all(test, feature = "ocr"))]`) covering default, case-insensitivity, prefix/typo rejection, wrong type, all-four parse, present-but-null, each partial-region combination, each bad coordinate, zero width and zero height. 2 handler-level tests in `tests/handler_tests.rs` (`#[cfg(feature = "ocr")]`) going through `handle_tool_call` to prove the messages reach the client as `is_error`. Full suite green (46 lib, 111 handler), `cargo clippy --all-targets` and `cargo check --no-default-features` clean.
+**Remaining (recorded, not fixed):** a whole-screen read still succeeds when the caller meant a region but sent none — there is no way to distinguish "forgot the coordinates" from "wants everything". `screen_find_text` and `scroll_to_text` still take no region at all (issue #34).
 **Severity:** 🟢 Medium — misconfigured calls answer a different question than the one asked.
 
 ---
