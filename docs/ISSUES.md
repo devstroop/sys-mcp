@@ -1,6 +1,9 @@
 # Issues & Next-Phase Development Gaps (sys-mcp)
 
-**Last verified: 2026-10-13** — every status below was checked against the code in this worktree.
+**Last verified: 2026-11-05** — every status below was checked against the code in this worktree.
+Issues #35–#45 are the output of a full source audit of branch `feat/ocr-onnx-a11y-tools` @ `343ff06`
+(72 declared tools, 3 platform backends, 2 guard layers, both workflows); each carries the file:line
+it was read from.
 
 ## Priority Legend
 
@@ -51,6 +54,17 @@
 | 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
 | 33 | `screen_read` returned crop-relative coordinates for region reads, so `mouse_click` missed the target | ✅ Fixed |
 | 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | 🟡 Open |
+| 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | 🔴 Open |
+| 36 | Guard fail-mode is ignored on the decision-client construction path (fails open) | 🔴 Open |
+| 37 | Windows window enumeration never resolves `process_name` | 🟡 Open |
+| 38 | Windows accessibility exposes no value/description/state and only Invoke + Window patterns | 🟡 Open |
+| 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | 🟢 Open |
+| 40 | Serialization failures return an empty tool payload instead of an error | 🟡 Open |
+| 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | 🟡 Open |
+| 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | 🟢 Open |
+| 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Open |
+| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Open |
+| 45 | Documentation that contradicts the shipped behavior | 🟢 Open |
 
 ---
 
@@ -81,6 +95,20 @@ the button center at 257,369, and clicking the OCR coordinate completed the form
 region read as `Region WxH at (X,Y) — coordinates are screen-space` instead of `Screen WxH`, because the OCR result
 carries the *crop* dimensions and reporting them as the screen size put `cy` beyond the stated height.
 **Severity:** 🔴 Critical — the tool's own advertised contract produced wrong clicks.
+
+### 35. `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted
+
+**Files:** `src/decision/guard.rs` (`guarded_tools`, `check_denylist`), `src/mcp/handlers/shell.rs` (`handle_shell_write`)
+**Problem (verified 2026-11-05):** the destructive-command denylist matches patterns (`format `, `diskpart`, `rm -rf /`, `mkfs`, …) only against the `command` argument of `shell_exec`, and `guarded_tools()` is `shell_exec, fs_delete, process_kill, service_stop, service_start, process_start` — `shell_write` is in neither set. `handle_shell_write` pushes raw bytes into a live PTY session created by `shell_open`. So `shell_open` → `shell_write "format C: /q"` executes with **zero** denylist coverage, which is the layer documented as "never bypassed by `confirm: true`". The same shape applies to `fs_write` (overwrite any path) and `mcp_exec` (arbitrary tool call on a registered child server).
+**Status:** 🟡 Open — route `shell_write`'s `input` through `deny_reason_for_command`, add `shell_write` to the default guarded set, and decide explicitly whether `fs_write` / `mcp_exec` belong there too.
+**Severity:** 🔴 Critical — the guard's hardest guarantee is bypassable by the tool with the same name prefix.
+
+### 36. Guard fail-mode is ignored on the decision-client construction path (fails open)
+
+**File:** `src/mcp/handlers/mod.rs` (`guard_gate`)
+**Problem (verified 2026-11-05):** `assess_with` honours `--jev-guard-fail-mode` correctly — a model transport failure under the default `GuardFailMode::Closed` returns `Ok(Confirm)` and the call is held (`src/decision/guard.rs`, live module). But the dispatcher constructs the client first, and `Err` from `DecisionClient::new(&config)` returns `None` — *proceed* — with no reference to the configured fail mode (`mod.rs` "Fail open (denylist already applied)"). A configuration mistake in endpoint/timeout/key is exactly the case where an operator who enabled `--jev-guardrails` expects a hold, and instead gets the destructive call executed. Its sibling arm `Err(e) => … (failing open)` is unreachable, because `assess` maps every outcome to `Ok`.
+**Status:** 🟡 Open — apply the configured fail mode at the client-construction site, and delete or restructure the unreachable arm so the code cannot drift from the policy again.
+**Severity:** 🔴 Critical — a safety control that silently becomes a no-op under misconfiguration.
 
 ---
 
@@ -165,6 +193,53 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 `screen_find_text` is a full-screen best-effort locator while `screen_read` + region is the precise one.
 **Severity:** 🟡 High — an agent can conclude UI is absent when it is only missed.
 
+### 37. Windows window enumeration never resolves `process_name`
+
+**File:** `src/platform/window/windows.rs` (`get_window_info`)
+**Problem (verified 2026-11-05):** `get_window_info` hardcodes `process_name: None`, and it is the single constructor used by `list_windows`, `get_active_window` and `find_windows_by_title`, so every `WindowInfo` produced on Windows has a null process. Linux resolves `WM_CLASS` (`src/platform/window/linux.rs`, `get_process_name`) and macOS reads `kCGWindowOwnerName` (`src/platform/window/macos.rs`) — Windows, the platform the product is actually used on, is the only one missing it. Two consequences: `ui_decide` sends `"window": { "process": null }` into the JEV prompt (`src/decision/ui_loop.rs`), so the model decides with no idea which application owns the target; and a caller cannot prove a window belongs to the app it believes it does, or disambiguate same-titled windows, which is the failure class behind wrong-window clicks in desktop automation.
+**Status:** 🟡 Open — resolve the image name from the `GetWindowThreadProcessId` pid already being fetched (`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW`), and keep it `None` only when the handle genuinely cannot be opened (elevated / protected processes).
+**Severity:** 🟡 High — silently degrades a documented field and a model input on the primary platform.
+
+### 38. Windows accessibility exposes no value/description/state and only Invoke + Window patterns
+
+**File:** `src/platform/accessibility/windows.rs`
+**Problem (verified 2026-11-05):** `build_node` sets `value: None, description: None` unconditionally; `get_element_states` reports only `disabled` and `focused`; and `get_element_actions` advertises only `invoke` plus the four window verbs. `invoke_element_action` matches `invoke | focus | close | minimize | maximize | restore` and every other string errors, so the generic verbs `press`, `click`, `increment`, `decrement` — which the macOS backend aliases (`macos.rs`, `invoke_element_action`) and which `docs/ISSUES.md` #4 claims are mapped "on all platforms" — are rejected on Windows. No `TogglePattern`, `ValuePattern`, `ExpandCollapsePattern`, `SelectionItemPattern` or `RangeValuePattern` is imported at all, so none of their read state or actions are reachable. Net effect on the platform that matters: an agent cannot read what is in a text field, tick a checkbox, open a combo box, select a list item, or tell whether a node is expanded/offscreen through UIA, and has to fall back to OCR for all of it.
+**Status:** 🟡 Open — populate `value` (ValuePattern → LegacyIAccessible → `CurrentName` fallback) and `description` (HelpText / FullDescription / LegacyIAccessible description), add `checked` / `expanded` / `selected` / `offscreen` / `required` states, alias the generic verbs, and implement the remaining patterns as actions.
+**Severity:** 🟡 High — this is the gap that forces OCR onto every form field.
+
+### 40. Serialization failures return an empty tool payload instead of an error
+
+**Files:** `src/mcp/handlers/window.rs`, `src/mcp/handlers/accessibility.rs`, `src/mcp/handlers/ocr.rs`
+**Problem (verified 2026-11-05):** nine handler sites serialize with `serde_json::to_string[_pretty](…).unwrap_or_default()`. `unwrap_or_default()` on `String` is `""`, and because the `Ok` arm is taken the `ToolResult` carries **no `is_error` flag** and no text. An agent that receives an empty result from `window_list` reads it as "no windows are open", from `accessibility_find` as "no matching element", from `screen_find_text` as "the text is not on screen" — the exact false-absence conclusion issue #34 warns about, manufactured inside the handler rather than by the model. `src/mcp/handlers/system.rs` already does this correctly by falling back to `"[]"` / `"{}"`.
+**Status:** 🟡 Open — propagate serialization failure as `Err` (it is a bug, not an empty state), or at minimum fall back to a typed empty sentinel; never return a bare empty string.
+**Severity:** 🟡 High — silent-absence answers are worse than errors for an autonomous caller.
+
+### 41. `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]`
+
+**Files:** `src/system.rs` (`LogViewer::get_system_logs`), `src/mcp/handlers/system.rs`
+**Problem (verified 2026-11-05):** `level.unwrap_or_else(|| "Information")` maps to `Get-WinEvent … Level=4`, so calling `system_logs` with no arguments returns only informational entries and **silently omits every Error and Warning** — the entries the tool is called for. The query is pinned to `LogName='System'`, so the Application log (where application crashes land) is unreachable although the tool is advertised as "system/event logs". Finally every failure surface collapses to the same empty answer: `Get-WinEvent` writes to stderr and exits non-zero with empty stdout when a filter matches nothing, and `String::from_utf8` / `serde_json::from_str` failures are swallowed by `if let Ok(...)`, so "log empty", "no events matched", "powershell not on PATH" and "parse failed" are all indistinguishable `[]`. Untested.
+**Status:** 🟡 Open — make "no level" mean all levels (omit the key from the filter hashtable), accept a `log` parameter (`System` / `Application`), and surface a real error when the command fails rather than returning `[]`.
+**Severity:** 🟡 High — a diagnostic tool that hides the failures being diagnosed.
+
+### 43. 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level
+
+**Files:** `tests/`, `src/gui/backend/stub.rs`
+**Problem (verified 2026-11-05):** the declared/dispatched sets match exactly (0 orphan tools — `tests/tool_schema_tests.rs` is a real drift guard and works), but 20 advertised tools appear in no test file: `accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`, `screen_scroll_to_text`, `decision_rank`, `decision_stats`, `detect_click_object`, `disk_usage`, `system_stats`, `system_logs`, and all eight `mcp_*` hub tools. The four accessibility tools are structurally untestable today: `StubBackend` implements no `AccessibilityCapability`, so `GuiClient::accessibility()` returns `UnsupportedCapability` and no handler path beyond the error can be exercised. `tests/handler_tests.rs` covers display/mouse/keyboard/clipboard/window only.
+**Status:** 🟡 Open — give the stub backends an accessibility implementation (fixed tree + id cache semantics, recording invoked actions), then add handler tests for all four tools plus the id-invalidation contract; add tests for `system_logs` / `system_stats` / `disk_usage` argument handling and the `mcp_*` lifecycle against a fake child server.
+**Severity:** 🟡 High — the newest, most intricate surface (element-id caching) shipped with no coverage at all.
+
+### 44. CI never runs for branch pushes and tests no feature combination; the release workflow has never run
+
+**Files:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`
+**Problem (verified 2026-11-05):**
+- `on: push: branches: [main, master]` — a push to a feature branch triggers **no** workflow, so nothing on `feat/ocr-onnx-a11y-tools` has remote CI signal; it only starts at PR time. Every claim that the branch is "CI-clean" is a local claim.
+- No feature matrix: CI never builds `--features detection` or `--no-default-features`, so `src/gui/detection.rs` and every `#[cfg(not(feature = …))]` arm are uncompiled by CI. `tests/tool_schema_tests.rs`'s feature-gate test therefore only ever asserts the default combination, and the feature-off code paths rot silently.
+- The lint gate is `cargo clippy -- -D warnings`, without `--all-targets`, so lints in `tests/` and `examples/` are ungated (the local run that used `--all-targets` was stricter than CI).
+- No dependency-vulnerability gate of any kind: no `deny.toml`, no cargo-deny / cargo-audit / OSV step in either workflow.
+- `release.yml` has never executed — `git tag` is empty and the version is still `0.1.0` with all shipped work under `## [Unreleased]`. It also has no test or smoke step, publishes no `SHA256SUMS` and no signature, and pins `macos-13`.
+**Status:** 🟡 Open — add `pull_request` targeting all branches plus a `workflow_dispatch`, add a feature-leg matrix (`detection`, `--no-default-features`) and `--all-targets` to clippy, add cargo-deny, and cut a tagged release with checksums once the above fixes land.
+**Severity:** 🟡 High — the gates that were paid for are not wired to the branch flow.
+
 ---
 
 ## 🟢 Medium-Priority Improvements
@@ -234,6 +309,20 @@ caller-supplied literals only, treat on-screen text as content not commands).
 
 Unknown URIs/prompts return a protocol error naming the valid set, so a mis-typed identifier is
 self-correcting rather than a silent empty result.
+
+### 39. `accessibility_properties` re-mints an id and mutates the tree cache it only reads
+
+**File:** `src/platform/accessibility/windows.rs` (`get_element_properties`, `build_node`)
+**Problem (verified 2026-11-05):** `get_element_properties` resolves the cached element and then calls `build_node`, which unconditionally mints `uia:{next_id}` and inserts the element into the cache under that new key before the function overwrites `node.id` with the caller's original id. So every read-only properties call grows the cache by one duplicate COM reference and advances the counter, until the next `get_tree` clears it. Separately, `build_node` does `if let Ok(mut cache) = self.cache.lock() { cache.insert(…) }` — if that lock is poisoned the id is still returned to the caller but was never inserted, so the very next `accessibility_action` on it fails with "not in the current accessibility cache" for a reason the caller cannot see.
+**Status:** 🟡 Open — extract an id-free node builder for the properties path (or reuse the queried key), and turn the cache-insert failure into a `GuiError` instead of a silently skipped insert.
+**Severity:** 🟢 Medium — no wrong answers today, but the cache lifetime is not what the contract says and one branch hands out unresolvable ids.
+
+### 42. `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch
+
+**File:** `src/mcp/handlers/ocr.rs` (`handle_read_screen`)
+**Problem (verified 2026-11-05):** region mode is chosen by `args.get("x").is_some()`. A caller that sends `width`/`height` without `x` gets a **full-screen** read with those arguments silently ignored — and then a `Screen 1920x1080` header for a request that looked scoped. Conversely `x` without the rest errors as "missing required argument", which is at least loud. `detail` is matched as `"text" | "lines" | _`, so any typo (`"full"` is not a listed enum value in the schema, `"detailled"`, `"Lines"`) falls through to the default arm — the word-level serialization, the largest and slowest payload — instead of an error.
+**Status:** 🟡 Open — enter region mode only when all four coordinates are present, reject a partial region explicitly, and validate `detail` against the declared enum.
+**Severity:** 🟢 Medium — misconfigured calls answer a different question than the one asked.
 
 ---
 
@@ -319,6 +408,18 @@ How the suite actually handles platform differences:
 So the rule adopted: gate only where the *behaviour itself* is platform-specific; otherwise write
 portable assertions and let the CI matrix prove them.
 
+### 45. Documentation that contradicts the shipped behavior
+
+**Files:** `CHANGELOG.md`, `src/mcp/handlers/mod.rs`, `docs/ISSUES.md`, `src/gui/ocr.rs`, `src/mcp/handlers/accessibility.rs`, `README.md`
+**Problem (verified 2026-11-05):** five separate statements that the code does not support.
+1. `CHANGELOG.md` — "model failure fails open, the denylist never does", and the same sentence in the `guard_gate` docstring in `src/mcp/handlers/mod.rs`. The default is `GuardFailMode::Closed`, which *holds* the call (see #36 for the one path that genuinely fails open).
+2. `docs/ISSUES.md` #4 claims `invoke_element_action` maps `invoke/press/click/focus/increment/decrement/…` on all platforms. macOS aliases them; Windows rejects all but invoke/focus/window verbs (see #38).
+3. `src/gui/ocr.rs` — four doc comments on `OcrWord.cx/cy` and `OcrMatch.cx/cy` still tell callers to "use this directly for `gui_click`", the pre-rename name. #21 was closed as "all 24 stale references corrected" but only covered `tools.rs` and the handlers.
+4. `src/mcp/handlers/accessibility.rs` ends with a "Template matching handlers" banner with nothing under it, and both that file and `src/mcp/handlers/ocr.rs` open with `#![allow(dead_code)]`, which now suppresses real dead-code findings in two live modules from the `-D warnings` gate.
+5. `README.md` self-admits its per-feature crate-count table predates `jev` joining the default set.
+**Status:** 🟡 Open — correct each to match the code, drop the stale banner and the module-level `allow(dead_code)`.
+**Severity:** 🔵 Low — but an integrator reading the security posture sentence gets the opposite of what ships.
+
 ### 26. `network_connections` ignores its `limit` parameter
 
 **File:** `src/mcp/handlers/system.rs` (`handle_network_connections`)
@@ -351,6 +452,8 @@ Current state of the planned feature phases:
 ### Phase 11 — Testing & Quality 🔓 Partially done
 - Done: 66 tests (handler dispatch via `StubBackend`, protocol serialization, hub, config).
 - Remaining: destructive-tool coverage (branch `test/destructive-tools`, issue #24), platform cfg gating (issue #25), web server tests, property-based JSON-RPC roundtrips.
+- Audit 2026-11-05: the suite is now 248 tests and the schema/dispatch drift guard is in place, but 20 advertised tools still have no test reference and `StubBackend` cannot exercise the accessibility handlers at all — tracked as issue #43.
 
 ### Phase 12 — CI/CD ✅ Done
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
+- Audit 2026-11-05: the matrix works but is not wired to the branch flow — feature-branch pushes trigger nothing, no feature combination is ever built, and `release.yml` has never run because no tag exists. Tracked as issue #44.
