@@ -10,7 +10,14 @@ use windows::Win32::UI::Accessibility::{
     UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId, UIA_StatusBarControlTypeId,
     UIA_TabControlTypeId, UIA_TableControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
     UIA_TreeItemControlTypeId, UIA_WindowControlTypeId, UIA_WindowPatternId, UIA_CONTROLTYPE_ID,
+    IUIAutomationInvokePattern, IUIAutomationWindowPattern, WindowVisualState_Maximized,
+    WindowVisualState_Minimized, WindowVisualState_Normal,
 };
+use windows::core::Interface;
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::error::GuiError;
 use crate::gui::types::*;
@@ -51,6 +58,21 @@ pub struct PlatformAccessibility {
     // Left as a plain field it would be dropped AFTER Drop::drop ran, i.e.
     // after CoUninitialize — see the Drop impl below.
     automation: std::mem::ManuallyDrop<IUIAutomation>,
+    // Elements from the most recent tree walk, keyed by the id we handed out.
+    // Keeping the COM refs alive is what makes an id resolvable by a later
+    // get_element_properties / invoke_element_action call — the old
+    // pointer-only id dangled once the walk dropped its wrappers. Cleared at
+    // the start of every get_tree (bounding it to one tree) and in Drop before
+    // COM is torn down.
+    cache: Mutex<HashMap<String, IUIAutomationElement>>,
+    // Monotonic id source for the current tree walk. Ids only need to be unique
+    // within one cache lifetime (the contract is "an id handed out by the latest
+    // get_tree resolves until the next get_tree"), and a counter guarantees
+    // that. Deriving ids from `element as *const _` did NOT: the walk passed
+    // `&child` where `child` was a fresh local reusing the same stack slot every
+    // iteration, so distinct elements collapsed onto one address and collided in
+    // the cache. Reset at the start of every get_tree.
+    next_id: AtomicU64,
 }
 
 impl PlatformAccessibility {
@@ -76,6 +98,8 @@ impl PlatformAccessibility {
 
         Ok(Self {
             automation: std::mem::ManuallyDrop::new(automation),
+            cache: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(0),
         })
     }
 
@@ -153,7 +177,7 @@ impl PlatformAccessibility {
     }
 
     fn build_node(
-        automation: &IUIAutomation,
+        &self,
         element: &IUIAutomationElement,
         depth: u32,
     ) -> Result<AccessibilityNode, GuiError> {
@@ -166,14 +190,21 @@ impl PlatformAccessibility {
         let cx = if w > 0 { Some(x + w as i32 / 2) } else { None };
         let cy = if h > 0 { Some(y + h as i32 / 2) } else { None };
 
-        let id = format!("uia:{:p}", element as *const _);
+        let id = format!("uia:{}", self.next_id.fetch_add(1, Ordering::Relaxed));
+
+        // Keep this element alive under the id we hand out so a later
+        // get_element_properties / invoke_element_action call can resolve it.
+        // Overwriting an existing entry is fine (same element, one extra ref).
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.insert(id.clone(), element.clone());
+        }
 
         let mut children = Vec::new();
         if depth > 0 {
             unsafe {
                 if let Ok(child_array) = element.FindAll(
                     TreeScope_Children,
-                    &automation.CreateTrueCondition().map_err(|e| {
+                    &self.automation.CreateTrueCondition().map_err(|e| {
                         GuiError::PlatformError(format!("CreateTrueCondition: {e}"))
                     })?,
                 ) {
@@ -183,7 +214,7 @@ impl PlatformAccessibility {
                         as usize;
                     for i in 0..count {
                         if let Ok(child) = child_array.GetElement(i as i32) {
-                            if let Ok(node) = Self::build_node(automation, &child, depth - 1) {
+                            if let Ok(node) = self.build_node(&child, depth - 1) {
                                 children.push(node);
                             }
                         }
@@ -217,6 +248,14 @@ impl PlatformAccessibility {
     ) -> Result<AccessibilityNode, GuiError> {
         let depth = max_depth.unwrap_or(10);
 
+        // A fresh walk invalidates every id handed out before it, so drop the
+        // previous tree's cached elements first (this also bounds the cache to
+        // one tree). COM is initialized here, so releasing them now is safe.
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+        self.next_id.store(0, Ordering::Relaxed);
+
         unsafe {
             let root = if let Some(wid) = window_id {
                 let hwnd = windows::Win32::Foundation::HWND(wid as *mut _);
@@ -249,7 +288,7 @@ impl PlatformAccessibility {
                 current
             };
 
-            Self::build_node(&self.automation, &root, depth)
+            self.build_node(&root, depth)
         }
     }
 
@@ -294,16 +333,96 @@ impl PlatformAccessibility {
         }
     }
 
-    pub fn get_element_properties(&self, _element_id: &str) -> Result<AccessibilityNode, GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "get_element_properties by ID not yet implemented on Windows".into(),
-        ))
+    /// Resolve an element id handed out by the most recent `get_tree`.
+    fn lookup(&self, element_id: &str) -> Result<IUIAutomationElement, GuiError> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| GuiError::PlatformError("accessibility cache lock poisoned".into()))?;
+        cache.get(element_id).cloned().ok_or_else(|| {
+            GuiError::PlatformError(format!(
+                "element id '{element_id}' is not in the current accessibility cache; call accessibility_tree or accessibility_find again and use a fresh id"
+            ))
+        })
     }
 
-    pub fn invoke_element_action(&self, _element_id: &str, _action: &str) -> Result<(), GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "invoke_element_action not yet implemented on Windows".into(),
-        ))
+    pub fn get_element_properties(&self, element_id: &str) -> Result<AccessibilityNode, GuiError> {
+        let element = self.lookup(element_id)?;
+        // depth 0: this element's own properties, not a re-walk of its subtree.
+        let mut node = self.build_node(&element, 0)?;
+        // build_node minted a fresh counter id for this single-element call;
+        // the caller addressed the element by the id the last get_tree handed
+        // out, and that is the key still present in the cache. Report it back
+        // verbatim so accessibility_properties -> accessibility_action round-
+        // trips against the same id.
+        node.id = element_id.to_string();
+        Ok(node)
+    }
+
+    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+        let element = self.lookup(element_id)?;
+        unsafe {
+            match action {
+                "invoke" => {
+                    let pattern: IUIAutomationInvokePattern = element
+                        .GetCurrentPattern(UIA_InvokePatternId)
+                        .map_err(|e| {
+                            GuiError::PlatformError(format!("GetCurrentPattern(invoke): {e}"))
+                        })?
+                        .cast()
+                        .map_err(|_| {
+                            GuiError::PlatformError(format!(
+                                "element '{element_id}' does not support the 'invoke' action"
+                            ))
+                        })?;
+                    pattern
+                        .Invoke()
+                        .map_err(|e| GuiError::PlatformError(format!("Invoke: {e}")))?;
+                }
+                "focus" => element
+                    .SetFocus()
+                    .map_err(|e| GuiError::PlatformError(format!("SetFocus: {e}")))?,
+                "close" | "minimize" | "maximize" | "restore" => {
+                    let pattern: IUIAutomationWindowPattern = element
+                        .GetCurrentPattern(UIA_WindowPatternId)
+                        .map_err(|e| {
+                            GuiError::PlatformError(format!("GetCurrentPattern(window): {e}"))
+                        })?
+                        .cast()
+                        .map_err(|_| {
+                            GuiError::PlatformError(format!(
+                                "element '{element_id}' does not support window actions"
+                            ))
+                        })?;
+                    match action {
+                        "close" => pattern
+                            .Close()
+                            .map_err(|e| GuiError::PlatformError(format!("Close: {e}")))?,
+                        "minimize" => pattern
+                            .SetWindowVisualState(WindowVisualState_Minimized)
+                            .map_err(|e| {
+                                GuiError::PlatformError(format!("SetWindowVisualState: {e}"))
+                            })?,
+                        "maximize" => pattern
+                            .SetWindowVisualState(WindowVisualState_Maximized)
+                            .map_err(|e| {
+                                GuiError::PlatformError(format!("SetWindowVisualState: {e}"))
+                            })?,
+                        _ => pattern
+                            .SetWindowVisualState(WindowVisualState_Normal)
+                            .map_err(|e| {
+                                GuiError::PlatformError(format!("SetWindowVisualState: {e}"))
+                            })?,
+                    }
+                }
+                other => {
+                    return Err(GuiError::PlatformError(format!(
+                        "unsupported action '{other}' on Windows; supported actions: invoke, focus, close, minimize, maximize, restore (see the element's `actions` list)"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -317,6 +436,12 @@ impl Drop for PlatformAccessibility {
             // IUIAutomation pointer — releasing a COM object after its
             // apartment is gone faults. Release the pointer first, then tear
             // down COM.
+            // Release cached UIA elements FIRST: they are COM refs, and
+            // dropping them after CoUninitialize faults exactly like the
+            // automation pointer used to (see below).
+            if let Ok(cache) = self.cache.get_mut() {
+                cache.clear();
+            }
             std::mem::ManuallyDrop::drop(&mut self.automation);
             CoUninitialize();
         }

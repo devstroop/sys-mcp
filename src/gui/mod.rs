@@ -243,6 +243,21 @@ impl GuiClient {
         self.accessibility()?.find_elements(query).await
     }
 
+    pub async fn get_element_properties(
+        &self,
+        element_id: &str,
+    ) -> Result<AccessibilityNode, GuiError> {
+        self.accessibility()?.get_element_properties(element_id).await
+    }
+
+    pub async fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+    ) -> Result<(), GuiError> {
+        self.accessibility()?.invoke_element_action(element_id, action).await
+    }
+
     // ── OCR ─────────────────────────────────────────────────────────
 
     #[cfg(feature = "ocr")]

@@ -47,6 +47,39 @@ pub(crate) async fn handle_find_ui_element(
     }
 }
 
+/// Resolve a single element by the id handed out by `accessibility_tree` /
+/// `accessibility_find` and return its current properties.
+pub(crate) async fn handle_element_properties(
+    client: &GuiClient,
+    args: &Value,
+) -> Result<ToolResult, String> {
+    let id = super::str_arg(args, "element_id")?;
+    let node = client
+        .get_element_properties(id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ToolResult::text(
+        serde_json::to_string_pretty(&node).unwrap_or_default(),
+    ))
+}
+
+/// Invoke a named action on an element resolved by id (e.g. "invoke"/"press"
+/// on a button). The element id must come from the most recent tree walk.
+pub(crate) async fn handle_element_action(
+    client: &GuiClient,
+    args: &Value,
+) -> Result<ToolResult, String> {
+    let id = super::str_arg(args, "element_id")?;
+    let action = super::str_arg(args, "action")?;
+    client
+        .invoke_element_action(id, action)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ToolResult::text(format!(
+        "Invoked '{action}' on element {id}."
+    )))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Template matching handlers
 // ═══════════════════════════════════════════════════════════════════════════

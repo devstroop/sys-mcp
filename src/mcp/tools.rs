@@ -268,6 +268,29 @@ pub fn all_tools() -> Vec<Value> {
                 }
             }
         }),
+        json!({
+            "name": "accessibility_properties",
+            "description": "Get the current properties of a single accessibility element by its id. The id must come from the most recent accessibility_tree or accessibility_find call — ids are invalidated by a new tree walk. Returns the element's role, name, value, position, available actions, and states without re-walking its subtree.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "element_id": { "type": "string", "description": "Element id from a prior accessibility_tree / accessibility_find result." }
+                },
+                "required": ["element_id"]
+            }
+        }),
+        json!({
+            "name": "accessibility_action",
+            "description": "Invoke a named action on an accessibility element by id (e.g. 'invoke'/'press'/'click' on a button, 'focus', 'increment'/'decrement' on a spinner, or a raw platform action name reported in the element's actions list). The id must come from the most recent accessibility_tree or accessibility_find call. Prefer this over coordinate clicks when the element exposes the action directly.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "element_id": { "type": "string", "description": "Element id from a prior accessibility_tree / accessibility_find result." },
+                    "action": { "type": "string", "description": "Action to invoke. Common verbs: invoke, press, click, focus, increment, decrement, close, minimize, maximize, restore. Or pass a raw action name from the element's actions list (e.g. 'AXPress')." }
+                },
+                "required": ["element_id", "action"]
+            }
+        }),
         // ── Template Matching ──────────────────────────────────────────
         // Implemented via the vendored rustautogui submodule (CPU FFT
         // normalized cross-correlation; the `opencl` feature is NOT needed).

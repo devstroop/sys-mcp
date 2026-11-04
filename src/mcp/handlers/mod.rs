@@ -64,6 +64,8 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         // Accessibility
         "accessibility_tree" => accessibility::handle_accessibility_tree(client, &args).await,
         "accessibility_find" => accessibility::handle_find_ui_element(client, &args).await,
+        "accessibility_properties" => accessibility::handle_element_properties(client, &args).await,
+        "accessibility_action" => accessibility::handle_element_action(client, &args).await,
 
         // Template matching
         "vision_find_image" => vision::handle_find_image(client, &args).await,

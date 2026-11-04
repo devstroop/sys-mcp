@@ -1,5 +1,8 @@
 use std::ffi::c_void;
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use core_foundation::base::{CFIndex, CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::CFDictionary;
@@ -10,7 +13,19 @@ use objc::{class, msg_send, sel, sel_impl};
 use crate::error::GuiError;
 use crate::gui::types::*;
 
-pub struct PlatformAccessibility;
+pub struct PlatformAccessibility {
+    /// Retained AXUIElementRefs keyed by the id handed out in the last tree
+    /// walk, so a later get_element_properties / invoke_element_action can
+    /// resolve an id back to a still-valid element instead of a dangling
+    /// pointer. Bounded to one tree: cleared on each get_tree and on Drop.
+    cache: Mutex<HashMap<String, *mut c_void>>,
+}
+
+// SAFETY: the only shared state is `cache`, guarded by a Mutex. The retained
+// AXUIElementRefs are opaque CF handles with no thread affinity, and every
+// access goes through the lock, so moving/sharing across threads is sound.
+unsafe impl Send for PlatformAccessibility {}
+unsafe impl Sync for PlatformAccessibility {}
 
 extern "C" {
     fn AXUIElementCreateApplication(pid: u32) -> *mut c_void;
@@ -20,14 +35,18 @@ extern "C" {
         value: *mut *mut c_void,
     ) -> i32;
     fn AXUIElementCopyActionNames(element: *const c_void, names: *mut *mut c_void) -> i32;
+    fn AXUIElementPerformAction(element: *const c_void, action: *const c_void) -> i32;
     fn CFArrayGetCount(array: *const c_void) -> CFIndex;
     fn CFArrayGetValueAtIndex(array: *const c_void, index: CFIndex) -> *mut c_void;
+    fn CFRetain(obj: *const c_void) -> *mut c_void;
     fn CFRelease(obj: *const c_void);
 }
 
 impl PlatformAccessibility {
     pub fn new() -> Result<Self, GuiError> {
-        Ok(Self)
+        Ok(Self {
+            cache: Mutex::new(HashMap::new()),
+        })
     }
 
     fn get_ax_focused_app() -> Result<u32, GuiError> {
@@ -246,8 +265,24 @@ impl PlatformAccessibility {
         format!("ax:{:p}", element)
     }
 
-    fn build_ax_node(element: *const c_void, depth: u32) -> Result<AccessibilityNode, GuiError> {
+    fn build_ax_node(&self, element: *const c_void, depth: u32) -> Result<AccessibilityNode, GuiError> {
         let id = Self::get_ax_element_id(element);
+
+        // Retain the element under the id we hand out so it stays valid for a
+        // later get_element_properties / invoke_element_action call. Releasing
+        // any prior entry for the same id keeps the retain count balanced.
+        unsafe {
+            let retained = CFRetain(element);
+            match self.cache.lock() {
+                Ok(mut cache) => {
+                    if let Some(old) = cache.insert(id.clone(), retained) {
+                        CFRelease(old as *const c_void);
+                    }
+                }
+                Err(_) => CFRelease(retained as *const c_void),
+            }
+        }
+
         let role =
             Self::get_ax_string_attribute(element, &CFString::new("AXRole")).unwrap_or_default();
         let name = Self::get_ax_string_attribute(element, &CFString::new("AXTitle"))
@@ -271,7 +306,7 @@ impl PlatformAccessibility {
         if depth > 0 {
             if let Ok(child_refs) = Self::get_ax_children(element) {
                 for child_ref in child_refs {
-                    if let Ok(node) = Self::build_ax_node(child_ref, depth - 1) {
+                    if let Ok(node) = self.build_ax_node(child_ref, depth - 1) {
                         children.push(node);
                     }
                 }
@@ -316,11 +351,16 @@ impl PlatformAccessibility {
         };
 
         let depth = max_depth.unwrap_or(10);
+
+        // A fresh walk invalidates every id handed out before it; release the
+        // previous tree's retained refs first (bounds the cache to one tree).
+        self.clear_cache();
+
         let app = Self::get_ax_app_ref(pid)?;
         let windows = Self::get_ax_windows(app)?;
 
         if let Some(ax_win) = windows.first() {
-            let node = Self::build_ax_node(*ax_win, depth)?;
+            let node = self.build_ax_node(*ax_win, depth)?;
             unsafe {
                 CFRelease(app as *const c_void);
             }
@@ -376,16 +416,70 @@ impl PlatformAccessibility {
         }
     }
 
-    pub fn get_element_properties(&self, _element_id: &str) -> Result<AccessibilityNode, GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "get_element_properties by ID not yet implemented on macOS".into(),
-        ))
+    /// Release every retained element in the cache.
+    fn clear_cache(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            for (_, ptr) in cache.drain() {
+                unsafe { CFRelease(ptr as *const c_void) };
+            }
+        }
     }
 
-    pub fn invoke_element_action(&self, _element_id: &str, _action: &str) -> Result<(), GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "invoke_element_action not yet implemented on macOS".into(),
-        ))
+    /// Resolve an element id handed out by the most recent `get_tree`.
+    fn lookup(&self, element_id: &str) -> Result<*mut c_void, GuiError> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| GuiError::PlatformError("accessibility cache lock poisoned".into()))?;
+        cache.get(element_id).copied().ok_or_else(|| {
+            GuiError::PlatformError(format!(
+                "element id '{element_id}' is not in the current accessibility cache; call accessibility_tree or accessibility_find again and use a fresh id"
+            ))
+        })
+    }
+
+    pub fn get_element_properties(&self, element_id: &str) -> Result<AccessibilityNode, GuiError> {
+        let element = self.lookup(element_id)?;
+        // depth 0: this element's own properties, not a re-walk of its subtree.
+        self.build_ax_node(element as *const c_void, 0)
+    }
+
+    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+        let element = self.lookup(element_id)?;
+        // Accept the raw AX action names reported in `actions` (e.g. "AXPress")
+        // plus a few obvious aliases for callers that pass a generic verb.
+        let ax_action = match action {
+            "invoke" | "press" | "click" => "AXPress",
+            "increment" | "increase" => "AXIncrement",
+            "decrement" | "decrease" => "AXDecrement",
+            other => other,
+        };
+        unsafe {
+            let name = CFString::new(ax_action);
+            let result = AXUIElementPerformAction(
+                element as *const c_void,
+                name.as_concrete_TypeRef() as *const c_void,
+            );
+            if result == 0 {
+                return Ok(());
+            }
+            let available = Self::get_ax_actions(element as *const c_void);
+            Err(GuiError::PlatformError(format!(
+                "AXUIElementPerformAction('{ax_action}') failed with AXError {result} on element '{element_id}'; available actions: [{}]",
+                available.join(", ")
+            )))
+        }
+    }
+}
+
+impl Drop for PlatformAccessibility {
+    fn drop(&mut self) {
+        // Release retained AXUIElementRefs so the cache does not leak them.
+        if let Ok(cache) = self.cache.get_mut() {
+            for (_, ptr) in cache.drain() {
+                unsafe { CFRelease(ptr as *const c_void) };
+            }
+        }
     }
 }
 

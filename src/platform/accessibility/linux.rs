@@ -255,6 +255,80 @@ impl PlatformAccessibility {
             .collect()
     }
 
+    // ── AT-SPI Action interface (element-level actions) ──────────────────
+    // The `Accessible` helpers above hardcode the interface name and take no
+    // arguments; the Action interface needs an index argument, so it gets its
+    // own small helpers rather than a generic one (avoids extra trait bounds).
+
+    /// Number of actions the element exposes (0 if it has none or does not
+    /// implement the Action interface).
+    fn get_action_count(&self, path: &OwnedObjectPath) -> i32 {
+        use zbus::blocking::Proxy;
+        let proxy = match Proxy::new(
+            &self.conn,
+            "org.a11y.atspi",
+            path.as_str(),
+            "org.a11y.atspi.Action",
+        ) {
+            Ok(p) => p,
+            Err(_) => return 0,
+        };
+        proxy
+            .call_method("GetNActions", &())
+            .ok()
+            .and_then(|m| m.body().deserialize::<i32>().ok())
+            .unwrap_or(0)
+    }
+
+    fn get_action_name(&self, path: &OwnedObjectPath, index: i32) -> Option<String> {
+        use zbus::blocking::Proxy;
+        let proxy = Proxy::new(
+            &self.conn,
+            "org.a11y.atspi",
+            path.as_str(),
+            "org.a11y.atspi.Action",
+        )
+        .ok()?;
+        proxy
+            .call_method("GetName", &(index,))
+            .ok()
+            .and_then(|m| m.body().deserialize::<String>().ok())
+            .filter(|s| !s.is_empty())
+    }
+
+    fn do_action(&self, path: &OwnedObjectPath, index: i32) -> Result<bool, GuiError> {
+        use zbus::blocking::Proxy;
+        let proxy = Proxy::new(
+            &self.conn,
+            "org.a11y.atspi",
+            path.as_str(),
+            "org.a11y.atspi.Action",
+        )
+        .map_err(|e| GuiError::PlatformError(format!("action proxy: {e}")))?;
+        proxy
+            .call_method("DoAction", &(index,))
+            .map_err(|e| GuiError::PlatformError(format!("DoAction failed: {e}")))?
+            .body()
+            .deserialize::<bool>()
+            .map_err(|e| GuiError::PlatformError(format!("DoAction body: {e}")))
+    }
+
+    fn action_names(&self, path: &OwnedObjectPath) -> Vec<String> {
+        (0..self.get_action_count(path))
+            .filter_map(|i| self.get_action_name(path, i))
+            .collect()
+    }
+
+    /// Element ids on Linux are AT-SPI D-Bus object paths (see `build_tree`),
+    /// so they resolve directly — no cache or re-walk needed.
+    fn parse_path(element_id: &str) -> Result<OwnedObjectPath, GuiError> {
+        element_id.try_into().map_err(|_| {
+            GuiError::PlatformError(format!(
+                "invalid element id '{element_id}': expected an AT-SPI object path exactly as returned by accessibility_tree / accessibility_find"
+            ))
+        })
+    }
+
     fn build_tree(
         &self,
         path: &OwnedObjectPath,
@@ -350,15 +424,35 @@ impl PlatformAccessibility {
         }
     }
 
-    pub fn get_element_properties(&self, _element_id: &str) -> Result<AccessibilityNode, GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "get_element_properties by ID not supported yet".into(),
-        ))
+    pub fn get_element_properties(&self, element_id: &str) -> Result<AccessibilityNode, GuiError> {
+        let path = Self::parse_path(element_id)?;
+        let mut node = self.build_tree(&path, 0)?;
+        // `build_tree` deliberately leaves `actions` empty: querying the Action
+        // interface for every node would add a D-Bus round-trip per element to
+        // every tree walk. Fill it in for the single element asked about here.
+        node.actions = self.action_names(&path);
+        Ok(node)
     }
 
-    pub fn invoke_element_action(&self, _element_id: &str, _action: &str) -> Result<(), GuiError> {
-        Err(GuiError::UnsupportedCapability(
-            "invoke_element_action not supported yet".into(),
-        ))
+    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+        let path = Self::parse_path(element_id)?;
+        let names = self.action_names(&path);
+        let index = names
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(action))
+            .ok_or_else(|| {
+                GuiError::PlatformError(format!(
+                    "action '{action}' is not available on element '{element_id}'; available actions: [{}]",
+                    names.join(", ")
+                ))
+            })? as i32;
+
+        if self.do_action(&path, index)? {
+            Ok(())
+        } else {
+            Err(GuiError::PlatformError(format!(
+                "AT-SPI refused DoAction({index} = '{action}') on element '{element_id}'"
+            )))
+        }
     }
 }
