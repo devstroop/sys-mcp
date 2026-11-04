@@ -187,13 +187,19 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
 /// call must not proceed (held for confirmation, or denied by the Rust
 /// denylist), `None` to dispatch normally.
 ///
-/// Layer order (see `decision::guard` docs): hardcoded Rust denylist first
-/// (never bypassed, model-free, offline), then the caller's `confirm: true`
-/// acknowledgment (bypasses only the model check), then the JEV `noul`
-/// judgment. Model failure fails *open* — a decision model must not become
-/// an availability single point of failure — but the denylist still applies.
+/// Layer order (see `decision::guard` docs): the hardcoded Rust denylist runs
+/// first — model-free, offline, applied to every tool it can inspect
+/// regardless of `--jev-guard-tools`, and never bypassed by `confirm: true` or
+/// by the model. Then the JEV `noul` judgment runs for tools in the guarded
+/// set, which the caller's `confirm: true` acknowledgment skips.
+///
+/// When the model cannot be consulted the configured `--jev-guard-fail-mode`
+/// decides on *every* path that cannot reach it: `closed` (the default) holds
+/// the call for a human, `open` lets it through with the judgment skipped.
+/// Under `closed` a guard failure is never a silent allow.
 #[cfg(feature = "jev")]
 async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
+    use crate::config::GuardFailMode;
     use crate::decision::client::DecisionClient;
     use crate::decision::guard::{self, GuardAction};
 
@@ -201,7 +207,20 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
     if !config.guardrails {
         return None; // guardrails off (the default) — behave exactly as before
     }
-    // The decision tools are never guarded. `decision` and `decision_rank`
+
+    // Layer 1: hard Rust denylist. Runs before the guarded-set check on
+    // purpose: narrowing `--jev-guard-tools` shrinks what the *model* judges
+    // and must not be able to delete a deterministic block. Applies before any
+    // network call, so it holds with the model unreachable, and is never
+    // bypassed by `confirm: true`.
+    if let Some(verdict) = guard::check_denylist(tool_name, args) {
+        return Some(ToolResult::error(format!(
+            "Refused by the JEV guard denylist: {tool_name} matched a hard-blocked destructive pattern ({}). This is deterministic Rust policy and cannot be overridden with confirm=true.",
+            verdict.reason
+        )));
+    }
+
+    // The decision tools are never judged. `decision` and `decision_rank`
     // would recurse if they were; `decision_stats` reads local bookkeeping
     // only. `ui_decide` has its own, stricter gates inside the loop
     // (irreversible-action confirmation, freshness, literal-only typing), so
@@ -217,15 +236,6 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
         return None;
     }
 
-    // Layer 1: hard Rust denylist. Applies before any network call and is
-    // never bypassed by `confirm: true` or by the model.
-    if let Some(verdict) = guard::check_denylist(tool_name, args) {
-        return Some(ToolResult::error(format!(
-            "Refused by the JEV guard denylist: {tool_name} matched a hard-blocked destructive pattern ({}). This is deterministic Rust policy and cannot be overridden with confirm=true.",
-            verdict.reason
-        )));
-    }
-
     // Layer 3 (caller confirmation) skips the model judgment entirely — no
     // network call, no score. The denylist above still applied.
     if guard::confirm_requested(args) {
@@ -235,13 +245,27 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
         return None;
     }
 
-    // Layer 2: one `noul` judgment against the redacted state.
+    // Layer 2: one `noul` judgment against the redacted state. Two paths can
+    // fail to consult the model — building the client and the assessment call
+    // itself — and both obey the configured fail mode, so a bad endpoint,
+    // timeout or key cannot quietly turn a `closed` guard into no guard at all.
+    let fail_open = matches!(config.guard_fail_mode, GuardFailMode::Open);
+    let held = |why: String| {
+        Some(ToolResult::error(format!(
+            "Action held for confirmation by the JEV guard: {tool_name} could not be judged ({why}). Nothing was executed; the Rust denylist was applied. If this action is intended, re-call {tool_name} with the same arguments plus \"confirm\": true; otherwise drop the call."
+        )))
+    };
     let client = match DecisionClient::new(&config) {
         Ok(c) => c,
         Err(e) => {
-            // Fail open (denylist already applied).
-            log::warn!("JEV guard skipped for {tool_name}: failed to build decision client: {e}");
-            return None;
+            log::warn!(
+                "JEV guard: cannot build decision client for {tool_name}: {e} (fail mode = {:?})",
+                config.guard_fail_mode
+            );
+            if fail_open {
+                return None;
+            }
+            return held(format!("decision client could not be created: {e}"));
         }
     };
     match guard::assess(&client, tool_name, args).await {
@@ -259,10 +283,18 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
             ))),
         },
         Err(e) => {
-            // `assess` fail-opens internally; this arm is defensive. Do not
-            // block the user on guard plumbing errors.
-            log::warn!("JEV guard assess failed for {tool_name}: {e} (failing open)");
-            None
+            // `assess` maps every model outcome to `Ok`, so reaching here means
+            // the guard plumbing itself failed. Same policy as above: this is a
+            // "could not consult the model" path, not a licence to proceed.
+            log::warn!(
+                "JEV guard: assess failed for {tool_name}: {e} (fail mode = {:?})",
+                config.guard_fail_mode
+            );
+            if fail_open {
+                None
+            } else {
+                held(format!("guard assessment failed: {e}"))
+            }
         }
     }
 }

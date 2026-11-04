@@ -1,7 +1,7 @@
 # Issues & Next-Phase Development Gaps (sys-mcp)
 
 **Last verified: 2026-11-05** — every status below was checked against the code in this worktree.
-Issues #35–#45 are the output of a full source audit of branch `feat/ocr-onnx-a11y-tools` @ `343ff06`
+Issues #35–#46 are the output of a full source audit of branch `feat/ocr-onnx-a11y-tools` @ `343ff06`
 (72 declared tools, 3 platform backends, 2 guard layers, both workflows); each carries the file:line
 it was read from.
 
@@ -54,8 +54,8 @@ it was read from.
 | 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
 | 33 | `screen_read` returned crop-relative coordinates for region reads, so `mouse_click` missed the target | ✅ Fixed |
 | 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | 🟡 Open |
-| 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | 🔴 Open |
-| 36 | Guard fail-mode is ignored on the decision-client construction path (fails open) | 🔴 Open |
+| 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | ✅ Fixed |
+| 36 | Guard fail-mode is ignored on the decision-client construction path (fails open) | ✅ Fixed |
 | 37 | Windows window enumeration never resolves `process_name` | ✅ Fixed |
 | 38 | Windows accessibility exposes no value/description/state and only Invoke + Window patterns | ✅ Fixed |
 | 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | ✅ Fixed |
@@ -101,14 +101,14 @@ carries the *crop* dimensions and reporting them as the screen size put `cy` bey
 
 **Files:** `src/decision/guard.rs` (`guarded_tools`, `check_denylist`), `src/mcp/handlers/shell.rs` (`handle_shell_write`)
 **Problem (verified 2026-11-05):** the destructive-command denylist matches patterns (`format `, `diskpart`, `rm -rf /`, `mkfs`, …) only against the `command` argument of `shell_exec`, and `guarded_tools()` is `shell_exec, fs_delete, process_kill, service_stop, service_start, process_start` — `shell_write` is in neither set. `handle_shell_write` pushes raw bytes into a live PTY session created by `shell_open`. So `shell_open` → `shell_write "format C: /q"` executes with **zero** denylist coverage, which is the layer documented as "never bypassed by `confirm: true`". The same shape applies to `fs_write` (overwrite any path) and `mcp_exec` (arbitrary tool call on a registered child server).
-**Status:** 🟡 Open — route `shell_write`'s `input` through `deny_reason_for_command`, add `shell_write` to the default guarded set, and decide explicitly whether `fs_write` / `mcp_exec` belong there too.
+**Status:** ✅ Fixed — `shell_write` joins the default guarded set, its `input` goes through the same `deny_reason_for_command` patterns as `shell_exec`'s `command`, and its schema now declares the `confirm` property the held-call message tells the caller to use (drift test `guarded_tool_schemas_advertise_confirm` enforces that). Two structural changes came out of the same hole: **the denylist is now keyed on what a tool does, not on the guarded set** — `guard_gate` checks it *before* `is_guarded`, so narrowing `--jev-guard-tools` can no longer delete a deterministic block — and `fs_write` is consequently covered by the path rules (overwriting `C:\Windows\…` is as fatal as deleting it) **without** being model-judged, deliberately: routine file writing is the main agent workflow and a network round trip per write would make the guard useless. `mcp_exec` stays out of both sets — its arguments are a *child server's* tool name and payload, which this process has no vocabulary to classify; when the child is a sys-mcp instance the child applies its own guard, and a non-sys-mcp child is trusted by construction. Known, documented limitation: pattern matching is **per call**, so input split across several `shell_write` calls into one PTY is never assembled here — that case is left to the model layer, and `DESTRUCTIVE_COMMAND_PATTERNS`' doc says so. Covered by `denylist_covers_shell_write_input`, `denylist_covers_fs_write_paths`, `shell_write_input_is_screened_by_the_command_denylist` and `denylist_applies_to_tools_outside_the_guarded_set`.
 **Severity:** 🔴 Critical — the guard's hardest guarantee is bypassable by the tool with the same name prefix.
 
 ### 36. Guard fail-mode is ignored on the decision-client construction path (fails open)
 
 **File:** `src/mcp/handlers/mod.rs` (`guard_gate`)
 **Problem (verified 2026-11-05):** `assess_with` honours `--jev-guard-fail-mode` correctly — a model transport failure under the default `GuardFailMode::Closed` returns `Ok(Confirm)` and the call is held (`src/decision/guard.rs`, live module). But the dispatcher constructs the client first, and `Err` from `DecisionClient::new(&config)` returns `None` — *proceed* — with no reference to the configured fail mode (`mod.rs` "Fail open (denylist already applied)"). A configuration mistake in endpoint/timeout/key is exactly the case where an operator who enabled `--jev-guardrails` expects a hold, and instead gets the destructive call executed. Its sibling arm `Err(e) => … (failing open)` is unreachable, because `assess` maps every outcome to `Ok`.
-**Status:** 🟡 Open — apply the configured fail mode at the client-construction site, and delete or restructure the unreachable arm so the code cannot drift from the policy again.
+**Status:** ✅ Fixed — `guard_gate` now reads `config.guard_fail_mode` on **both** paths that cannot consult the model: `DecisionClient::new` failure (held under `Closed`, skipped under `Open`) and the previously-unreachable `assess` `Err` arm, which is now routed through the same policy instead of asserting "do not block on plumbing errors". The shared `held(...)` message keeps the caller's escape hatch (`re-call with confirm: true`), so `Closed` remains a hold and never a hard block. The `guard_gate` docstring claiming "model failure fails open" is corrected to describe the configured mode. Caveat kept honest: `DecisionClient::new` only fails if `reqwest::Client::builder().build()` fails, which is not reachable from a test without injecting the constructor, so that arm is verified by inspection plus the end-to-end `handler_fails_closed_when_model_unreachable` test that exercises the sibling path through the dispatcher.
 **Severity:** 🔴 Critical — a safety control that silently becomes a no-op under misconfiguration.
 
 ---

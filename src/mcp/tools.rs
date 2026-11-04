@@ -580,12 +580,13 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "shell_write",
-            "description": "Write input to an open shell session. Use the session_id from shell_open. Send commands followed by newline to execute.",
+            "description": "Write input to an open shell session. Use the session_id from shell_open. Send commands followed by newline to execute. Input reaches the same interpreter as shell_exec, so it is screened by the same destructive-command rules.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "session_id": { "type": "string", "description": "Session ID from shell_open." },
-                    "input": { "type": "string", "description": "Input to send to the shell (append newline to execute)." }
+                    "input": { "type": "string", "description": "Input to send to the shell (append newline to execute)." },
+                    "confirm": { "type": "boolean", "description": "Set true to acknowledge a held destructive action." }
                 },
                 "required": ["session_id", "input"]
             }
