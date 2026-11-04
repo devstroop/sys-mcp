@@ -31,10 +31,7 @@ pub(crate) async fn handle_read_screen(
                 .map_err(|e| e.to_string())?;
             (shot, Some((region.x as i32, region.y as i32)))
         } else {
-            (
-                client.screenshot().await.map_err(|e| e.to_string())?,
-                None,
-            )
+            (client.screenshot().await.map_err(|e| e.to_string())?, None)
         };
 
         let mut result = tokio::task::spawn_blocking(move || ocr::read_screen(&shot))
@@ -55,10 +52,7 @@ pub(crate) async fn handle_read_screen(
                     result.screen_width, result.screen_height
                 )
             }
-            None => format!(
-                "Screen {}x{}",
-                result.screen_width, result.screen_height
-            ),
+            None => format!("Screen {}x{}", result.screen_width, result.screen_height),
         };
 
         let detail = args.get("detail").and_then(Value::as_str).unwrap_or("full");

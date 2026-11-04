@@ -265,7 +265,11 @@ impl PlatformAccessibility {
         format!("ax:{:p}", element)
     }
 
-    fn build_ax_node(&self, element: *const c_void, depth: u32) -> Result<AccessibilityNode, GuiError> {
+    fn build_ax_node(
+        &self,
+        element: *const c_void,
+        depth: u32,
+    ) -> Result<AccessibilityNode, GuiError> {
         let id = Self::get_ax_element_id(element);
 
         // Retain the element under the id we hand out so it stays valid for a

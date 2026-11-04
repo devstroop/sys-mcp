@@ -247,7 +247,9 @@ impl GuiClient {
         &self,
         element_id: &str,
     ) -> Result<AccessibilityNode, GuiError> {
-        self.accessibility()?.get_element_properties(element_id).await
+        self.accessibility()?
+            .get_element_properties(element_id)
+            .await
     }
 
     pub async fn invoke_element_action(
@@ -255,7 +257,9 @@ impl GuiClient {
         element_id: &str,
         action: &str,
     ) -> Result<(), GuiError> {
-        self.accessibility()?.invoke_element_action(element_id, action).await
+        self.accessibility()?
+            .invoke_element_action(element_id, action)
+            .await
     }
 
     // ── OCR ─────────────────────────────────────────────────────────

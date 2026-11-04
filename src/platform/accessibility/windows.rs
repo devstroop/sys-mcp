@@ -1,19 +1,20 @@
+use windows::core::Interface;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, TreeScope_Children,
-    UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
-    UIA_EditControlTypeId, UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId,
-    UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId,
-    UIA_ScrollBarControlTypeId, UIA_SliderControlTypeId, UIA_StatusBarControlTypeId,
-    UIA_TabControlTypeId, UIA_TableControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
-    UIA_TreeItemControlTypeId, UIA_WindowControlTypeId, UIA_WindowPatternId, UIA_CONTROLTYPE_ID,
-    IUIAutomationInvokePattern, IUIAutomationWindowPattern, WindowVisualState_Maximized,
-    WindowVisualState_Minimized, WindowVisualState_Normal,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+    IUIAutomationWindowPattern, TreeScope_Children, UIA_ButtonControlTypeId,
+    UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_EditControlTypeId,
+    UIA_HeaderControlTypeId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId,
+    UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
+    UIA_SliderControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
+    UIA_TableControlTypeId, UIA_ToolBarControlTypeId, UIA_TreeControlTypeId,
+    UIA_TreeItemControlTypeId, UIA_WindowControlTypeId, UIA_WindowPatternId,
+    WindowVisualState_Maximized, WindowVisualState_Minimized, WindowVisualState_Normal,
+    UIA_CONTROLTYPE_ID,
 };
-use windows::core::Interface;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
