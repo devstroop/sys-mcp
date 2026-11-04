@@ -35,9 +35,15 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 tract-onnx = { version = "0.23", optional = true }
 
 # OCR (optional, on by default)
-ocrs = { version = "0.10", default-features = false, optional = true }
-rten = { version = "0.21", optional = true }
-rten-tensor = { version = "0.21", optional = true }
+# ocrs 0.13 loads ONNX models (the `.rten` format + its S3 URLs are dead).
+# `default-features = false` drops ocrs's default `rten`(.rten_format) feature;
+# we explicitly enable `onnx` (= rten/onnx_format) so `Model::load_file` can
+# read the `.onnx` weights. rten/rten-tensor are pinned to 0.26 to match the
+# version ocrs 0.13 depends on, so the whole tree resolves to a single rten
+# and the `rten::Model` we build is the same type `OcrEngineParams` expects.
+ocrs = { version = "0.13", default-features = false, features = ["onnx"], optional = true }
+rten = { version = "0.26", optional = true }
+rten-tensor = { version = "0.26", optional = true }
 ureq = { version = "3", optional = true }
 dirs-next = { version = "2", optional = true }
 
@@ -45,9 +51,10 @@ dirs-next = { version = "2", optional = true }
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
 
-# JEV decision client (optional, off by default)
-# rustls so no OpenSSL toolchain is needed on any platform; the local
-# gateway is plain http, remote hosted endpoints are https.
+# JEV decision client (optional, on by default)
+# rustls so no OpenSSL toolchain is needed on any platform; the default
+# public gateway and remote hosted endpoints are https, a self-hosted
+# gateway may be plain http.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 # Clipboard (cross-platform)
@@ -94,6 +101,41 @@ objc = "0.2"
 [lints.rust]
 unexpected_cfgs = "allow"
 
+# ── Build profiles ─────────────────────────────────────────────────
+# OCR inference (rten tensor math + ocrs layout/recognition) is
+# compute-bound. The dev profile compiles dependencies at opt-level 0, which
+# makes a full-screen `screen_read` take minutes of wall time — enough to
+# exceed an MCP call timeout and wedge the serialized stdio transport behind
+# it. Optimizing just the crates on that hot path keeps `cargo build` (debug)
+# incremental while making OCR usable; the `sys-mcp` crate itself stays at
+# opt-level 0 so debugging symbols/behavior are unchanged.
+[profile.dev.package.ocrs]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.rten]
+opt-level = 3
+[profile.dev.package.rten-base]
+opt-level = 3
+[profile.dev.package.rten-gemm]
+opt-level = 3
+[profile.dev.package.rten-imageproc]
+opt-level = 3
+[profile.dev.package.rten-model-file]
+opt-level = 3
+[profile.dev.package.rten-onnx]
+opt-level = 3
+[profile.dev.package.rten-parallel]
+opt-level = 3
+[profile.dev.package.rten-shape-inference]
+opt-level = 3
+[profile.dev.package.rten-simd]
+opt-level = 3
+[profile.dev.package.rten-tensor]
+opt-level = 3
+[profile.dev.package.rten-vecmath]
+opt-level = 3
+
 [lints.clippy]
 # The `#[async_trait]` macro emits a message-less `#[must_use]` on the methods
 # it generates, and those methods return `Result` (already `#[must_use]`).
@@ -108,13 +150,17 @@ result_large_err = "allow"
 # `detection` is intentionally NOT default: it is the single heaviest feature
 # (~+56 of 262 crates) and downloads a ~12 MB YOLOv8n model on first use.
 # Re-enable with `--features detection` — see README "Build profiles".
-default = ["ocr", "clipboard", "web-preview"]
+default = ["ocr", "clipboard", "web-preview", "jev"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
 clipboard = ["dep:arboard"]
 web-preview = ["dep:axum", "dep:tower-http"]
 detection = ["dep:tract-onnx", "dep:ureq", "dep:dirs-next"]
-# JEV (TypeSafe System One) decision tool. Intentionally NOT in the
-# default feature set yet — enable with --features jev.
+# JEV (TypeSafe System One) decision tool. In the DEFAULT feature set: the
+# public OpenCode gateway (jev-1.13-free, Bearer public) is free and needs no
+# setup, so `decision` / `decision_rank` / `decision_stats` / `ui_decide` work
+# out of the box. Adds reqwest (rustls-tls). Guardrails and the ui_decide loop
+# stay OFF at runtime behind --jev-guardrails / --jev-ui-loop regardless.
+# Drop it from a slim build with --no-default-features.
 jev = ["dep:reqwest"]
 opencl = ["rustautogui/opencl"]
 ml = []
