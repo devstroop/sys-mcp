@@ -3,7 +3,7 @@ use crate::gui::GuiClient;
 use crate::mcp::handlers::{json_pretty, opt_str_array, str_arg, u64_arg};
 use crate::protocol::mcp::ToolResult;
 use crate::sysinfo::ProcessManager;
-use crate::system::{LogViewer, NetworkManager, ServiceManager, SystemMonitor};
+use crate::system::{LogLevel, LogViewer, NetworkManager, ServiceManager, SystemMonitor};
 use serde_json::Value;
 
 pub(crate) async fn handle_system_info(client: &GuiClient) -> Result<ToolResult, String> {
@@ -174,15 +174,69 @@ pub(crate) async fn handle_disk_usage(_client: &GuiClient) -> Result<ToolResult,
 // Log Viewer
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Longest `system_logs` request the tool will serve. Above this the call is
+/// refused rather than silently capped: returning fewer entries than were asked
+/// for is indistinguishable from a short log.
+const MAX_LOG_COUNT: u64 = 1000;
+
 pub(crate) async fn handle_system_logs(
     _client: &GuiClient,
     args: &Value,
 ) -> Result<ToolResult, String> {
-    let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
-    let level = args.get("level").and_then(|v| v.as_str()).map(String::from);
+    let count = match args.get("count") {
+        None | Some(Value::Null) => 50,
+        Some(v) => match v.as_u64() {
+            Some(0) | None => {
+                return Err(format!(
+                    "invalid argument: 'count' must be a whole number between 1 and {MAX_LOG_COUNT}, got {v}"
+                ))
+            }
+            Some(n) if n > MAX_LOG_COUNT => {
+                return Err(format!(
+                    "invalid argument: 'count' = {n} exceeds the {MAX_LOG_COUNT}-entry limit for system_logs"
+                ))
+            }
+            Some(n) => n as usize,
+        },
+    };
 
-    let logs = tokio::task::spawn_blocking(move || LogViewer::get_system_logs(count, level))
+    // Absent means every level. It used to mean "Information", which returned a
+    // reassuring list of informational events while hiding every error.
+    let level = match args.get("level") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(raw)) => Some(LogLevel::parse(raw).ok_or_else(|| format!(
+            "invalid argument: 'level' = {raw:?} is not a known severity. Use Critical, Error, Warning, Information or Verbose, or omit 'level' to read them all."
+        ))?),
+        Some(v) => return Err(format!("invalid argument: 'level' must be a string, got {v}")),
+    };
+
+    let log = match args.get("log") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(raw)) => Some(raw.clone()),
+        Some(v) => return Err(format!("invalid argument: 'log' must be a string, got {v}")),
+    };
+
+    // Composed before the call moves its arguments into the blocking closure,
+    // so the empty-result message can name the filter that produced it.
+    let filter_text = format!(
+        "{}{}",
+        match &level {
+            Some(level) => format!("level {} ", level.as_str()),
+            None => "every level ".to_string(),
+        },
+        match &log {
+            Some(log) => format!("in the '{log}' log"),
+            None => "in the platform log".to_string(),
+        }
+    );
+
+    let logs = tokio::task::spawn_blocking(move || LogViewer::get_system_logs(count, level, log))
         .await
-        .map_err(|e| format!("System logs task failed: {e}"))?;
+        .map_err(|e| format!("System logs task failed: {e}"))??;
+    if logs.is_empty() {
+        // Say so in words: an empty array alone cannot tell "the log is clean"
+        // from "the filter matched nothing".
+        return Ok(ToolResult::text(format!("No entries for {filter_text}.")));
+    }
     Ok(ToolResult::text(json_pretty(&logs)?))
 }

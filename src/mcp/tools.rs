@@ -816,12 +816,13 @@ pub fn all_tools() -> Vec<Value> {
         // ── Log Viewer ──────────────────────────────────────────────────────
         json!({
             "name": "system_logs",
-            "description": "Read system/event logs. Shows recent log entries with timestamp, source, level, and message. Filter by level (Error, Warning, Information).",
+            "description": "Read the platform event log, newest entries first, with timestamp, source, level and message. Omitting 'level' returns EVERY level — including Error and Warning — so a bare call is a real sweep, not an information-only view that hides failures. On Windows 'log' picks the event log (default 'System'; pass 'Application' for application crashes, 'Security' for sign-in events); on Linux/macOS passing 'log' is an error rather than an ignored argument. journald and the macOS unified log treat 'level' as a threshold (that severity and above), while Windows matches the exact level. An empty result says so in words; a failure to read the log returns an error instead of an empty list.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "count": { "type": "integer", "description": "Number of log entries to return (default 50).", "default": 50 },
-                    "level": { "type": "string", "enum": ["Error", "Warning", "Information"], "description": "Filter by log level (optional)." }
+                    "count": { "type": "integer", "description": "Number of log entries to return (default 50, max 1000).", "default": 50 },
+                    "level": { "type": "string", "enum": ["Critical", "Error", "Warning", "Information", "Verbose"], "description": "Severity to read (optional). Omit for every level." },
+                    "log": { "type": "string", "description": "Windows event log name, e.g. 'System' (default), 'Application', 'Security'. Error on Linux/macOS." }
                 }
             }
         }),

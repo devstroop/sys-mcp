@@ -828,6 +828,139 @@ async fn test_mcp_register_rejects_non_array_args() {
     );
 }
 
+// ─── system_logs argument handling (issue #41) ────────────────────────────
+
+#[tokio::test]
+async fn test_system_logs_rejects_unusable_count() {
+    let client = test_client();
+    for args in [
+        json!({"count": 0}),
+        json!({"count": 1001}),
+        json!({"count": "50"}),
+        json!({"count": -3}),
+    ] {
+        let result = handle_tool_call(&client, "system_logs", args.clone()).await;
+        assert_eq!(result.is_error, Some(true), "{args} must be refused");
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("'count'"),
+            "{args} should be a count error, got: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_system_logs_rejects_unknown_level_instead_of_defaulting_it() {
+    let client = test_client();
+    // The old code sent any unrecognized level to `Level=4`, so a request for
+    // Critical came back as a list of Information events.
+    let result = handle_tool_call(&client, "system_logs", json!({"level": "severe"})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("'level'"), "got: {text}");
+    assert!(
+        text.contains("omit 'level' to read them all"),
+        "the error must teach the caller the default, got: {text}"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_system_logs_reads_the_application_log() {
+    let client = test_client();
+    // A real query: the Application log is where a crashing application lands,
+    // and it used to be unreachable although the tool is advertised as reading
+    // "system/event logs". Whether entries exist depends on the machine, so
+    // assert the query was accepted, not that it found something.
+    let result = handle_tool_call(
+        &client,
+        "system_logs",
+        json!({"count": 5, "level": "Error", "log": "Application"}),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "a valid query must not fail: {text}");
+    // The payload has to be the entries, not a successful-looking empty answer:
+    // the script interpolates `$_` into a PowerShell calculated property, which
+    // only survives argument marshalling if the whole pipeline is intact.
+    // "No entries for …" is the other legitimate outcome, asserted around it.
+    if !text.starts_with("No entries for") {
+        let parsed: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|e| panic!("system_logs must return a JSON array ({e}): {text}"));
+        let entries = parsed
+            .as_array()
+            .unwrap_or_else(|| panic!("expected an array of log entries: {text}"));
+        assert!(!entries.is_empty(), "parsed an empty array from: {text}");
+        for entry in entries {
+            let timestamp = entry["timestamp"].as_str().unwrap_or("");
+            assert!(
+                timestamp.contains('T') && timestamp.contains('+'),
+                "timestamp must be ISO 8601, got {timestamp:?} in: {text}"
+            );
+            assert_eq!(
+                entry["level"].as_str().unwrap_or(""),
+                "Error",
+                "the requested level must be the level reported: {text}"
+            );
+            assert!(
+                !entry["source"].as_str().unwrap_or("").is_empty(),
+                "ProviderName must be populated: {text}"
+            );
+        }
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_system_logs_without_a_level_is_not_an_information_only_view() {
+    let client = test_client();
+    // The default used to be `Level=4`: a bare call returned informational
+    // events and hid every error on the machine. Through the real transport the
+    // cheap, honest proof is that a bare call is accepted and answers with
+    // entries (of whatever levels this machine happens to have).
+    let result = handle_tool_call(&client, "system_logs", json!({"count": 5})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "a bare query must not fail: {text}");
+    if !text.starts_with("No entries for") {
+        let parsed: serde_json::Value =
+            serde_json::from_str(text).expect("expected a JSON array of entries");
+        assert!(
+            parsed.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            "expected entries, got: {text}"
+        );
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_system_logs_refuses_a_log_name_that_could_escape_the_filter() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "system_logs",
+        json!({"log": "Application'; Get-Process; #"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not a usable Windows event log name"),
+        "got: {text}"
+    );
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn test_system_logs_names_the_platform_it_is_on_when_log_is_unsupported() {
+    let client = test_client();
+    // `log` is a Windows concept; ignoring it would return the platform default
+    // and read as if the caller's log choice had been honored.
+    let result = handle_tool_call(&client, "system_logs", json!({"log": "Application"})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("Windows event log"), "got: {text}");
+}
+
 #[tokio::test]
 async fn test_service_start_nonexistent_service_errors() {
     let client = test_client();
