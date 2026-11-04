@@ -147,9 +147,11 @@ double_must_use = "allow"
 result_large_err = "allow"
 
 [features]
-# `detection` is intentionally NOT default: it is the single heaviest feature
-# (~+56 of 262 crates) and downloads a ~12 MB YOLOv8n model on first use.
-# Re-enable with `--features detection` — see README "Build profiles".
+# `detection` is intentionally NOT default: it adds a second ONNX runtime
+# (`tract-onnx`) alongside the `rten` one OCR already carries, costs +56
+# packages alone (second only to `jev` at +59; see README "Build profiles"),
+# and downloads a ~12 MB YOLOv8n model on first use.
+# Re-enable with `--features detection`.
 default = ["ocr", "clipboard", "web-preview", "jev"]
 ocr = ["dep:ocrs", "dep:rten", "dep:rten-tensor", "dep:ureq", "dep:dirs-next"]
 clipboard = ["dep:arboard"]

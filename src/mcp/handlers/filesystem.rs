@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::gui::GuiClient;
 use crate::mcp::handlers::ui;
 use crate::mcp::handlers::{json_pretty, str_arg};

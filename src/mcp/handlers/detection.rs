@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #[cfg(feature = "detection")]
 use crate::gui::types::*;
 use crate::gui::GuiClient;

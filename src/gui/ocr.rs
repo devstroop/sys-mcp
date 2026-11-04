@@ -32,9 +32,9 @@ pub struct OcrWord {
     pub y: i32,
     pub width: i32,
     pub height: i32,
-    /// Center x — use this directly for `gui_click`.
+    /// Center x — use this directly for `mouse_click`.
     pub cx: i32,
-    /// Center y — use this directly for `gui_click`.
+    /// Center y — use this directly for `mouse_click`.
     pub cy: i32,
 }
 
@@ -45,9 +45,9 @@ pub struct OcrMatch {
     pub y: i32,
     pub width: i32,
     pub height: i32,
-    /// Center x — use this for `gui_click`.
+    /// Center x — use this for `mouse_click`.
     pub cx: i32,
-    /// Center y — use this for `gui_click`.
+    /// Center y — use this for `mouse_click`.
     pub cy: i32,
     pub line_text: String,
 }

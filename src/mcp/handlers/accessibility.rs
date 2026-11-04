@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::gui::types::*;
 use crate::gui::GuiClient;
 use crate::mcp::handlers::json_pretty;
@@ -78,6 +77,6 @@ pub(crate) async fn handle_element_action(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// (the vision/template-matching handlers live in `vision.rs`; this module is
-// accessibility only — see issue #45 for the stale banner this used to be)
+// This module is accessibility only; the vision / template-matching handlers
+// live in `vision.rs`.
 // ═══════════════════════════════════════════════════════════════════════════

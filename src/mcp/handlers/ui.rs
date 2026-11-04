@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #[cfg(feature = "ocr")]
 use crate::gui::ocr;
 use crate::gui::types::*;

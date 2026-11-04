@@ -29,23 +29,31 @@ cargo build --release
 
 ### Build profiles
 
-Every optional capability is a cargo feature. The default set pulls in **223
-crates**; a slim build needs only **168**.
+Every optional capability is a cargo feature. The default set resolves **256
+packages**; a slim build needs **167**.
 
-Measured dependency cost per feature (crate counts, default build = 223):
+Dependency cost per feature, measured with `cargo tree -e normal` (unique
+`name@version` packages, counting `sys-mcp` itself) on Windows x86_64:
 
-| Feature | Crates | Adds | Provides |
+| Feature | Total | Adds | Provides |
 |---|---|---|---|
-| *(none)* | 168 | — | core: screen, input, windows, fs, shell, process/service, monitoring |
-| `clipboard` | 168 | ~5 | `clipboard_get` / `clipboard_set` |
-| `web-preview` | 195 | +27 | `web_preview`, HTTP transport |
-| `ocr` | 196 | +28 | `screen_read`, `screen_find_text`, `screen_scroll_to_text` |
-| `jev` | default | +reqwest/rustls | `decision`, `decision_rank`, `decision_stats`, `ui_decide` |
-| `detection` | 224 | +56 | `detect_objects`, `detect_click_object` |
+| *(none)* | 167 | — | core: screen, input, windows, fs, shell, process/service, monitoring |
+| `clipboard` | 170 | +3 | `clipboard_get` / `clipboard_set` |
+| `web-preview` | 194 | +27 | `web_preview`, HTTP transport |
+| `ocr` | 199 | +32 | `screen_read`, `screen_find_text`, `screen_scroll_to_text` |
+| `jev` | 226 | +59 | `decision`, `decision_rank`, `decision_stats`, `ui_decide` |
+| `detection` | 223 | +56 | `detect_objects`, `detect_click_object` |
+| `opencl` | 178 | +11 | OpenCL image matching inside the vendored `rustautogui` |
+| `ml` | 167 | +0 | **inert** — no dependencies, no `cfg(feature = "ml")` site |
+| **default** (`ocr`+`clipboard`+`web-preview`+`jev`) | **256** | +89 | everything except `detection` |
+| default + `detection` | 295 | +39 | full build |
 
-> The crate counts above were measured before `jev` joined the default set;
-> the totals (223 default / 168 slim) predate it and should be re-measured
-> with `cargo tree` on the next build.
+> The "Adds" column is each feature measured **alone** against a slim build.
+> Marginals do not sum: the default set lands at +89, not the +121 you get by
+> adding the four columns, because `ureq`, `dirs-next` and the TLS stack are
+> shared. `detection` costs +56 alone but only +39 on top of the default set.
+> Counts are host-platform resolutions — the same graph on Linux or macOS
+> differs by a few crates (target-specific dependencies).
 
 `jev` **is** in the default set: it points at the public OpenCode gateway
 (`jev-1.13-free`, `Bearer public`) which is free and needs no setup, so the
@@ -54,10 +62,11 @@ OpenSSL toolchain). The guardrails and the `ui_decide` action loop stay **off**
 at runtime behind `--jev-guardrails` / `--jev-ui-loop`; the feature merely
 compiles the tools in. Drop it from a slim build with `--no-default-features`.
 
-`detection` is deliberately **not** in the default set: at +56 crates it is the
-heaviest feature by a wide margin — nearly doubling a slim build on its own —
-and it downloads a ~12 MB YOLOv8n model on first use. Enable it if you need
-object detection:
+`detection` is deliberately **not** in the default set: it is the second-heaviest
+feature (+56 alone, behind `jev` at +59) and, unlike the others, it pulls in a
+second tensor-runtime stack (`tract-onnx`) next to the `rten` one OCR already
+carries — plus a ~12 MB YOLOv8n model downloaded on first use. Enable it if you
+need object detection:
 
 ```bash
 # Default: core automation + OCR + clipboard + web preview + JEV decision

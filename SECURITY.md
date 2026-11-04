@@ -15,7 +15,7 @@ sys-mcp provides direct access to the local desktop — mouse, keyboard, screen 
 
 - Each web preview session generates a random UUID token at startup.
 - All HTTP routes require `?token=<uuid>` — requests without a valid token receive `401 Unauthorized`.
-- The token is only shared with the AI agent via the `gui_web_preview` tool response.
+- The token is only shared with the AI agent via the `web_preview` tool response.
 
 ### MCP Hub Security
 
@@ -46,7 +46,7 @@ These are inherent to its purpose. Users should only run sys-mcp in environments
 - Review AI agent actions when sys-mcp is connected — the agent can interact with any visible application.
 - Be cautious about which MCP servers you register with the MCP Hub — they will run with your user permissions.
 - Consider running sys-mcp in a sandboxed desktop environment (VM, container with virtual display) for untrusted workloads.
-- When using `gui_shell_exec` or `gui_shell_open`, be aware that shell commands run with your user permissions.
+- When using `shell_exec` or `shell_open`, be aware that shell commands run with your user permissions.
 
 ## Reporting Vulnerabilities
 

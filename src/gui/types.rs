@@ -106,9 +106,11 @@ pub struct AccessibilityNode {
     pub y: Option<i32>,
     pub width: Option<u32>,
     pub height: Option<u32>,
-    /// Center x — use for gui_click.
+    /// Center x — for `mouse_click`; prefer `accessibility_action` with this
+    /// node's `id` when `actions` is non-empty.
     pub cx: Option<i32>,
-    /// Center y — use for gui_click.
+    /// Center y — for `mouse_click`; prefer `accessibility_action` with this
+    /// node's `id` when `actions` is non-empty.
     pub cy: Option<i32>,
     pub children: Vec<AccessibilityNode>,
     pub actions: Vec<String>,

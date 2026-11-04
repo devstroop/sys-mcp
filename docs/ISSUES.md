@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (171 tests) |
+| 6 | Test coverage is critically low | ✅ Fixed (286 tests today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,12 +43,12 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (171 tests) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (286 tests today; 13 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
 | 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
-| 29 | `detection` feature made opt-in (heaviest feature, +56 crates) | ✅ Fixed |
+| 29 | `detection` feature made opt-in (second-heaviest alone, +56; `jev` costs +59) | ✅ Fixed |
 | 30 | Advertised tools unreachable when their feature is off (`detect_objects`, `web_preview`) | ✅ Fixed |
 | 31 | OCR inference compiled unoptimized made `screen_read` exceed client timeout | ✅ Fixed (dev-profile opt-level 3) |
 | 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
@@ -64,7 +64,7 @@ it was read from.
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (13 of 72 remain) |
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + validated locally; remote run pending) |
-| 45 | Documentation that contradicts the shipped behavior | 🟢 Open |
+| 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
 | 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | 🟡 Open |
 
@@ -118,7 +118,21 @@ carries the *crop* dimensions and reporting them as the screen size put `cy` bey
 
 ### 4. Accessibility — all platforms are stubs — ✅ Fixed
 
-**Fixed:** `src/platform/accessibility/{windows,macos,linux}.rs` all contain real implementations (Windows: COM `IUIAutomation` with `ControlViewWalker`; macOS: `AXUIElement` C FFI via `objc`/`core-foundation`; Linux: AT-SPI2 over D-Bus via `zbus`). All three implement `get_tree`, `find_elements`, `get_element_properties`, and `invoke_element_action`; all four tools (`accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`) are dispatched in `src/mcp/handlers/mod.rs` and declared in `tools.rs`. Element ids stay resolvable between calls: Windows/macOS retain the elements from the most recent tree walk in a per-tree cache (COM refs / `CFRetain`ed `AXUIElementRef`s, cleared on each `get_tree` and on `Drop`), while Linux ids are stable AT-SPI D-Bus object paths that resolve directly. `invoke_element_action` maps generic verbs (invoke/press/click/focus/increment/decrement/close/minimize/maximize/restore) onto the platform action plus raw platform action names. Residual gap: the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from the AT-SPI root).
+**Fixed:** `src/platform/accessibility/{windows,macos,linux}.rs` all contain real implementations (Windows: COM `IUIAutomation` with `ControlViewWalker`; macOS: `AXUIElement` C FFI via `objc`/`core-foundation`; Linux: AT-SPI2 over D-Bus via `zbus`). All three implement `get_tree`, `find_elements`, `get_element_properties`, and `invoke_element_action`; all four tools (`accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`) are dispatched in `src/mcp/handlers/mod.rs` and declared in `tools.rs`. Element ids stay resolvable between calls: Windows/macOS retain the elements from the most recent tree walk in a per-tree cache (COM refs / `CFRetain`ed `AXUIElementRef`s, cleared on each `get_tree` and on `Drop`), while Linux ids are stable AT-SPI D-Bus object paths that resolve directly.
+**Verb coverage is not uniform across the three platforms** (corrected 2026-11-05 while fixing #45 — the
+earlier sentence here claimed the full generic set everywhere):
+
+| platform | generic verbs mapped | unmapped name becomes |
+| --- | --- | --- |
+| Windows | `invoke`/`press`/`click`/`tap`/`do_default_action`, `toggle`, `expand`/`collapse`, `select`, `increment`/`decrement`, `focus`, `close`/`minimize`/`maximize`/`restore` (all via UIA patterns, #38) | error listing the element's available actions |
+| macOS | only `invoke`/`press`/`click` → `AXPress`, `increment`/`increase`, `decrement`/`decrease` | passed through verbatim as a raw AX action name, so `toggle`/`focus`/`close` fail with an `AXError` and the available-action list |
+| Linux | none — no alias table | matched case-insensitively against the element's AT-SPI action names; fails with the available-action list if absent |
+
+So only Windows answers a generic verb the caller did not read off the tree. macOS and Linux fail loudly
+rather than silently, which is the right shape, but a caller that treats the four tools as portable will
+still lose the non-Windows cases. No platform can write a *value* into an element (#46).
+Residual gap: the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from
+the AT-SPI root).
 
 ### 5. Object detection is a stub — ✅ Fixed
 
@@ -450,14 +464,71 @@ portable assertions and let the CI matrix prove them.
 
 ### 45. Documentation that contradicts the shipped behavior
 
-**Files:** `CHANGELOG.md`, `src/mcp/handlers/mod.rs`, `docs/ISSUES.md`, `src/gui/ocr.rs`, `src/mcp/handlers/accessibility.rs`, `README.md`
-**Problem (verified 2026-11-05):** five separate statements that the code does not support.
+**Files:** `CHANGELOG.md`, `README.md`, `Cargo.toml`, `SECURITY.md`, `docs/ISSUES.md`, `src/gui/ocr.rs`, `src/gui/types.rs`, `src/mcp/handlers/*.rs`
+**Problem (verified 2026-11-05):** five statements the code does not support.
 1. `CHANGELOG.md` — "model failure fails open, the denylist never does", and the same sentence in the `guard_gate` docstring in `src/mcp/handlers/mod.rs`. The default is `GuardFailMode::Closed`, which *holds* the call (see #36 for the one path that genuinely fails open).
 2. `docs/ISSUES.md` #4 claims `invoke_element_action` maps `invoke/press/click/focus/increment/decrement/…` on all platforms. macOS aliases them; Windows rejects all but invoke/focus/window verbs (see #38).
 3. `src/gui/ocr.rs` — four doc comments on `OcrWord.cx/cy` and `OcrMatch.cx/cy` still tell callers to "use this directly for `gui_click`", the pre-rename name. #21 was closed as "all 24 stale references corrected" but only covered `tools.rs` and the handlers.
 4. `src/mcp/handlers/accessibility.rs` ends with a "Template matching handlers" banner with nothing under it, and both that file and `src/mcp/handlers/ocr.rs` open with `#![allow(dead_code)]`, which now suppresses real dead-code findings in two live modules from the `-D warnings` gate.
 5. `README.md` self-admits its per-feature crate-count table predates `jev` joining the default set.
-**Status:** 🟡 Open — correct each to match the code, drop the stale banner and the module-level `allow(dead_code)`.
+
+**Corrections to this issue's own text, found while fixing it.** Items 1-4 each under-described the defect,
+and one of the counts was wrong:
+- Item 1's second half was already fixed: the `guard_gate` docstring was rewritten under #36, so only
+  `CHANGELOG.md` still carried the fail-open sentence. `--jev-guard-fail-mode` was also missing from the
+  CHANGELOG's own "New config" list, one line below the sentence being corrected.
+- Item 2 was written before #38 landed and is now wrong in the opposite direction. The real split: Windows
+  maps the full generic set, macOS aliases only `invoke`/`press`/`click`, `increment`, `decrement`, and
+  Linux has **no** alias table at all. A per-platform table replaced the sentence in #4.
+- Item 3 is six references across two files, not four: `ocr.rs` (`OcrWord.cx/cy`, `OcrMatch.cx/cy`) and
+  `types.rs` (`AccessibilityNode.cx/cy`), which the issue did not list.
+- Item 4: the blanket `#![allow(dead_code)]` sits at line 1 of **all ten** `src/mcp/handlers/*.rs` modules,
+  not two.
+
+**Fixed:**
+- `CHANGELOG.md` guardrails bullet now states the denylist is deterministic and never bypassed, that an
+  unreachable model is decided by `--jev-guard-fail-mode`, and that the default `closed` means a guard
+  failure is never a silent allow; the flag and its env var joined the config list.
+- `docs/ISSUES.md` #4 carries the per-platform verb table and points at #46 for the value-writing gap.
+- All six `gui_click` doc comments renamed to `mouse_click`; the two on `AccessibilityNode.cx/cy` now point
+  at `accessibility_action` with the node's `id` when `actions` is non-empty, which is the more reliable path.
+- 14 further pre-rename names in the still-current `[Unreleased]` block of `CHANGELOG.md`
+  (`gui_read_file`…`gui_create_dir` → `fs_*`, `gui_shell_*` → `shell_*`, `gui_detect_objects` →
+  `detect_objects`, `gui_click_object` → `detect_click_object`) and 3 more on 2 lines of `SECURITY.md`
+  (`gui_web_preview` → `web_preview`, `gui_shell_exec`/`gui_shell_open` → `shell_exec`/`shell_open`), each
+  checked against the dispatch arms in `src/mcp/handlers/mod.rs`. The `[0.1.0]` section keeps its `gui_*`
+  names on purpose — that is what that release shipped.
+- The empty "Template matching handlers" banner is gone, replaced by a plain statement of what lives where.
+- `#![allow(dead_code)]` removed from all ten handler modules; README "Build profiles" and the `Cargo.toml`
+  `detection` comment rewritten with re-measured numbers. The table claimed to cover "every optional
+  capability" but omitted two of the seven features: `opencl` (+11, it forwards to the vendored
+  `rustautogui`, where `opencl = ["ocl", "full"]`) and `ml` — which is `ml = []` with **zero**
+  `cfg(feature = "ml")` sites anywhere in `src/`, and measures +0 crates. Both are now in the table, with
+  `ml` labelled inert rather than quietly dropped from the list.
+
+- Two test-count claims in `docs/ISSUES.md` itself disagreed with each other ("171 tests" in the status
+  table rows for #6 and #24, "248 tests" in the Phase 11 audit note). Measured: **286 passed, 0 failed,
+  3 ignored** across 14 suites. Both figures were stale; the rows now carry the measured one.
+
+**Verified — the dead-code removal, and one arithmetic error in the audit:**
+- Three legs, each producing a genuine `Compiling sys-mcp` rebuild: `clippy --all-targets -- -D warnings`,
+  `clippy --no-default-features --all-targets -- -D warnings`, `clippy --features detection --all-targets --
+  -D warnings` → **0** diagnostics in all three, `cargo fmt --check` clean. So the ten allows suppressed
+  nothing that exists today.
+- To prove the removal buys the safety net rather than just tidying, a probe went into `handlers/ui.rs`: an
+  unused `pub(crate) fn`, an unused private `fn`, an unused struct → three `dead_code` warnings plus one
+  `unused_variables`, under `cargo check` as well as `cargo clippy`. The first probe attempt used `__`
+  -prefixed names and reported nothing, which briefly looked like "`dead_code` is disabled crate-wide"; the
+  underscore prefix was the cause, not the toolchain. Instrument lesson: piping file *paths* into
+  `Select-String` searches the path strings, not the files — the first "0 stale names" sweep was a false
+  clean until a positive control (`mouse_click` → 26 hits) exposed it.
+- `detection` is **not** "the heaviest feature by a wide margin", and 223-vs-168 is not "nearly doubling".
+  Measured twice on Windows x86_64 with `cargo tree -e normal` (unique `name@version`, counting `sys-mcp`):
+  slim 167, clipboard 170 (+3), web-preview 194 (+27), ocr 199 (+32), **jev 226 (+59)**, detection 223 (+56),
+  default 256 (+89), default+detection 295 (+39). `jev` out-costs `detection` alone, and detection's marginal
+  halves once the default set is present — marginals do not sum, which the table now says explicitly.
+
+**Status:** ✅ Fixed — every statement above now matches the code, with the counts re-measured rather than inherited.
 **Severity:** 🔵 Low — but an integrator reading the security posture sentence gets the opposite of what ships.
 
 ### 46. No accessibility path writes a value into an element (`set_value` missing from the trait)
@@ -527,7 +598,13 @@ Current state of the planned feature phases:
 ### Phase 11 — Testing & Quality 🔓 Partially done
 - Done: 66 tests (handler dispatch via `StubBackend`, protocol serialization, hub, config).
 - Remaining: destructive-tool coverage (branch `test/destructive-tools`, issue #24), platform cfg gating (issue #25), web server tests, property-based JSON-RPC roundtrips.
-- Audit 2026-11-05: the suite is now 248 tests and the schema/dispatch drift guard is in place, but 20 advertised tools still have no test reference and `StubBackend` cannot exercise the accessibility handlers at all — tracked as issue #43.
+- Audit 2026-11-05: the schema/dispatch drift guard is in place, but 20 advertised tools still had no test
+  reference and `StubBackend` could not exercise the accessibility handlers at all — tracked as issue #43.
+  The "248 tests" figure written in that audit was already stale. Re-measured on the same day, after #43's
+  first batch: `cargo test` → **286 passed, 0 failed, 3 ignored** across 14 suites (identical with and
+  without `--all-targets`; this crate has no doc tests). Rows 6 and 24 above now carry that number instead
+  of the two figures that disagreed with each other.
+- Fix 2026-11-05 (#45): the documentation that contradicted the code is corrected — the guard fail-open sentence, the per-platform accessibility verb claims, 23 pre-rename `gui_*` tool name references across `src/`, `CHANGELOG.md` and `SECURITY.md`, the empty handler banner, and the README/`Cargo.toml` feature-cost numbers (re-measured: `jev` +59 outweighs `detection` +56). The blanket `#![allow(dead_code)]` is gone from all ten handler modules, with `dead_code` proven live by an injected probe.
 
 ### Phase 12 — CI/CD 🔓 Partially done
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).

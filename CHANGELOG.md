@@ -24,13 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     an inaccessible/elevated window is `blocked` and never driven.
   - Opt-in guardrails for destructive tools (`--jev-guardrails`, default off):
     a hardcoded Rust denylist (offline, model-independent) plus a JEV `noul`
-    risk check that holds calls for confirmation (`confirm: true` to proceed);
-    model failure fails open, the denylist never does
+    risk check that holds calls for confirmation (`confirm: true` to proceed).
+    The denylist is deterministic and never bypassed; when the model cannot be
+    reached, `--jev-guard-fail-mode` decides and defaults to `closed`, so a
+    guard failure is never a silent allow
   - Guarded by default when enabled: `shell_exec`, `fs_delete`, `process_kill`,
     `service_stop`, `service_start`, `process_start`
   - New config: `--jev-guardrails` / `SYS_MCP_JEV_GUARDRAILS`,
     `--jev-guard-threshold` / `SYS_MCP_JEV_GUARD_THRESHOLD` (default 0.5),
-    `--jev-guard-tools` / `SYS_MCP_JEV_GUARD_TOOLS`
+    `--jev-guard-tools` / `SYS_MCP_JEV_GUARD_TOOLS`,
+    `--jev-guard-fail-mode` / `SYS_MCP_JEV_GUARD_FAIL_MODE` (default `closed`)
 
 - **Accessibility element-level tools** (all platforms — Windows UI Automation,
   macOS `AXUIElement`, Linux AT-SPI2):
@@ -46,20 +49,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     stable AT-SPI D-Bus object paths
 
 - **File System** tools:
-  - `gui_read_file` — Read file as base64
-  - `gui_write_file` — Write base64-encoded content to file
-  - `gui_list_dir` — List directory contents
-  - `gui_file_exists` — Check if file/directory exists
-  - `gui_delete_file` — Delete a file
-  - `gui_create_dir` — Create directory (with parents)
+  - `fs_read` — Read file as base64
+  - `fs_write` — Write base64-encoded content to file
+  - `fs_list` — List directory contents
+  - `fs_exists` — Check if file/directory exists
+  - `fs_delete` — Delete a file
+  - `fs_create_dir` — Create directory (with parents)
 
 - **Shell/Terminal** tools:
-  - `gui_shell_exec` — Execute single shell command and capture output
-  - `gui_shell_open` — Open interactive shell session (returns session_id)
-  - `gui_shell_write` — Write input to shell session
-  - `gui_shell_read` — Read output from shell session
-  - `gui_shell_close` — Close shell session
-  - `gui_shell_list` — List all open shell sessions
+  - `shell_exec` — Execute single shell command and capture output
+  - `shell_open` — Open interactive shell session (returns session_id)
+  - `shell_write` — Write input to shell session
+  - `shell_read` — Read output from shell session
+  - `shell_close` — Close shell session
+  - `shell_list` — List all open shell sessions
 
 - **MCP Hub** (MCP Server Passthrough/Tunnel):
   - `mcp_discover` — Scan for MCP servers in `~/.mcp/`, `.mcp/`, and npm packages
@@ -73,8 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `mcp_exec` — Execute tool from any running MCP server
 
 - **Object Detection** tools:
-  - `gui_detect_objects` — Detect UI elements using YOLOv8
-  - `gui_click_object` — Click a detected object by label
+  - `detect_objects` — Detect UI elements using YOLOv8
+  - `detect_click_object` — Click a detected object by label
 
 - **Terminal/PTY** module:
   - `src/terminal/` — New module using `portable-pty` for cross-platform PTY support
