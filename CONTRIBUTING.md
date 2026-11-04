@@ -153,17 +153,36 @@ Manual testing workflow:
 Build with specific features:
 
 ```bash
-cargo build --release                          # all defaults (ocr, clipboard, web-preview, detection)
-cargo build --release --no-default-features    # minimal: display + input only
-cargo build --release --features opencl         # GPU-accelerated template matching
+cargo build --release                          # defaults: ocr, clipboard, web-preview, jev
+cargo build --release --no-default-features    # core only: display, input, windows, fs, shell, system
+cargo build --release --features detection     # defaults + YOLO object detection
+cargo build --no-default-features --features opencl   # slim + GPU template matching in rustautogui
 ```
 
-Available features:
-- `ocr` — On-device OCR (default)
-- `clipboard` — Clipboard support (default)
-- `web-preview` — Web-based screen preview (default)
-- `detection` — YOLO object detection (default)
-- `opencl` — GPU acceleration (off by default)
+Available features (see README "Build profiles" for the measured cost of each):
+- `ocr` — on-device OCR via `ocrs`/`rten` (default)
+- `clipboard` — clipboard read/write via `arboard` (default)
+- `web-preview` — HTTP transport + live viewer via `axum` (default)
+- `jev` — JEV decision tools, guardrails and the `ui_decide` loop (default; the
+  guardrails and the loop still stay off at runtime behind their flags)
+- `detection` — YOLOv8n object detection via `tract-onnx` (**opt-in** — it is not
+  in the default set, and it downloads a ~12 MB model on first use)
+- `opencl` — forwards `ocl` into the vendored `rustautogui` for GPU image
+  matching (off by default)
+- `ml` — **inert**. Declared as `ml = []` with no dependencies and no
+  `cfg(feature = "ml")` site anywhere; enabling it changes nothing.
+
+### Release builds while a server is running
+
+On Windows `cargo build --release` fails with `failed to remove file
+target\release\sys-mcp.exe — Access is denied (os error 5)` if a `sys-mcp.exe`
+is still running from that path (an IDE-attached MCP server will be). The
+linker cannot replace a running image. Stop that client's connection, or build
+to a throwaway directory instead — it exercises the identical graph:
+
+```powershell
+cargo build --release --target-dir "$env:TEMP\sys-mcp-release-verify"
+```
 
 ## License
 

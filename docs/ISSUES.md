@@ -283,7 +283,35 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 **Verified locally:** both workflow files pass `action-validator` against the GitHub Actions schema (exit 0 each). `deny.toml` parses as TOML and every key was checked against cargo-deny's current configuration docs — the keys newer cargo-deny rejects (`advisories.vulnerability/notice/severity-threshold`, `licenses.unlicensed/copyleft/deny/default/unknown`) are absent, and the two sections whose defaults could not be verified are omitted rather than guessed. `cargo check --all-targets --features detection` and `cargo test --all-targets --features detection` both exit 0 on Windows.
 
-**Owed / remaining:** none of this has executed remotely — the branch is unpushed, so every claim above is a local claim; that is the point of the trigger change. Expect the first remote run to need fixes: the feature legs run on Linux while both were only ever compiled on Windows, `macos-13` may be retired upstream, and the cargo-deny report will be red until someone triages it into `deny.toml`. `release.yml` has still never published (`git tag` is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing is deliberately **not** added: `SHA256SUMS` lets a downloader detect corruption, not establish provenance, and cosign/minisign or Windows code signing each need a key decision from the owner.
+**Full local dry-run of the gate set (2026-11-05, after #45).** This is what the `ci.yml` gates will do, run by hand on Windows — the platform CI does *not* cover, so it is complementary evidence rather than a substitute for the remote run:
+
+| gate | result |
+| --- | --- |
+| `cargo fmt --check` | exit 0 |
+| `cargo clippy --all-targets -- -D warnings` (default) | exit 0, **0** diagnostics, genuine rebuild |
+| `cargo clippy --no-default-features --all-targets -- -D warnings` | exit 0, **0** diagnostics |
+| `cargo clippy --features detection --all-targets -- -D warnings` | exit 0, **0** diagnostics |
+| `cargo test --all-targets` | **286 passed, 0 failed, 3 ignored** across 14 suites |
+| `cargo test --no-default-features --all-targets` (the leg CI executes) | **224 passed, 0 failed** |
+| `cargo build --release` | exit 0 in 7m31s, 0 warnings, 22.6 MB binary |
+| release-binary smoke, the step `release.yml` adds | `sys-mcp --version` → `sys-mcp 0.1.0`, exit 0 |
+| `cargo check --no-default-features --features opencl --all-targets` (added for the README table) | exit 0, `ocl v0.19.7` compiles |
+
+One real failure surfaced on the way: `cargo build --release` **aborted** with
+`failed to remove file target\release\sys-mcp.exe — Access is denied (os error 5)`, because an
+IDE-attached `sys-mcp.exe` (PID 18672) was running from exactly that path and Windows will not replace a
+loaded image. Worked around with `--target-dir` rather than killing the live server; the gotcha and the
+workaround are now documented in `CONTRIBUTING.md`.
+
+**Owed / remaining:** none of this has executed remotely — the branch is 10 commits ahead of
+`origin/feat/ocr-onnx-a11y-tools` and unpushed, so every claim above is a local claim; that is the point of
+the trigger change. `cargo-deny` itself has never run here (not installed on this machine), so the
+`deny.toml` schema is doc-verified only. Expect the first remote run to need fixes: the feature legs run on
+Linux while all of the above ran on Windows, `macos-13` may be retired upstream, and the cargo-deny report
+will be red until someone triages it into `deny.toml`. `release.yml` has still never published (`git tag`
+is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing is deliberately **not** added:
+`SHA256SUMS` lets a downloader detect corruption, not establish provenance, and cosign/minisign or Windows
+code signing each need a key decision from the owner.
 **Status:** 🟡 Partially fixed — the gates are wired and schema-validated; the remote evidence is one push away.
 **Severity:** 🟡 High — the worth of every gate below is zero until a run exists, so the push is the remaining work, not a formality.
 
@@ -464,7 +492,7 @@ portable assertions and let the CI matrix prove them.
 
 ### 45. Documentation that contradicts the shipped behavior
 
-**Files:** `CHANGELOG.md`, `README.md`, `Cargo.toml`, `SECURITY.md`, `docs/ISSUES.md`, `src/gui/ocr.rs`, `src/gui/types.rs`, `src/mcp/handlers/*.rs`
+**Files:** `CHANGELOG.md`, `README.md`, `Cargo.toml`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/ISSUES.md`, `src/gui/ocr.rs`, `src/gui/types.rs`, `src/mcp/handlers/*.rs`
 **Problem (verified 2026-11-05):** five statements the code does not support.
 1. `CHANGELOG.md` — "model failure fails open, the denylist never does", and the same sentence in the `guard_gate` docstring in `src/mcp/handlers/mod.rs`. The default is `GuardFailMode::Closed`, which *holds* the call (see #36 for the one path that genuinely fails open).
 2. `docs/ISSUES.md` #4 claims `invoke_element_action` maps `invoke/press/click/focus/increment/decrement/…` on all platforms. macOS aliases them; Windows rejects all but invoke/focus/window verbs (see #38).
@@ -509,6 +537,12 @@ and one of the counts was wrong:
 - Two test-count claims in `docs/ISSUES.md` itself disagreed with each other ("171 tests" in the status
   table rows for #6 and #24, "248 tests" in the Phase 11 audit note). Measured: **286 passed, 0 failed,
   3 ignored** across 14 suites. Both figures were stale; the rows now carry the measured one.
+- Found late, in a file this issue did not list: `CONTRIBUTING.md` "Feature Flags" said
+  `cargo build --release # all defaults (ocr, clipboard, web-preview, detection)` and listed
+  "`detection` — YOLO object detection (default)". `detection` was made opt-in by #29 and `jev` was missing
+  entirely — the list described a default set that had not existed for two issues. Rewritten against
+  `Cargo.toml`, `ml` labelled inert, and the slim description widened (it is display + input + windows +
+  fs + shell + system, not "display + input only").
 
 **Verified — the dead-code removal, and one arithmetic error in the audit:**
 - Three legs, each producing a genuine `Compiling sys-mcp` rebuild: `clippy --all-targets -- -D warnings`,
