@@ -15,34 +15,57 @@ pub(crate) async fn handle_read_screen(
 ) -> Result<ToolResult, String> {
     #[cfg(feature = "ocr")]
     {
-        // Check if a region is specified
-        let shot = if args.get("x").is_some() {
+        // Check if a region is specified. OCR runs on the cropped image, so its
+        // coordinates come back relative to that crop; remember the origin to
+        // translate them into screen space, which is what `mouse_click` takes.
+        let (shot, region_origin) = if args.get("x").is_some() {
             let region = Region {
                 x: u32_arg(args, "x")?,
                 y: u32_arg(args, "y")?,
                 width: u32_arg(args, "width")?,
                 height: u32_arg(args, "height")?,
             };
-            client
+            let shot = client
                 .screenshot_region(region)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+            (shot, Some((region.x as i32, region.y as i32)))
         } else {
-            client.screenshot().await.map_err(|e| e.to_string())?
+            (
+                client.screenshot().await.map_err(|e| e.to_string())?,
+                None,
+            )
         };
 
-        let result = tokio::task::spawn_blocking(move || ocr::read_screen(&shot))
+        let mut result = tokio::task::spawn_blocking(move || ocr::read_screen(&shot))
             .await
             .map_err(|e| format!("OCR task failed: {e}"))?
             .map_err(|e| e.to_string())?;
+
+        // `screen_width`/`screen_height` on the result are the *captured image*
+        // dimensions. For a region read the coordinates are about to become
+        // screen-absolute, so labelling them "Screen 420x340" would put `cy`
+        // outside the stated height and read as a corrupt payload. Name the
+        // scope explicitly instead.
+        let scope = match region_origin {
+            Some((ox, oy)) => {
+                ocr::translate_to_screen(&mut result, (ox, oy));
+                format!(
+                    "Region {}x{} at ({ox},{oy}) — coordinates are screen-space",
+                    result.screen_width, result.screen_height
+                )
+            }
+            None => format!(
+                "Screen {}x{}",
+                result.screen_width, result.screen_height
+            ),
+        };
 
         let detail = args.get("detail").and_then(Value::as_str).unwrap_or("full");
 
         let summary = match detail {
             "text" => format!(
-                "Screen {}x{}, {} lines of text detected.\n\n{}",
-                result.screen_width,
-                result.screen_height,
+                "{scope}, {} lines of text detected.\n\n{}",
                 result.lines.len(),
                 result.text,
             ),
@@ -58,18 +81,14 @@ pub(crate) async fn handle_read_screen(
                     })
                 }).collect();
                 format!(
-                    "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for mouse_click):\n{}",
-                    result.screen_width,
-                    result.screen_height,
+                    "{scope}, {} lines of text detected.\n\n{}\n\n---\nLine coordinates (use cx/cy for mouse_click):\n{}",
                     result.lines.len(),
                     result.text,
                     serde_json::to_string(&lines_data).unwrap_or_default(),
                 )
             }
             _ => format!(
-                "Screen {}x{}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for mouse_click):\n{}",
-                result.screen_width,
-                result.screen_height,
+                "{scope}, {} lines of text detected.\n\n{}\n\n---\nStructured data (use cx/cy from words for mouse_click):\n{}",
                 result.lines.len(),
                 result.text,
                 serde_json::to_string(&result.lines).unwrap_or_default(),

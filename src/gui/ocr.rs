@@ -100,8 +100,8 @@ fn ensure_model(name: &str) -> Result<PathBuf, GuiError> {
 
 fn get_engine() -> Result<&'static OcrEngine, GuiError> {
     let result = OCR_ENGINE.get_or_init(|| {
-        let det_path = ensure_model("text-detection.rten").map_err(|e| e.to_string())?;
-        let rec_path = ensure_model("text-recognition.rten").map_err(|e| e.to_string())?;
+        let det_path = ensure_model("text-detection.onnx").map_err(|e| e.to_string())?;
+        let rec_path = ensure_model("text-recognition.onnx").map_err(|e| e.to_string())?;
 
         let detection_model =
             Model::load_file(det_path).map_err(|e| format!("load detection model: {e}"))?;
@@ -291,6 +291,28 @@ pub fn read_screen(screenshot: &Screenshot) -> Result<OcrResult, GuiError> {
     })
 }
 
+/// Move OCR output from crop-local coordinates into screen coordinates.
+///
+/// [`read_screen`] reports boxes relative to whatever image it is handed, so a
+/// region capture yields coordinates local to the crop. `screen_read` advertises
+/// `cx`/`cy` as `mouse_click` targets — which are screen coordinates — so the
+/// region origin has to be added back before the numbers leave the handler.
+/// Without this, every region-based click landed up and left of its target by
+/// exactly (x, y). See ISSUES.md #33.
+pub fn translate_to_screen(result: &mut OcrResult, origin: (i32, i32)) {
+    let (ox, oy) = origin;
+    for line in &mut result.lines {
+        line.x += ox;
+        line.y += oy;
+        for word in &mut line.words {
+            word.x += ox;
+            word.y += oy;
+            word.cx += ox;
+            word.cy += oy;
+        }
+    }
+}
+
 /// Search for text on screen and return matches with click coordinates.
 pub fn find_text(screenshot: &Screenshot, query: &str) -> Result<Vec<OcrMatch>, GuiError> {
     let result = read_screen(screenshot)?;
@@ -381,4 +403,83 @@ pub fn compress_screenshot(
     let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_buf);
 
     Ok((base64_data, new_w, new_h))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One line at (10,20) 100x12 holding a word centred at (35,26), in the
+    /// coordinate space a 420x340 crop would produce.
+    fn crop_local_result() -> OcrResult {
+        OcrResult {
+            text: "hello world".to_string(),
+            lines: vec![OcrLine {
+                text: "hello world".to_string(),
+                x: 10,
+                y: 20,
+                width: 100,
+                height: 12,
+                words: vec![OcrWord {
+                    text: "hello".to_string(),
+                    x: 20,
+                    y: 20,
+                    width: 30,
+                    height: 12,
+                    cx: 35,
+                    cy: 26,
+                }],
+            }],
+            screen_width: 420,
+            screen_height: 340,
+        }
+    }
+
+    #[test]
+    fn region_origin_is_added_to_every_coordinate() {
+        let mut result = crop_local_result();
+        translate_to_screen(&mut result, (300, 400));
+
+        let line = &result.lines[0];
+        assert_eq!((line.x, line.y), (310, 420));
+
+        let word = &line.words[0];
+        assert_eq!((word.x, word.y), (320, 420));
+        assert_eq!((word.cx, word.cy), (335, 426));
+
+        // The click target must be inside the region it was read from, which is
+        // the invariant that broke when crop-local coordinates leaked out.
+        assert!(word.cx >= 300 && word.cy >= 400);
+    }
+
+    #[test]
+    fn translation_moves_centres_and_boxes_consistently() {
+        let mut result = crop_local_result();
+        translate_to_screen(&mut result, (300, 400));
+
+        let word = &result.lines[0].words[0];
+        // cx/cy stay the centre of the moved box, not an independent offset.
+        assert_eq!(word.cx, word.x + word.width / 2);
+        assert_eq!(word.cy, word.y + word.height / 2);
+    }
+
+    #[test]
+    fn extents_are_not_shifted() {
+        let mut result = crop_local_result();
+        translate_to_screen(&mut result, (300, 400));
+
+        let line = &result.lines[0];
+        assert_eq!((line.width, line.height), (100, 12));
+        let word = &line.words[0];
+        assert_eq!((word.width, word.height), (30, 12));
+    }
+
+    #[test]
+    fn zero_origin_leaves_full_screen_reads_untouched() {
+        let mut result = crop_local_result();
+        let before = result.clone();
+        translate_to_screen(&mut result, (0, 0));
+        assert_eq!(result.lines[0].words[0].cx, before.lines[0].words[0].cx);
+        assert_eq!(result.lines[0].x, before.lines[0].x);
+    }
 }
