@@ -303,8 +303,8 @@ IDE-attached `sys-mcp.exe` (PID 18672) was running from exactly that path and Wi
 loaded image. Worked around with `--target-dir` rather than killing the live server; the gotcha and the
 workaround are now documented in `CONTRIBUTING.md`.
 
-**Owed / remaining:** none of this has executed remotely — the branch is 10 commits ahead of
-`origin/feat/ocr-onnx-a11y-tools` and unpushed, so every claim above is a local claim; that is the point of
+**Owed / remaining:** none of this has executed remotely — `origin/feat/ocr-onnx-a11y-tools` still points at
+`343ff06`, before this audit's first commit, so every claim above is a local claim; that is the point of
 the trigger change. `cargo-deny` itself has never run here (not installed on this machine), so the
 `deny.toml` schema is doc-verified only. Expect the first remote run to need fixes: the feature legs run on
 Linux while all of the above ran on Windows, `macos-13` may be retired upstream, and the cargo-deny report
