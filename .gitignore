@@ -31,3 +31,6 @@ ocr-models/
 
 # Local cargo config (shared build cache)
 /.cargo/
+
+# Log files
+*.log

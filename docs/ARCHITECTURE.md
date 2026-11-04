@@ -87,7 +87,7 @@ AI Agent (Claude, OpenCode, etc.)
 ### Platform Layer (`src/platform/`)
 
 - **window/** — OS-specific window management implementations behind a common `PlatformWindowManager` interface. Real implementations on all three platforms: Win32 on Windows, `x11rb` with EWMH atoms on Linux (X11 only — no Wayland), and `CGWindowListCopyWindowInfo` + Cocoa/objc messaging on macOS. All expose list/active/focus/move/resize/minimize/maximize/restore/close/title/bounds/find-by-title.
-- **accessibility/** — Real platform accessibility trees behind a common `PlatformAccessibility` interface: Windows UI Automation (COM `IUIAutomation`, `ControlViewWalker`), macOS `AXUIElement` C FFI, and Linux AT-SPI2 over D-Bus (`zbus`, blocking API; ignores `window_id`, walks from the AT-SPI root). `get_tree` and `find_elements` are implemented on all three; `get_element_properties` and `invoke_element_action` still return `UnsupportedCapability`.
+- **accessibility/** — Real platform accessibility trees behind a common `PlatformAccessibility` interface: Windows UI Automation (COM `IUIAutomation`, `ControlViewWalker`), macOS `AXUIElement` C FFI, and Linux AT-SPI2 over D-Bus (`zbus`, blocking API; ignores `window_id`, walks from the AT-SPI root). All four trait methods — `get_tree`, `find_elements`, `get_element_properties`, and `invoke_element_action` — are implemented on all three. Element ids stay resolvable between calls via a per-tree element cache on Windows (COM refs) and macOS (`CFRetain`ed `AXUIElementRef`s), cleared on each `get_tree` and on `Drop`; Linux ids are stable AT-SPI object paths that resolve directly.
 
 ### Protocol Layer (`src/protocol/`)
 
@@ -133,6 +133,10 @@ Optional capabilities are compile-time gated:
 - `clipboard` — adds `arboard` dependency
 - `web-preview` — adds `axum` web server dependency
 - `detection` — adds `tract-onnx` for YOLO object detection
+- `jev` — adds `reqwest` (rustls) for the JEV/System One decision layer; **on by
+  default** (the public gateway is free and zero-setup). Compiles in the
+  `decision`/`decision_rank`/`decision_stats`/`ui_decide` tools; the guardrails
+  and action loop remain off at runtime behind their own flags.
 - `opencl` — enables GPU-accelerated template matching in rustautogui
 
 ## MCP Protocol

@@ -47,6 +47,10 @@
 | 28 | `Screenshot.data` doc claimed raw RGBA (it holds PNG bytes) | ✅ Fixed |
 | 29 | `detection` feature made opt-in (heaviest feature, +56 crates) | ✅ Fixed |
 | 30 | Advertised tools unreachable when their feature is off (`detect_objects`, `web_preview`) | ✅ Fixed |
+| 31 | OCR inference compiled unoptimized made `screen_read` exceed client timeout | ✅ Fixed (dev-profile opt-level 3) |
+| 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
+| 33 | `screen_read` returned crop-relative coordinates for region reads, so `mouse_click` missed the target | ✅ Fixed |
+| 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | 🟡 Open |
 
 ---
 
@@ -61,13 +65,30 @@
 output.
 **Severity:** 🔴 Critical — silently incorrect results.
 
+### 33. `screen_read` with a region returned crop-relative coordinates
+
+**File:** `src/mcp/handlers/ocr.rs` (`handle_read_screen`)
+**Problem (verified 2026-11-04):** `LocalBackend::screenshot_region` crops with `crop_imm` and returns an image of
+*region* size, `ocr::read_screen` reports coordinates in that image's space, and the handler never added the
+region origin back. The tool description tells callers to feed `cx`/`cy` straight into `mouse_click`, so every
+region-based click landed up and left of the target by exactly (x, y) — measured live while driving BUSY: a menu
+item OCR'd inside a region at (320,40,260,220) came back with `cx` ≈ 36 and the click hit a different window.
+**Status:** ✅ Fixed — the translation lives in `ocr::translate_to_screen` (`src/gui/ocr.rs`), called by the
+handler, and is covered by four unit tests (origin added to line/word `x`/`y` and word `cx`/`cy`; centres stay
+consistent with the moved box; extents untouched; zero origin is identity). Verified against UIA ground truth:
+reading a (200,60) region over BUSY's "Report Options" form returned `OK (F2)` at cx=257, cy=368 while UIA reports
+the button center at 257,369, and clicking the OCR coordinate completed the form. The summary header now labels a
+region read as `Region WxH at (X,Y) — coordinates are screen-space` instead of `Screen WxH`, because the OCR result
+carries the *crop* dimensions and reporting them as the screen size put `cy` beyond the stated height.
+**Severity:** 🔴 Critical — the tool's own advertised contract produced wrong clicks.
+
 ---
 
 ## 🟡 High-Priority Gaps
 
 ### 4. Accessibility — all platforms are stubs — ✅ Fixed
 
-**Fixed:** `src/platform/accessibility/{windows,macos,linux}.rs` all contain real implementations (Windows: COM `IUIAutomation` with `ControlViewWalker`; macOS: `AXUIElement` C FFI via `objc`/`core-foundation`; Linux: AT-SPI2 over D-Bus via `zbus`). All three implement `get_tree` and `find_elements`; both tools (`accessibility_tree`, `accessibility_find`) are dispatched in `src/mcp/handlers/mod.rs` and declared in `tools.rs`. Residual gaps: `get_element_properties` and `invoke_element_action` return `UnsupportedCapability` on all three platforms; the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from the AT-SPI root).
+**Fixed:** `src/platform/accessibility/{windows,macos,linux}.rs` all contain real implementations (Windows: COM `IUIAutomation` with `ControlViewWalker`; macOS: `AXUIElement` C FFI via `objc`/`core-foundation`; Linux: AT-SPI2 over D-Bus via `zbus`). All three implement `get_tree`, `find_elements`, `get_element_properties`, and `invoke_element_action`; all four tools (`accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`) are dispatched in `src/mcp/handlers/mod.rs` and declared in `tools.rs`. Element ids stay resolvable between calls: Windows/macOS retain the elements from the most recent tree walk in a per-tree cache (COM refs / `CFRetain`ed `AXUIElementRef`s, cleared on each `get_tree` and on `Drop`), while Linux ids are stable AT-SPI D-Bus object paths that resolve directly. `invoke_element_action` maps generic verbs (invoke/press/click/focus/increment/decrement/close/minimize/maximize/restore) onto the platform action plus raw platform action names. Residual gap: the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from the AT-SPI root).
 
 ### 5. Object detection is a stub — ✅ Fixed
 
@@ -99,6 +120,50 @@ output.
 **Problem (verified):** `tools.rs` declares 64 tools, but `handler_tests.rs` exercises only 22 distinct tools (display, mouse, keyboard, clipboard, window, `system_info`, `system_wait`). Entire categories have zero handler coverage: `fs_*`, `shell_*`, `mcp_*`, `process_*`, `service_*`, `network_*`, `system_stats`/`disk_usage`/`system_logs`, `screen_read`/`screen_find_text`, accessibility, detection, `web_preview`.
 **Status:** Being addressed on branch `test/destructive-tools`.
 **Severity:** 🟡 High.
+
+### 31. OCR inference compiled unoptimized made `screen_read` exceed the client timeout
+
+**Files:** `Cargo.toml` (`[profile.dev.package.*]`), `src/gui/ocr.rs`
+**Problem (measured 2026-11-04):** the server the IDE launches is `target\debug\sys-mcp.exe`, so `rten`/`ocrs`
+ran at opt-level 0. Phase timings for a 1920x1080 capture: model load 25ms + 16ms and `OcrEngine::new` 80µs
+(init is *not* the cost), `prepare_input` 152ms, `detect_words` **18.4s**, `find_text_lines` 200ms, and
+`recognize_text` over 115 lines did not finish within 4 minutes (~4 cores saturated). Any MCP client timeout
+is far shorter, so full-screen `screen_read` returned error 40504 while small regions succeeded.
+**Status:** ✅ Fixed — `opt-level = 3` applied to the OCR hot-path crates (`ocrs`, `image`, `rten` and its
+`rten-*` sub-crates) in the dev profile; the `sys-mcp` crate itself stays unoptimized. Full-screen read now
+completes in **27.4s** (95 lines) and a cold 400x120 region read in **1.68s**. Prefer passing a `region` and
+`detail: "text"`; full-screen reads remain the slowest call the server makes.
+**Re-measured 2026-11-04 (optimized build):** full-screen `screen_read` on a BUSY screen: 8.6s (32 lines), 10.4s
+(54 lines), 6.0s (24 lines); region reads 1.9-5.5s; `screen_find_text` 5.9s. Wall time scales with the number of
+lines recognised, not with frame size, so a busy screen costs more than an empty one.
+**Severity:** 🟡 High — was making a headline tool unusable.
+
+### 32. stdio transport serializes every request, so one slow tool stalls all tools
+
+**File:** `src/mcp/server.rs` (`run_stdio`)
+**Problem (verified):** the read loop takes `self.handler.lock().await` and awaits `handle_request` inline
+before reading the next line. While a request is in flight — e.g. the full-screen OCR above, which kept running
+after the client gave up — *every* other tool call queues behind it and also times out. Observed live:
+`window_list` and `screen_size` returned 40504 while an abandoned `screen_read` was still computing, which
+looks exactly like a hung server and sent debugging down the wrong path.
+**Status:** 🟡 Open — fixing it needs `handle_request` to stop requiring `&mut self` (interior mutability or a
+per-request clone) before handling can be spawned concurrently; response writes are already serialized behind
+the stdout lock, and JSON-RPC ids let responses land out of order.
+**Severity:** 🟡 High — a single slow call degrades the whole server's availability.
+
+### 34. Full-screen OCR has lower small-text recall than a region read of the same pixels
+
+**Files:** `src/gui/ocr.rs` (`read_screen`), `src/mcp/handlers/ocr.rs` (`handle_find_text`)
+**Problem (observed 2026-11-04):** BUSY's 11-14px menu-pane text was read reliably by a 420x140 region (8/11 lines
+recognised) while a full-screen `screen_read` of the same pixels alternated between reading it and returning 0 lines
+for it. `ocrs` rescales the input to a working size derived from the image dimensions, so a 1920x1080 frame puts
+small glyphs through a different detection scale than a tight crop. Consequence: `screen_find_text` (full-screen only)
+can report "No text matching 'Trial Balance' found on screen" for text that `screen_read` on the region finds at the
+same instant. Recognition accuracy also drifts with scale ("Day Book" read as "Dav Book", "OK (F2)" as "OKE)l").
+**Status:** 🟡 Open — the fix is a search strategy, not a bug fix: for a region-scoped lookup, run detection on
+overlapping tiles at native scale (or upscale small crops) instead of one whole-screen pass, and document that
+`screen_find_text` is a full-screen best-effort locator while `screen_read` + region is the precise one.
+**Severity:** 🟡 High — an agent can conclude UI is absent when it is only missed.
 
 ---
 
@@ -265,9 +330,10 @@ portable assertions and let the CI matrix prove them.
 
 Current state of the planned feature phases:
 
-### Phase 6 — Accessibility ✅ Done (element-level gaps remain)
-- All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). Both tools are live in the dispatch and in `tools/list` (see issue #4).
-- Remaining: `get_element_properties` / `invoke_element_action` unsupported on all platforms; Linux ignores `window_id` and uses blocking D-Bus calls.
+### Phase 6 — Accessibility ✅ Done
+- All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). All four tools are live in the dispatch and in `tools/list` (see issue #4).
+- `get_element_properties` / `invoke_element_action` now implemented on all platforms (element caches on Windows/macOS, stable D-Bus paths on Linux).
+- Remaining: Linux ignores `window_id` and uses blocking D-Bus calls.
 
 ### Phase 7 — Template Matching ✅ Done
 - `vision_find_image` / `vision_wait_for_image` wired to rustautogui's CPU FFT NCC path via the new `VisionCapability` backend trait; both tool schemas exposed in `tools/list` (issue #16).

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **JEV decision layer** (cargo feature `jev`, off by default):
+- **JEV decision layer** (cargo feature `jev`, on by default):
   - `decision` tool — evaluate a state against typed JEV (`/v1/systemone`)
     questions (`noul` / `choice` / `score`) with secret redaction before send
   - `ui_decide` tool (Phase 4, opt-in via `--jev-ui-loop` /
@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New config: `--jev-guardrails` / `SYS_MCP_JEV_GUARDRAILS`,
     `--jev-guard-threshold` / `SYS_MCP_JEV_GUARD_THRESHOLD` (default 0.5),
     `--jev-guard-tools` / `SYS_MCP_JEV_GUARD_TOOLS`
+
+- **Accessibility element-level tools** (all platforms — Windows UI Automation,
+  macOS `AXUIElement`, Linux AT-SPI2):
+  - `accessibility_properties` — resolve a single element by the id handed out
+    by `accessibility_tree` / `accessibility_find` and return its current
+    role, name, value, position, actions, and states
+  - `accessibility_action` — invoke a named action on an element by id
+    (generic verbs `invoke`/`press`/`click`/`focus`/`increment`/`decrement`/
+    `close`/`minimize`/`maximize`/`restore`, or a raw platform action name)
+  - Element ids stay resolvable between calls: Windows/macOS retain the most
+    recent tree walk's elements in a per-tree cache (COM refs / `CFRetain`ed
+    `AXUIElementRef`s, cleared on each `get_tree` and on `Drop`); Linux ids are
+    stable AT-SPI D-Bus object paths
 
 - **File System** tools:
   - `gui_read_file` — Read file as base64

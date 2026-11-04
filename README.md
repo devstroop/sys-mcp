@@ -40,7 +40,19 @@ Measured dependency cost per feature (crate counts, default build = 223):
 | `clipboard` | 168 | ~5 | `clipboard_get` / `clipboard_set` |
 | `web-preview` | 195 | +27 | `web_preview`, HTTP transport |
 | `ocr` | 196 | +28 | `screen_read`, `screen_find_text`, `screen_scroll_to_text` |
+| `jev` | default | +reqwest/rustls | `decision`, `decision_rank`, `decision_stats`, `ui_decide` |
 | `detection` | 224 | +56 | `detect_objects`, `detect_click_object` |
+
+> The crate counts above were measured before `jev` joined the default set;
+> the totals (223 default / 168 slim) predate it and should be re-measured
+> with `cargo tree` on the next build.
+
+`jev` **is** in the default set: it points at the public OpenCode gateway
+(`jev-1.13-free`, `Bearer public`) which is free and needs no setup, so the
+decision tools work out of the box. It only adds `reqwest` with `rustls` (no
+OpenSSL toolchain). The guardrails and the `ui_decide` action loop stay **off**
+at runtime behind `--jev-guardrails` / `--jev-ui-loop`; the feature merely
+compiles the tools in. Drop it from a slim build with `--no-default-features`.
 
 `detection` is deliberately **not** in the default set: at +56 crates it is the
 heaviest feature by a wide margin — nearly doubling a slim build on its own —
@@ -48,7 +60,7 @@ and it downloads a ~12 MB YOLOv8n model on first use. Enable it if you need
 object detection:
 
 ```bash
-# Default: core automation + OCR + clipboard + web preview (223 crates)
+# Default: core automation + OCR + clipboard + web preview + JEV decision
 cargo build --release
 
 # Object detection on top of the default
@@ -84,7 +96,7 @@ the full surface regardless of how the binary was built.
 `window_list` · `window_active` · `window_focus` · `window_find` · `window_move_resize` · `window_action`
 
 ### Accessibility
-`accessibility_tree` · `accessibility_find`
+`accessibility_tree` · `accessibility_find` · `accessibility_properties` · `accessibility_action`
 
 ### Object Detection
 `detect_objects` · `detect_click_object`
@@ -112,6 +124,18 @@ the full surface regardless of how the binary was built.
 
 ### Utilities
 `web_preview` · `system_info` · `system_wait`
+
+### Decision (JEV)
+`decision` · `decision_rank` · `decision_stats` · `ui_decide`
+
+Bounded decision layer over TypeSafe's JEV / System One model — typed
+`noul` / `choice` / `score` answers with calibrated probabilities, never free
+text. Defaults to the free public gateway; see [docs/JEV_PLAN.md](docs/JEV_PLAN.md) for
+the design law (deterministic code observes → builds a bounded action space →
+JEV picks one → local policy + freshness guard → code executes → code
+verifies). The destructive-tool guardrails (`--jev-guardrails`) and the
+`ui_decide` action loop (`--jev-ui-loop`) are opt-in at runtime and off by
+default.
 
 ## MCP Hub
 

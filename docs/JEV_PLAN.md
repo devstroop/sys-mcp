@@ -22,7 +22,7 @@ evaluates a `state` against typed questions and returns values + calibrated prob
 - Models: `jev-1.13-free` ($0, rate-limited) and `jev-1.13` ($0.042/M input, output free).
 - Multiple questions per request are evaluated in parallel in isolation; ~300–500 ms per call.
 - Limits: 64K tokens total input, 32K for state + longest question. Hosted only (no local weights).
-- Local gateway verified working: `POST http://192.168.2.49:5050/v1/systemone`, `Bearer sk-dev-key`
+- Public gateway (default, verified working): `POST https://opencode.ai/inference/systemone/v1/systemone`, `Bearer public`
   (both plain `noul` and combined `choice`+`score`+`noul` requests return 200 with typed answers).
 
 ### Design law (from every serious JEV project reviewed)
@@ -203,8 +203,10 @@ src/
 - **Latency**: ~300–500 ms per call is fine inside a tool call, but a guard on every `shell_exec`
   adds up; measure before enabling broadly.
 - **Confidence ≠ correctness**: thresholds must come from our own eval set, not copied numbers.
-- **Endpoint/key ownership**: is `192.168.2.49:5050` the permanent gateway, or do we point at
-  `api.beatapi.io` / TypeSafe directly? Config must support both.
+- **Endpoint/key ownership**: resolved — the default is the public OpenCode gateway
+  (`https://opencode.ai/inference/systemone/v1/systemone`, `Bearer public`, `jev-1.13-free`), usable
+  with no setup. `JEV_ENDPOINT`/`JEV_API_KEY`/`JEV_MODEL` still point it at `api.beatapi.io`,
+  TypeSafe directly, or a self-hosted gateway.
 - **Scope check**: do we want Phase 4 (bounded UI loop) inside sys-mcp, or keep sys-mcp as
   primitives + let a host agent own the loop?
 - **Cost attribution**: decide whether usage reporting feeds into `system_stats` or a dedicated tool.
@@ -229,3 +231,4 @@ src/
 - Independent guides: https://jevapi.io · https://opencode.ai/v2/docs/console/models
 - Ecosystem: https://github.com/BeatAPI/awesome-jev
 - Local gateway (verified): `POST http://192.168.2.49:5050/v1/systemone` · `Bearer sk-dev-key`
+- Public gateway (default, verified): `POST https://opencode.ai/inference/systemone/v1/systemone` · `Bearer public`
