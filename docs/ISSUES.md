@@ -56,15 +56,16 @@ it was read from.
 | 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | 🟡 Open |
 | 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | 🔴 Open |
 | 36 | Guard fail-mode is ignored on the decision-client construction path (fails open) | 🔴 Open |
-| 37 | Windows window enumeration never resolves `process_name` | 🟡 Open |
-| 38 | Windows accessibility exposes no value/description/state and only Invoke + Window patterns | 🟡 Open |
-| 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | 🟢 Open |
+| 37 | Windows window enumeration never resolves `process_name` | ✅ Fixed |
+| 38 | Windows accessibility exposes no value/description/state and only Invoke + Window patterns | ✅ Fixed |
+| 39 | `accessibility_properties` re-mints an id and mutates the tree cache it only reads | ✅ Fixed |
 | 40 | Serialization failures return an empty tool payload instead of an error | 🟡 Open |
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | 🟡 Open |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | 🟢 Open |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Open |
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Open |
 | 45 | Documentation that contradicts the shipped behavior | 🟢 Open |
+| 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
 
 ---
 
@@ -197,14 +198,14 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 **File:** `src/platform/window/windows.rs` (`get_window_info`)
 **Problem (verified 2026-11-05):** `get_window_info` hardcodes `process_name: None`, and it is the single constructor used by `list_windows`, `get_active_window` and `find_windows_by_title`, so every `WindowInfo` produced on Windows has a null process. Linux resolves `WM_CLASS` (`src/platform/window/linux.rs`, `get_process_name`) and macOS reads `kCGWindowOwnerName` (`src/platform/window/macos.rs`) — Windows, the platform the product is actually used on, is the only one missing it. Two consequences: `ui_decide` sends `"window": { "process": null }` into the JEV prompt (`src/decision/ui_loop.rs`), so the model decides with no idea which application owns the target; and a caller cannot prove a window belongs to the app it believes it does, or disambiguate same-titled windows, which is the failure class behind wrong-window clicks in desktop automation.
-**Status:** 🟡 Open — resolve the image name from the `GetWindowThreadProcessId` pid already being fetched (`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW`), and keep it `None` only when the handle genuinely cannot be opened (elevated / protected processes).
+**Status:** ✅ Fixed — `get_window_info` resolves the image name from the `GetWindowThreadProcessId` pid through `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` and reports the **file stem**, so the value matches the bare names Linux/macOS produce and the `ProcessName` that `process_list` already returns; it stays `None` only when the handle genuinely cannot be opened (elevated / protected processes) or the query fails.
 **Severity:** 🟡 High — silently degrades a documented field and a model input on the primary platform.
 
 ### 38. Windows accessibility exposes no value/description/state and only Invoke + Window patterns
 
 **File:** `src/platform/accessibility/windows.rs`
 **Problem (verified 2026-11-05):** `build_node` sets `value: None, description: None` unconditionally; `get_element_states` reports only `disabled` and `focused`; and `get_element_actions` advertises only `invoke` plus the four window verbs. `invoke_element_action` matches `invoke | focus | close | minimize | maximize | restore` and every other string errors, so the generic verbs `press`, `click`, `increment`, `decrement` — which the macOS backend aliases (`macos.rs`, `invoke_element_action`) and which `docs/ISSUES.md` #4 claims are mapped "on all platforms" — are rejected on Windows. No `TogglePattern`, `ValuePattern`, `ExpandCollapsePattern`, `SelectionItemPattern` or `RangeValuePattern` is imported at all, so none of their read state or actions are reachable. Net effect on the platform that matters: an agent cannot read what is in a text field, tick a checkbox, open a combo box, select a list item, or tell whether a node is expanded/offscreen through UIA, and has to fall back to OCR for all of it.
-**Status:** 🟡 Open — populate `value` (ValuePattern → LegacyIAccessible → `CurrentName` fallback) and `description` (HelpText / FullDescription / LegacyIAccessible description), add `checked` / `expanded` / `selected` / `offscreen` / `required` states, alias the generic verbs, and implement the remaining patterns as actions.
+**Status:** ✅ Fixed — `build_node` now fills `value` (ValuePattern → RangeValuePattern → LegacyIAccessible, capped at 4096 chars because a document view reports its whole text as its value) and `description` (`CurrentHelpText` → LegacyIAccessible description; UIA has no `CurrentFullDescription` on the client element). States add `offscreen` / `password` / `required` / `readonly` / `checked` / `indeterminate` / `expanded` / `partially_expanded` / `collapsed` / `selected` / `focus`, each read from the live pattern rather than assumed. Actions are derived from the patterns the element actually implements — Invoke, Toggle, ExpandCollapse, SelectionItem, RangeValue, ScrollItem, Window — and `invoke_element_action` was rewritten to canonicalize verbs case-insensitively with `-` read as `_`, accept `press` / `click` / `tap` / `do_default_action` as "activate" (Invoke → Toggle → legacy default action, so a caller stating intent works against a checkbox and against a VCL button alike), and implement `toggle` / `expand` / `collapse` / `select` / `increment` / `decrement` (RangeValue stepped by `CurrentSmallChange` and clamped to `CurrentMinimum`…`CurrentMaximum` — UIA publishes no Increment method) / `scroll_into_view` / `focus`. Unsupported verbs fail with the element's live action list echoed in the error, so the caller can self-correct from the response alone. **Not** fixed: writing a value into a field, which the trait cannot express — see #46.
 **Severity:** 🟡 High — this is the gap that forces OCR onto every form field.
 
 ### 40. Serialization failures return an empty tool payload instead of an error
@@ -314,7 +315,7 @@ self-correcting rather than a silent empty result.
 
 **File:** `src/platform/accessibility/windows.rs` (`get_element_properties`, `build_node`)
 **Problem (verified 2026-11-05):** `get_element_properties` resolves the cached element and then calls `build_node`, which unconditionally mints `uia:{next_id}` and inserts the element into the cache under that new key before the function overwrites `node.id` with the caller's original id. So every read-only properties call grows the cache by one duplicate COM reference and advances the counter, until the next `get_tree` clears it. Separately, `build_node` does `if let Ok(mut cache) = self.cache.lock() { cache.insert(…) }` — if that lock is poisoned the id is still returned to the caller but was never inserted, so the very next `accessibility_action` on it fails with "not in the current accessibility cache" for a reason the caller cannot see.
-**Status:** 🟡 Open — extract an id-free node builder for the properties path (or reuse the queried key), and turn the cache-insert failure into a `GuiError` instead of a silently skipped insert.
+**Status:** ✅ Fixed — `build_node` became a thin wrapper over `build_node_with_id(element, depth, id)`. `id: None` is the tree-walk path (mint from the counter, insert); `id: Some(key)` is the properties path, which reuses the key the caller already addressed the element by and leaves both cache and counter untouched. The insert failure is no longer skipped: a poisoned lock returns `GuiError::PlatformError("accessibility cache lock poisoned")` instead of handing back an id that can never resolve.
 **Severity:** 🟢 Medium — no wrong answers today, but the cache lifetime is not what the contract says and one branch hands out unresolvable ids.
 
 ### 42. `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch
@@ -420,6 +421,13 @@ portable assertions and let the CI matrix prove them.
 **Status:** 🟡 Open — correct each to match the code, drop the stale banner and the module-level `allow(dead_code)`.
 **Severity:** 🔵 Low — but an integrator reading the security posture sentence gets the opposite of what ships.
 
+### 46. No accessibility path writes a value into an element (`set_value` missing from the trait)
+
+**Files:** `src/gui/accessibility.rs` (`AccessibilityCapability`), all three `src/platform/accessibility/*`
+**Problem (verified 2026-11-05):** `#38` is closed without a way to put text into an edit field, deliberately. `AccessibilityCapability::invoke_element_action(element_id, action)` takes an action *name* and no value argument, so `ValuePattern::SetValue` / `RangeValuePattern::SetValue` are unreachable through the public API on every platform — advertising a `set_value` action would advertise a call that cannot carry the value it needs. Form driving therefore still ends in keyboard injection via `shell`/`gui` input tools rather than the accessibility tree, which is slower and loses the field's identity. Fixing it properly means widening the trait (an `action` + optional `value` pair, or a separate `set_element_value`), implementing it on Windows (Value → RangeValue), macOS (`AXValue`) and Linux (AT-SPI `SetContents`), then extending the tool schema, the handler, `get_element_actions` and the `StubBackend` recording from #43.
+**Status:** 🟡 Open — design decision recorded while fixing #38; needs the trait change, not a pattern call.
+**Severity:** 🟡 High — the remaining reason a form-automation session falls back to keystrokes and OCR.
+
 ### 26. `network_connections` ignores its `limit` parameter
 
 **File:** `src/mcp/handlers/system.rs` (`handle_network_connections`)
@@ -435,6 +443,7 @@ Current state of the planned feature phases:
 - All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). All four tools are live in the dispatch and in `tools/list` (see issue #4).
 - `get_element_properties` / `invoke_element_action` now implemented on all platforms (element caches on Windows/macOS, stable D-Bus paths on Linux).
 - Remaining: Linux ignores `window_id` and uses blocking D-Bus calls.
+- Audit 2026-11-05: Windows now reads value/description and the expanded / checked / selected / offscreen states and drives the Toggle, Value, ExpandCollapse, SelectionItem, RangeValue and ScrollItem patterns (#38, #39). Writing a value into an element is still unreachable on any platform because the capability trait has no value parameter — tracked as #46.
 
 ### Phase 7 — Template Matching ✅ Done
 - `vision_find_image` / `vision_wait_for_image` wired to rustautogui's CPU FFT NCC path via the new `VisionCapability` backend trait; both tool schemas exposed in `tools/list` (issue #16).
