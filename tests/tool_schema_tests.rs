@@ -13,11 +13,22 @@ use serde_json::{json, Value};
 use sys_mcp::gui::GuiClient;
 use sys_mcp::mcp::handlers::handle_tool_call;
 use sys_mcp::mcp::tools::all_tools;
-use sys_mcp::StubBackend;
+use sys_mcp::{StubA11yBackend, StubBackend};
 
 /// Every tool advertised by `tools/list`.
 fn declared_tools() -> Vec<Value> {
     all_tools()
+}
+
+/// A declared tool's schema, by name.
+fn schema_of(name: &str) -> Value {
+    let tool = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == name)
+        .unwrap_or_else(|| panic!("tool '{name}' is not declared"));
+    tool.get("inputSchema")
+        .expect("missing inputSchema")
+        .clone()
 }
 
 fn tool_name(t: &Value) -> String {
@@ -188,4 +199,124 @@ async fn ui_decide_reachable_with_actionable_availability_message() {
         // either way it is an explicit, actionable failure here (no goal).
         assert!(!text.contains("unknown tool"), "got: {text}");
     }
+}
+
+/// The accessibility tools that address an element by id must *declare* the
+/// arguments they refuse to run without, and must refuse them when they are
+/// absent. A schema that omits a required argument invites exactly the call the
+/// handler rejects, and the drift guards above cannot see it because they only
+/// check that `required` entries exist as properties.
+#[tokio::test]
+async fn accessibility_required_args_are_declared_and_enforced() {
+    let (backend, _recorder) = StubA11yBackend::new();
+    let client = GuiClient::new(backend);
+
+    let cases = [
+        ("accessibility_properties", json!({}), "element_id"),
+        (
+            "accessibility_action",
+            json!({ "element_id": "stub:0" }),
+            "action",
+        ),
+        (
+            "accessibility_action",
+            json!({ "action": "invoke" }),
+            "element_id",
+        ),
+    ];
+    for (name, args, arg) in cases {
+        let required = schema_of(name)
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            required.iter().any(|r| r.as_str() == Some(arg)),
+            "schema for '{name}' must list '{arg}' in required — the handler rejects a call without it"
+        );
+
+        let result = handle_tool_call(&client, name, args).await;
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "'{name}' accepted a call without '{arg}'"
+        );
+        assert_eq!(
+            joined_text(&result),
+            format!("missing required argument: {arg}"),
+            "'{name}' must name the argument it is missing"
+        );
+    }
+
+    // The reverse: a tool the schema declares as needing nothing must actually
+    // run with no arguments, or the schema is advertising a call that fails.
+    for name in ["accessibility_tree", "accessibility_find"] {
+        let schema = schema_of(name);
+        assert!(
+            schema.get("required").is_none(),
+            "'{name}' must not declare required arguments"
+        );
+        let result = handle_tool_call(&client, name, json!({})).await;
+        assert_eq!(
+            result.is_error,
+            None,
+            "'{name}' => {}",
+            joined_text(&result)
+        );
+    }
+}
+
+/// The four accessibility tools are the newest surface in the server and the
+/// only one whose contract spans two calls (an id from one call feeding the
+/// next). Their descriptions are what tell an agent that contract, so they must
+/// keep naming the tools involved.
+#[test]
+fn accessibility_descriptions_name_the_id_contract_and_the_other_tools() {
+    for name in [
+        "accessibility_tree",
+        "accessibility_find",
+        "accessibility_properties",
+        "accessibility_action",
+    ] {
+        let tool = declared_tools()
+            .into_iter()
+            .find(|t| tool_name(t) == name)
+            .expect("declared");
+        let desc = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(!desc.is_empty(), "{name} has no description");
+        assert!(
+            desc.contains("accessibility"),
+            "'{name}' description does not describe itself as accessibility: {desc}"
+        );
+    }
+
+    // The id contract is stated on the two tools that consume an id, and it
+    // names both producers, so a caller can find where the id came from.
+    for name in ["accessibility_properties", "accessibility_action"] {
+        let tool = declared_tools()
+            .into_iter()
+            .find(|t| tool_name(t) == name)
+            .expect("declared");
+        let desc = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(desc.contains("most recent"), "'{name}': {desc}");
+        assert!(desc.contains("accessibility_tree"), "'{name}': {desc}");
+    }
+    let tree = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == "accessibility_tree")
+        .expect("declared");
+    let tree_desc = tree
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        tree_desc.contains("ids are invalidated") || tree_desc.contains("states"),
+        "the tree description must mention what it returns: {tree_desc}"
+    );
 }

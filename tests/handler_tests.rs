@@ -1,8 +1,8 @@
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
 use sys_mcp::gui::GuiClient;
 use sys_mcp::mcp::handlers::handle_tool_call;
-use sys_mcp::StubBackend;
+use sys_mcp::{StubA11yBackend, StubA11yRecorder, StubBackend};
 
 fn test_client() -> GuiClient {
     GuiClient::new(StubBackend)
@@ -660,10 +660,18 @@ async fn test_screen_find_text_missing_query_errors() {
     let result = handle_tool_call(&client, "screen_find_text", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
+
+    // Both legs are asserted so the test holds in a `--no-default-features`
+    // build, where the handler never reaches argument validation: the tool is
+    // declared but not compiled, and saying so is the correct answer.
+    #[cfg(feature = "ocr")]
     assert!(
         text.contains("missing required argument: query"),
         "got: {text}"
     );
+
+    #[cfg(not(feature = "ocr"))]
+    assert!(text.contains("OCR not available"), "got: {text}");
 }
 
 #[tokio::test]
@@ -1487,4 +1495,422 @@ async fn test_screen_read_rejects_unknown_detail_and_zero_sized_region() {
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("positive width and height"), "got: {text}");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Accessibility tools — issue #43
+//
+// Driven through `StubA11yBackend`, which serves a fixed tree and the id-cache
+// contract the platform backends implement. The fixture's depth-first ids are:
+//   stub:0 window "Stub Window"
+//   stub:1 menu bar "Menu"        stub:2 menu item "File"
+//   stub:3 checkbox "Trial Balance"
+//   stub:4 edit "Voucher No"
+//   stub:5 separator (no name)
+//   stub:6 button "OK (F2)"
+//   stub:7 table "Day Book"       stub:8 text "Row 1"
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn a11y_client() -> (GuiClient, StubA11yRecorder) {
+    let (backend, recorder) = StubA11yBackend::new();
+    (GuiClient::new(backend), recorder)
+}
+
+/// The tool response body as JSON. `accessibility_tree` / `accessibility_properties`
+/// return a bare document; `accessibility_find` prefixes a human summary line,
+/// so the JSON starts at the first newline for those.
+fn tool_json(result: &sys_mcp::protocol::mcp::ToolResult) -> Value {
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let body = match text.find('\n') {
+        Some(pos) if text.starts_with("Found ") => &text[pos + 1..],
+        _ => text,
+    };
+    serde_json::from_str(body).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
+}
+
+/// Every id in the tree, depth-first, in the order the walk minted them.
+fn all_ids(node: &Value) -> Vec<String> {
+    let mut ids = vec![node
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()];
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child in children {
+            ids.extend(all_ids(child));
+        }
+    }
+    ids
+}
+
+/// First node whose name matches, searched depth-first.
+fn find_by_name<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+    if node.get("name").and_then(Value::as_str) == Some(name) {
+        return Some(node);
+    }
+    node.get("children")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|c| find_by_name(c, name))
+}
+
+#[tokio::test]
+async fn test_accessibility_tools_fail_as_unsupported_without_a_backend() {
+    // The premise of #43, kept pinned: the plain stub has no accessibility
+    // implementation, so the capability error path is the only reachable one.
+    // Arguments are filled in because the handlers validate them first — with
+    // empty arguments this would report a missing argument instead.
+    let client = test_client();
+    let args = json!({ "element_id": "stub:0", "action": "invoke", "query": "any" });
+    for name in [
+        "accessibility_tree",
+        "accessibility_find",
+        "accessibility_properties",
+        "accessibility_action",
+    ] {
+        let result = handle_tool_call(&client, name, args.clone()).await;
+        assert_eq!(result.is_error, Some(true), "'{name}' must fail here");
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("capability not supported: accessibility"),
+            "'{name}' => {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_accessibility_tree_returns_the_fixture_with_resolvable_ids() {
+    let (client, _recorder) = a11y_client();
+    let result = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    let tree = tool_json(&result);
+
+    assert_eq!(tree["id"], json!("stub:0"));
+    assert_eq!(tree["role"], json!("window"));
+    assert_eq!(tree["name"], json!("Stub Window"));
+    assert_eq!(tree["children"].as_array().unwrap().len(), 6);
+
+    // Ids are minted depth-first and handed to the caller, which is the only
+    // reason a later `accessibility_properties` call can resolve them.
+    let expected: Vec<String> = (0..9).map(|i| format!("stub:{i}")).collect();
+    assert_eq!(all_ids(&tree), expected);
+
+    let button = find_by_name(&tree, "OK (F2)").expect("button in tree");
+    assert_eq!(button["role"], json!("button"));
+    assert_eq!(button["cx"], json!(680), "640 + 80/2");
+    assert_eq!(button["cy"], json!(572), "560 + 24/2");
+    assert!(button["actions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("invoke")));
+
+    let checkbox = find_by_name(&tree, "Trial Balance").expect("checkbox in tree");
+    assert_eq!(checkbox["value"], json!("1"));
+    assert!(checkbox["states"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("checked")));
+
+    let edit = find_by_name(&tree, "Voucher No").expect("edit in tree");
+    assert_eq!(edit["value"], json!("12060623"));
+    assert!(edit["description"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("Voucher number"));
+
+    // An element with no name must serialize the key as null rather than
+    // dropping it, or a caller cannot tell "unnamed" from "not returned".
+    let separator = find_by_name(&tree, "Nonexistent Name");
+    assert!(separator.is_none());
+    let separator = &tree["children"][3];
+    assert_eq!(separator["role"], json!("separator"));
+    assert_eq!(separator["name"], json!(null));
+}
+
+#[tokio::test]
+async fn test_accessibility_tree_max_depth_trims_children_and_the_id_space() {
+    let (client, _recorder) = a11y_client();
+
+    let result = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 0 })).await;
+    let root = tool_json(&result);
+    assert_eq!(root["id"], json!("stub:0"));
+    assert_eq!(root["children"].as_array().unwrap().len(), 0);
+
+    let result = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 1 })).await;
+    let tree = tool_json(&result);
+    assert_eq!(tree["children"].as_array().unwrap().len(), 6);
+    // Depth 1 reaches the window's own children but no grandchildren: the menu
+    // item under "Menu" and the text under "Day Book" are not walked, so they
+    // are not issued ids either.
+    let expected: Vec<String> = (0..7).map(|i| format!("stub:{i}")).collect();
+    assert_eq!(all_ids(&tree), expected);
+
+    // `max_depth` reaching the backend at all is what this asserts: with the
+    // default (no argument) the same fixture yields nine ids, not seven.
+    let result = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    assert_eq!(all_ids(&tool_json(&result)).len(), 9);
+}
+
+#[tokio::test]
+async fn test_accessibility_find_matches_name_and_role_separately() {
+    let (client, _recorder) = a11y_client();
+
+    let result = handle_tool_call(&client, "accessibility_find", json!({ "query": "trial" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.starts_with("Found 1 element(s)"), "got: {text}");
+    let matches = tool_json(&result);
+    assert_eq!(matches[0]["name"], json!("Trial Balance"));
+    assert_eq!(matches[0]["role"], json!("checkbox"));
+
+    // A `role` filter reads the role only, so it finds the unnamed separator
+    // that the name query above could never match.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "role": "separator" }),
+    )
+    .await;
+    let matches = tool_json(&result);
+    assert_eq!(matches.as_array().unwrap().len(), 1);
+    assert_eq!(matches[0]["name"], json!(null));
+
+    // And the reverse: a name query must not match on role text.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "query": "separator" }),
+    )
+    .await;
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "No matching UI elements found."
+    );
+
+    // Substring, case-insensitive, on both fields at once.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "query": "OK (", "role": "BUTTON" }),
+    )
+    .await;
+    assert_eq!(matches_count(&result), 1);
+
+    // The ids a find returned belong to the walk it just ran, so they resolve.
+    let id = tool_json(&result)[0]["id"].as_str().unwrap().to_string();
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": id }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "id {id} should still resolve");
+    assert_eq!(tool_json(&result)["name"], json!("OK (F2)"));
+}
+
+fn matches_count(result: &sys_mcp::protocol::mcp::ToolResult) -> usize {
+    if result.content[0]
+        .text
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("No matching")
+    {
+        return 0;
+    }
+    tool_json(result).as_array().unwrap().len()
+}
+
+#[tokio::test]
+async fn test_accessibility_properties_returns_one_element_without_its_subtree() {
+    let (client, _recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    // "Menu" is the menu bar; in the full walk it carries the "File" item.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:1" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None);
+    let node = tool_json(&result);
+    assert_eq!(
+        node["id"],
+        json!("stub:1"),
+        "the id must come back unchanged"
+    );
+    assert_eq!(node["name"], json!("Menu"));
+    assert_eq!(
+        node["children"].as_array().unwrap().len(),
+        0,
+        "properties must not re-walk the subtree (issue #39)"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_properties_requires_an_element_id() {
+    let (client, _recorder) = a11y_client();
+    let result = handle_tool_call(&client, "accessibility_properties", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": 3 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_ids_are_invalidated_by_the_next_walk() {
+    // The contract the tools advertise: an id resolves only until the next tree
+    // walk. It used to be untestable because no stub served a tree at all.
+    let (client, _recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    let deep = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(deep.is_error, None, "stub:8 exists after the full walk");
+
+    // A shallower walk re-mints the id space and never reaches the ninth node.
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 1 })).await;
+    let stale = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(stale.is_error, Some(true));
+    let text = stale.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not in the current accessibility cache"),
+        "{text}"
+    );
+    assert!(
+        text.contains("call accessibility_tree or accessibility_find again"),
+        "the error must say how to get a usable id: {text}"
+    );
+
+    // An id that was never issued fails the same way, and a fresh find walks the
+    // whole tree again, so the deep id is live once more.
+    let never = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:99" }),
+    )
+    .await;
+    assert_eq!(never.is_error, Some(true));
+    let _ = handle_tool_call(&client, "accessibility_find", json!({ "query": "Row" })).await;
+    let again = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(again.is_error, None, "a new walk re-issues the ids");
+}
+
+#[tokio::test]
+async fn test_accessibility_action_reaches_the_backend_with_the_requested_verb() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:6", "action": "Invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "Invoked 'Invoke' on element stub:6."
+    );
+
+    // The response text alone cannot prove the backend was called — a handler
+    // can echo an argument it never used. The recorder is the other side.
+    assert_eq!(
+        recorder.invocations(),
+        vec![("stub:6".to_string(), "Invoke".to_string())]
+    );
+
+    let _ = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:3", "action": "toggle" }),
+    )
+    .await;
+    assert_eq!(
+        recorder.invocations(),
+        vec![
+            ("stub:6".to_string(), "Invoke".to_string()),
+            ("stub:3".to_string(), "toggle".to_string()),
+        ],
+        "the verb is passed through unchanged; alias normalization is platform code"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_action_records_nothing_when_the_call_is_refused() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:6" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: action"
+    );
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "action": "invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+
+    // A live element id plus an unknown verb does reach the backend, but an
+    // unresolvable id must not be invoked at all.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:42", "action": "invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .text
+            .as_deref()
+            .unwrap_or("")
+            .contains("not in the current accessibility cache"),
+        "got: {:?}",
+        result.content
+    );
+    assert!(
+        recorder.invocations().is_empty(),
+        "a refused action must not have reached the backend: {:?}",
+        recorder.invocations()
+    );
 }

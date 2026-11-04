@@ -12,5 +12,5 @@ pub mod system;
 pub mod terminal;
 pub mod web;
 
-pub use gui::backend::stub::StubBackend;
+pub use gui::backend::stub::{StubA11yBackend, StubA11yRecorder, StubBackend};
 pub use mcp::hub::McpHub;

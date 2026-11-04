@@ -76,7 +76,7 @@ AI Agent (Claude, OpenCode, etc.)
 
 - **mod.rs (GuiBackend trait)** — Super-trait combining required capabilities (Display + Input) with optional ones accessed via `as_*()` downcasting.
 - **local.rs (LocalBackend)** — The main backend. Wraps `RustAutoGui` in a Mutex for thread safety, delegates window management to platform-specific code, uses `arboard` for clipboard.
-- **stub.rs (StubBackend)** — Test backend that returns mock responses for testing.
+- **stub.rs (StubBackend, StubA11yBackend)** — Test backends returning fixed responses, no OS access. `StubBackend` deliberately serves no accessibility tree, so the `UnsupportedCapability` path stays reachable; `StubA11yBackend` adds a fixed nine-element tree that re-mints and invalidates element ids the way the platform backends do, plus a recorder that lets the `accessibility_*` handler tests assert what the backend actually received.
 
 ### Terminal/PTY Layer (`src/terminal/`)
 
