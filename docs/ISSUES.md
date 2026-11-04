@@ -63,9 +63,10 @@ it was read from.
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | ✅ Fixed |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (13 of 72 remain) |
-| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Open |
+| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + validated locally; remote run pending) |
 | 45 | Documentation that contradicts the shipped behavior | 🟢 Open |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
+| 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | 🟡 Open |
 
 ---
 
@@ -258,8 +259,19 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 - No dependency-vulnerability gate of any kind: no `deny.toml`, no cargo-deny / cargo-audit / OSV step in either workflow.
 - `release.yml` has never executed — `git tag` is empty and the version is still `0.1.0` with all shipped work under `## [Unreleased]`. It also has no test or smoke step, publishes no `SHA256SUMS` and no signature, and pins `macos-13`.
 - **Measured 2026-11-05 while fixing #43:** the missing feature leg was not merely untested, it was uncompilable — `cargo check --no-default-features --all-targets` failed outright (`tests/download_tests.rs` names `sys_mcp::download`, which only exists under `ocr`/`detection`), and one handler test asserted an OCR-only message. Both are gated as of #43, so `cargo test --no-default-features` now runs green locally and a slim CI leg is actually addable.
-**Status:** 🟡 Open — add `pull_request` targeting all branches plus a `workflow_dispatch`, add a feature-leg matrix (`detection`, `--no-default-features`) and `--all-targets` to clippy, add cargo-deny, and cut a tagged release with checksums once the above fixes land. The `--no-default-features` leg is unblocked (see above); the `detection` leg has never been built locally, so it must be expected to need fixes of its own.
-**Severity:** 🟡 High — the gates that were paid for are not wired to the branch flow.
+
+**Fixed 2026-11-05 (`ci.yml`, `release.yml`, new `deny.toml`):**
+- Triggers: `push: branches: ['**']` (was `[main, master]`) + `pull_request` + `workflow_dispatch`, with `concurrency: ci-…-${{ github.ref }}` and `cancel-in-progress: true` so a superseding push stops the older run.
+- The lint gate is now `cargo clippy --all-targets -- -D warnings`, i.e. as strict as the local run.
+- New `features` job (ubuntu, two legs). `--no-default-features` compiles **and** runs the suite — the combination nobody had ever compiled, which turned out to be uncompilable (bullet above). `--features detection` compiles and links with `--no-run` instead of executing, because running the suite provisions the real YOLO model to assert nothing — see #47.
+- New report-only `supply-chain` job (`EmbarkStudios/cargo-deny-action@v2`, `continue-on-error: true`) with a `deny.toml` seed.
+- `release.yml`: `workflow_dispatch` added so the pipeline can be exercised without a tag, with the `release` job gated on `if: github.event_name == 'push'` so a manual run never publishes; a `--version` smoke step per leg; a flatten step that fails if asset names collide across legs; `SHA256SUMS` generated over the flat asset set; and a comment recording that `macos-13` is load-bearing (last x86_64 macOS runner), not staleness.
+
+**Verified locally:** both workflow files pass `action-validator` against the GitHub Actions schema (exit 0 each). `deny.toml` parses as TOML and every key was checked against cargo-deny's current configuration docs — the keys newer cargo-deny rejects (`advisories.vulnerability/notice/severity-threshold`, `licenses.unlicensed/copyleft/deny/default/unknown`) are absent, and the two sections whose defaults could not be verified are omitted rather than guessed. `cargo check --all-targets --features detection` and `cargo test --all-targets --features detection` both exit 0 on Windows.
+
+**Owed / remaining:** none of this has executed remotely — the branch is unpushed, so every claim above is a local claim; that is the point of the trigger change. Expect the first remote run to need fixes: the feature legs run on Linux while both were only ever compiled on Windows, `macos-13` may be retired upstream, and the cargo-deny report will be red until someone triages it into `deny.toml`. `release.yml` has still never published (`git tag` is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing is deliberately **not** added: `SHA256SUMS` lets a downloader detect corruption, not establish provenance, and cosign/minisign or Windows code signing each need a key decision from the owner.
+**Status:** 🟡 Partially fixed — the gates are wired and schema-validated; the remote evidence is one push away.
+**Severity:** 🟡 High — the worth of every gate below is zero until a run exists, so the push is the remaining work, not a formality.
 
 ---
 
@@ -455,6 +467,33 @@ portable assertions and let the CI matrix prove them.
 **Status:** 🟡 Open — design decision recorded while fixing #38; needs the trait change, not a pattern call.
 **Severity:** 🟡 High — the remaining reason a form-automation session falls back to keystrokes and OCR.
 
+### 47. The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model
+
+**Files:** `tests/tool_schema_tests.rs` (`every_declared_tool_is_dispatchable`), `src/mcp/handlers/system.rs`, `src/system.rs`, `src/gui/mod.rs` (`GuiClient::detect_objects`), `src/gui/detection.rs`, `src/gui/ocr.rs`, `src/gui/backend/stub.rs`
+**Problem (measured 2026-11-05 while adding the `detection` CI leg for #44):** `StubBackend` only stands in for the paths that go through a backend trait. Everything else in `handle_tool_call` ignores the client — the `system_*`/`network_*`/`process_*`/`service_*` handlers all take `_client: &GuiClient` and call `tokio::task::spawn_blocking(SystemMonitor::… | NetworkManager::… | ServiceManager::…)` directly, and the detection path calls the module-level `detection::detect_objects(&screenshot)`. So a "stub" test does real OS work. Established by instrumenting the drift-guard loop with a per-tool `Instant` and running it in both the slim and the `detection` builds (instrumentation reverted; `git diff` on that file is empty):
+
+| dispatched with `{}` | `--no-default-features` | `--features detection` |
+| --- | --- | --- |
+| whole `every_declared_tool_is_dispatchable` | **11.62 s** | **15.77 s** |
+| `network_info` | 4.54 s | 5.15 s |
+| `system_stats` | 2.18 s | 2.36 s |
+| `disk_usage` | 1.92 s | 1.90 s |
+| `process_list` | 1.04 s | 0.90 s |
+| `service_list` | 0.87 s | 0.84 s |
+| `system_logs` | 0.63 s | 0.74 s |
+| `detect_objects` | (feature off) | 2.85 s |
+| `screen_read` | (feature off) | **0.02 s** |
+
+Three things fall out of that table:
+- **~11.6 s of the drift guard is real OS probing.** `src/system.rs` shells out — `Command::new` appears with `powershell` (5 sites), `sc`, `netstat`, `ipconfig`, `df`, `systemctl`, `launchctl`, `top`, `journalctl`, `ss`, … — so the test that exists to catch schema/dispatch drift spawns child processes and reads the machine's state on every run, on every CI OS, with ±0.6 s of run-to-run variance visible on `network_info` alone. Its duration and its green-ness depend on the runner, not on this crate.
+- **`detect_objects` provisions the real detector before it can fail.** `detection::detect_objects` runs `ensure_model()` first, so 2.85 s goes into loading the 12.85 MB YOLOv8n ONNX into tract — and `cargo test --all-targets --features detection` was observed *creating* `%LOCALAPPDATA%\sys-mcp\models\yolov8n.onnx` (12,851,049 bytes, written 02:23:36 → 02:23:56), i.e. the test fetched it from `ultralytics/assets`, the URL that already 404-ed once (#27). `models_dir()` falls back to `PathBuf::from(".")` when `dirs_next::cache_dir()` is `None`, so without a cache dir the model lands in the working directory — the checkout, in CI.
+- **No test in the suite has ever run OCR.** `StubBackend::screenshot()` returns `data: vec![]` (with width/height 1920×1080), so `ocr::read_screen` fails at image decode in 0.02 s, before `get_engine()` loads a model. Nothing else in `tests/` or in the `#[cfg(test)]` modules calls `read_screen` or `ocr::` at all (grepped), so the OCR inference path is untested in CI — every `screen_read` behind #31's timings was a manual call — and the two OCR models have never been downloaded by a test. Detection is the mirror case: it pays the expensive step (model provisioning) before the cheap one (image decode), so it spends 2.85 s and still asserts nothing beyond `!text.contains("unknown tool")`.
+
+**Consequences:** the `detection` CI leg would download a 12.85 MB third-party asset per run to prove nothing, which is why #44 runs that leg with `--no-run`; the ~11.6 s OS-probing floor measured in the slim build above is paid by every leg, on every OS, and cannot be cached; and "it passed with `StubBackend`" is not evidence that a handler avoided real side effects, which is the assumption behind #42's validation-order test (provable there only by timing: 0.00 s).
+
+**Status:** 🟡 Open — the fix has a shape this codebase already uses twice (`DisplayCapability`, `AccessibilityCapability`): put inference and the system probes behind a backend trait so the stub answers without touching the machine. Note that handing `StubBackend` a decodable PNG is *not* a fix on its own — it would move the OCR model download into the default job instead of merely removing the detection one. Both moves need the trait, not the buffer.
+**Severity:** 🟡 High — the drift guard's cost and its outcome depend on child processes and a third-party URL, and the OCR path it appears to cover is not covered at all.
+
 ### 26. `network_connections` ignores its `limit` parameter
 
 **File:** `src/mcp/handlers/system.rs` (`handle_network_connections`)
@@ -490,6 +529,7 @@ Current state of the planned feature phases:
 - Remaining: destructive-tool coverage (branch `test/destructive-tools`, issue #24), platform cfg gating (issue #25), web server tests, property-based JSON-RPC roundtrips.
 - Audit 2026-11-05: the suite is now 248 tests and the schema/dispatch drift guard is in place, but 20 advertised tools still have no test reference and `StubBackend` cannot exercise the accessibility handlers at all — tracked as issue #43.
 
-### Phase 12 — CI/CD ✅ Done
+### Phase 12 — CI/CD 🔓 Partially done
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
 - Audit 2026-11-05: the matrix works but is not wired to the branch flow — feature-branch pushes trigger nothing, no feature combination is ever built, and `release.yml` has never run because no tag exists. Tracked as issue #44.
+- Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) compile in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Not yet executed remotely — the branch is unpushed, and signing is still missing (needs a key decision).

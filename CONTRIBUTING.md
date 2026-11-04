@@ -117,8 +117,8 @@ Platform-specific code lives in `src/platform/`. Each platform module implements
 
 ## Code Style
 
-- Run `cargo fmt` before committing.
-- Run `cargo clippy` and address warnings.
+- Run `cargo fmt` before committing (`cargo fmt --check` is the CI gate).
+- Run `cargo clippy --all-targets -- -D warnings` and address warnings. `--all-targets` is what CI enforces; without it lints in `tests/` are skipped locally and fail on the push.
 - Use `thiserror` and the `GuiError` enum for error handling — don't panic.
 - Feature-gate optional functionality with `#[cfg(feature = "...")]`.
 - Keep `unsafe` blocks minimal and documented — currently only needed for `AutoGuiWrapper` Send/Sync and Win32 FFI.
@@ -128,6 +128,12 @@ Platform-specific code lives in `src/platform/`. Each platform module implements
 ```bash
 # Run all tests
 cargo test
+
+# The two feature combinations CI also builds. Both must compile; only the slim
+# one is executed (see .github/workflows/ci.yml, and issue #47 for why).
+cargo check --all-targets --no-default-features
+cargo test --all-targets --no-default-features
+cargo check --all-targets --features detection
 
 # Build and run
 cargo build --release

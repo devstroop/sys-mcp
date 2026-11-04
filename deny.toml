@@ -1,0 +1,74 @@
+# cargo-deny configuration — supply-chain checks for the dependency tree
+# (481 locked packages, all from crates.io, no git sources).
+#
+# This is a seed, not a clean baseline: the tree has never been audited, so the
+# CI job that runs it (`.github/workflows/ci.yml`, `supply-chain`) is
+# report-only. Expect the first run to be red — that list of findings is the
+# input to triage. Read it, add ignores/skips below with a reason and a date,
+# then drop `continue-on-error` from the job (issue #44).
+#
+# Every key below was checked against cargo-deny's current configuration docs
+# (https://embarkstudios.github.io/cargo-deny/). Keys that recent cargo-deny
+# versions removed and now *reject* are deliberately absent:
+#   [advisories] vulnerability, notice, severity-threshold
+#   [licenses]   unlicensed, deny, copyleft, allow-osi-fsf-free, default
+# Sections that would only contain guessed keys are omitted entirely; cargo-deny
+# then applies its documented defaults, and the checks still run.
+#
+# Run locally with: cargo install --locked cargo-deny; cargo deny check
+
+[advisories]
+# `unmaintained`/`unsound` take a *scope* (all | workspace | transitive | none),
+# not a lint level. `workspace` flags only crates we depend on directly, which
+# is the actionable set for a first triage.
+unmaintained = "workspace"
+yanked = "warn"
+
+# Triaged entries go here, each with the reason and the date it was added:
+#   { id = "RUSTSEC-0000-0000", reason = "not reachable: <why>" }
+ignore = []
+
+[licenses]
+# All licenses are denied unless listed in `allow`, so the first run reports
+# every crate whose SPDX id is missing below — that report is what fills this
+# list in. `unused-allowed-license = "warn"` (the default) additionally flags
+# entries below that the graph never uses, so the list cannot rot.
+confidence-threshold = 0.8
+unused-allowed-license = "warn"
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+]
+
+[bans]
+# Duplicated versions are near-certain in a tree this size (image, windows-sys
+# and the crypto crates are the usual suspects), so this reports rather than
+# fails. `wildcards = "deny"` stays strict: no `version = "*"` dependency is
+# ever intended here.
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+# Enabled-default-features-on-a-dependency is a real hygiene question, but every
+# transitive crate in this graph enables its own defaults, so the check is noise
+# until the graph is curated. Set explicitly to "allow" rather than left to an
+# undocumented default; flip to "warn" when triaging.
+external-default-features = "allow"
+workspace-default-features = "allow"
+
+[sources]
+# Everything is pulled from crates.io; the vendored rustautogui submodule is a
+# path dependency, so it needs no source entry. A git or alternate-registry
+# dependency is therefore a deliberate change and must be added here with a
+# reason, not silently.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,17 +1,26 @@
 name: CI
 
+# Every branch gets a signal, not only main/master — a push to a feature
+# branch used to trigger nothing, so nothing on `feat/…` had remote evidence
+# and the first CI result arrived at PR time (issue #44).
 on:
   push:
-    branches: [main, master]
+    branches: ['**']
   pull_request:
-    branches: [main, master]
+  workflow_dispatch:
+
+# A push that supersedes an in-flight run makes the older one worthless;
+# cancel it instead of paying for both.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   test:
-    name: Test
+    name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -41,8 +50,78 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
+      # `--all-targets` matters: without it the lint gate skipped tests/ and
+      # examples/, so lints in the test suite — the code most often edited —
+      # were ungated while every local run was stricter.
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Format
         run: cargo fmt --check
+
+  # Feature legs on one OS. The default set is covered by the job above; this
+  # is the combination nobody ever compiled: the slim build, where every
+  # `#[cfg(not(feature = …))]` arm is live code, and the opt-in `detection`
+  # build, which pulls ~56 extra crates and its own platform arms.
+  features:
+    name: Features (${{ matrix.leg.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        leg:
+          - name: no-default-features
+            flags: '--no-default-features'
+            # The slim suite is stub-only and fast; run it.
+            no_run: ''
+          - name: detection
+            flags: '--features detection'
+            # Compile and link the test binaries, but do not execute them.
+            # `every_declared_tool_is_dispatchable` dispatches `detect_objects`
+            # with `{}`; that handler calls the module-level detector rather
+            # than a backend trait, so it provisions the real model first —
+            # measured 2.85 s to load the 12.85 MB YOLOv8n ONNX into tract, and
+            # `ensure_model()` downloads it from GitHub when the cache is cold.
+            # It then analyzes the stub's *empty* image buffer, so the work buys
+            # no assertion at all (issue #47). What #44 is about is the
+            # uncompiled `cfg` arms, which `--no-run` covers.
+            no_run: '--no-run'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y libx11-dev libxtst-dev libxcb-shm0-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: features-${{ matrix.leg.name }}
+
+      - name: Check
+        run: cargo check --all-targets ${{ matrix.leg.flags }}
+
+      - name: Test
+        run: cargo test --all-targets ${{ matrix.leg.flags }} ${{ matrix.leg.no_run }}
+
+  # Supply-chain report. Non-blocking on purpose: the dependency tree has
+  # never been audited, so a deny here would fail every run until someone
+  # triaged it. Read the annotations, add ignores to deny.toml with a reason,
+  # and flip `continue-on-error` away once one leg is clean (issue #44).
+  supply-chain:
+    name: Dependency audit (report only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
