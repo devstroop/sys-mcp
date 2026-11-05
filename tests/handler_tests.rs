@@ -723,6 +723,279 @@ async fn test_detect_objects_is_answered_by_the_stub_without_loading_the_model()
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Remaining #43 coverage — tools that appeared in no test at all
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_system_stats_answers_from_the_stub_fixture() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "system_stats", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    // `StubSystem`'s numbers (src/gui/backend/stub.rs), so the assertions bind
+    // to this repo rather than to the runner's CPU, RAM or disk.
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert_eq!(v["cpu_usage_percent"], 12.5, "got: {text}");
+    assert_eq!(v["memory_percent"], 25.0, "got: {text}");
+    assert_eq!(v["memory_total_bytes"], 8_589_934_592u64, "got: {text}");
+    for field in ["cpu_usage_percent", "memory_percent", "disk_percent"] {
+        assert!(v.get(field).is_some(), "missing {field}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn test_disk_usage_answers_from_the_stub_fixture() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "disk_usage", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    let drives = v
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an array of mounts, got: {text}"));
+    assert_eq!(drives.len(), 1, "expected the single stub mount: {text}");
+    assert_eq!(drives[0]["mount"], "C:", "got: {text}");
+    assert_eq!(drives[0]["percent"], 25.0, "got: {text}");
+    assert_eq!(drives[0]["total_bytes"], 512_110_190_440u64, "got: {text}");
+}
+
+#[tokio::test]
+async fn test_decision_stats_reports_the_local_ledger_without_a_model_call() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_stats", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert!(v.get("summary").is_some(), "missing summary: {text}");
+    assert!(
+        text.contains("net-negative"),
+        "expected the ledger's own caveat, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_decision_stats_reset_is_accepted_and_still_reports() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_stats", json!({ "reset": true })).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert!(v.get("summary").is_some(), "missing summary: {text}");
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_refuses_missing_text_or_question() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_rank", json!({ "question": "q" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: text"),
+        "got: {text}"
+    );
+
+    let result = handle_tool_call(&client, "decision_rank", json!({ "text": "t" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: question"),
+        "got: {text}"
+    );
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_zero_top_k_is_refused_before_any_work() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": "t", "question": "q", "top_k": 0 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("top_k must be at least 1"), "got: {text}");
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_returns_small_input_whole_without_ranking() {
+    let client = test_client();
+    // FLOOR_CHARS is 8 KiB (src/decision/rank.rs), so this input takes the
+    // return-whole branch: the response shape is asserted with no gateway call.
+    let text_in = "alpha\nbeta\ngamma";
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": text_in, "question": "which line is beta" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert_eq!(v["skipped_small"], true, "got: {text}");
+    assert_eq!(
+        v["batches"], 0,
+        "a small input must not spend a batch: {text}"
+    );
+    assert_eq!(v["dropped"], 0, "nothing is silently cut: {text}");
+    assert_eq!(v["failed_batches"], 0, "got: {text}");
+    // The contract is "returned whole": kept == total and the input comes back
+    // byte-for-byte. The block COUNT is deliberately not pinned — split_blocks
+    // hard-splits an over-long line at max_chars, so it is the splitter's
+    // business, not the handler's promise.
+    assert_eq!(v["kept"], v["total_blocks"], "nothing dropped: {text}");
+    assert!(
+        v["total_blocks"].as_u64().unwrap_or(0) >= 1,
+        "expected at least one block, got: {text}"
+    );
+    assert_eq!(
+        v["content"].as_str(),
+        Some(text_in),
+        "input must be returned verbatim, got: {text}"
+    );
+}
+
+#[cfg(not(feature = "jev"))]
+#[tokio::test]
+async fn test_decision_rank_is_advertised_but_reports_its_feature() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": "t", "question": "q" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not compiled in"),
+        "expected the actionable feature message, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_requires_a_label() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "detect_click_object", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("missing 'label' argument"), "got: {text}");
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_clicks_the_stub_box() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "button" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubDetection's only box is centred at (125, 215), so these numbers prove
+    // the click came from the stub rather than from a real model run.
+    assert!(
+        text.contains("button") && text.contains("125") && text.contains("215"),
+        "expected the stub box centre, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_reports_no_match_and_an_out_of_range_index() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "zebra" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("No objects found with label 'zebra'"),
+        "got: {text}"
+    );
+
+    // StubDetection answers exactly one "button", so index 1 cannot resolve.
+    let result = handle_tool_call(
+        &client,
+        "detect_click_object",
+        json!({ "label": "button", "index": 1 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("out of range") && text.contains("found 1 objects"),
+        "got: {text}"
+    );
+}
+
+#[cfg(not(feature = "detection"))]
+#[tokio::test]
+async fn test_detect_click_object_reports_its_feature_when_detection_is_off() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "button" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("rebuild with `--features detection`"),
+        "expected the actionable feature message, got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_requires_a_query() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_scroll_to_text", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: query"),
+        "got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_reports_found_after_zero_scrolls_via_the_stub() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found", "max_scrolls": 100 }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubOcr answers every find_text query with one match, so the very first
+    // iteration returns: no scrolling, no 300 ms waits, no engine.
+    assert!(
+        text.contains("after 0 scroll(s)"),
+        "expected an immediate match, got: {text}"
+    );
+}
+
+#[cfg(not(feature = "ocr"))]
+#[tokio::test]
+async fn test_screen_scroll_to_text_reports_its_feature_when_ocr_is_off() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("ocr"),
+        "expected the feature message, got: {text}"
+    );
+}
+
 #[tokio::test]
 async fn test_no_such_tool_returns_error() {
     let client = test_client();

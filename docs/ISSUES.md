@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (288 passing / 4 ignored today) |
+| 6 | Test coverage is critically low | ✅ Fixed (298 passing / 4 ignored today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (288 passing / 4 ignored today; 13 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (298 passing / 4 ignored today; 7 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -62,7 +62,7 @@ it was read from.
 | 40 | Serialization failures return an empty tool payload instead of an error | ✅ Fixed |
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | ✅ Fixed |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
-| 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (13 of 72 remain) |
+| 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (7 of 72 remain — the `mcp_*` hub tools need a fake child server) |
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely: first run found 2 real defects; release side still unexercised) |
 | 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
@@ -276,7 +276,7 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 **Files:** `tests/`, `src/gui/backend/stub.rs`
 **Problem (verified 2026-11-05):** the declared/dispatched sets match exactly (0 orphan tools — `tests/tool_schema_tests.rs` is a real drift guard and works), but 20 advertised tools appear in no test file: `accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`, `screen_scroll_to_text`, `decision_rank`, `decision_stats`, `detect_click_object`, `disk_usage`, `system_stats`, `system_logs`, and all eight `mcp_*` hub tools. The four accessibility tools are structurally untestable today: `StubBackend` implements no `AccessibilityCapability`, so `GuiClient::accessibility()` returns `UnsupportedCapability` and no handler path beyond the error can be exercised. `tests/handler_tests.rs` covers display/mouse/keyboard/clipboard/window only.
-**Status:** 🟡 Partially fixed (2026-11-05) — the accessibility half is closed; the remaining tool coverage is not.
+**Status:** 🟡 Partially fixed (2026-11-05) — the accessibility half and the cheap argument/result half are closed; 7 tools remain, all of them `mcp_*` hub tools.
 - New `StubA11yBackend` in `src/gui/backend/stub.rs`: the `StubBackend` display/input behavior plus a fixed nine-element tree, and the id-cache contract the platform backends implement — every walk re-mints `stub:<n>` ids depth-first and invalidates the previous walk's ids, so `accessibility_properties` / `accessibility_action` behave the same way here as on Windows (issue #39). `max_depth` is honored (trimmed children are not issued ids), name and role are filtered as separate substring matches, and an unresolvable id is refused with the same wording.
 - `StubA11yRecorder` is handed back by `StubA11yBackend::new()` because `GuiClient` takes ownership of the backend. It exists because a tool response can echo an argument it never used: the tests assert the `(element_id, action)` pairs the backend actually received, and that a refused action records nothing.
 - `StubBackend::as_accessibility()` stays `None` on purpose, so the `UnsupportedCapability` path keeps a test. `handler_tests.rs` gained 9 accessibility tests; `tool_schema_tests.rs` gained 2 (schema `required` vs what the handler enforces, and the id-contract wording in the descriptions).
@@ -284,6 +284,11 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 - Measured coverage after this change (script over `tools.rs` names vs the test-bearing corpus): **13 of 72** declared tools still appear in no test — `decision_rank`, `decision_stats`, `detect_click_object`, `disk_usage`, `mcp_discover`, `mcp_exec`, `mcp_start`, `mcp_stop`, `mcp_tool_groups`, `mcp_tools`, `mcp_unregister`, `screen_scroll_to_text`, `system_stats`. (`system_logs` and `mcp_register`/`mcp_list` left the list via #41 and #40.)
 - Found and fixed while verifying: `cargo check --no-default-features --all-targets` could not complete at all — `tests/download_tests.rs` referenced `sys_mcp::download`, a module gated on `ocr`/`detection`, and `test_screen_find_text_missing_query_errors` asserted an OCR-feature message in a slim build. Both are gated now, and `cargo test --no-default-features` runs green (recorded under #44, which is what makes that leg permanent).
 **Remaining:** the 13 tools above, of which the eight `mcp_*` hub tools need a fake child server to test the lifecycle and `system_stats`/`disk_usage`/`decision_*`/`detect_click_object`/`screen_scroll_to_text` need only argument and result-shape tests. Verb-alias normalization (`press`/`click`/`tap` → activate) still lives inside the Windows backend and has no test — the stub passes the verb through unchanged, which is what its tests assert.
+- Second batch 2026-11-05 (the cheap tier of that list): 10 tests added to `tests/handler_tests.rs` covering `system_stats`, `disk_usage`, `decision_stats` (read + `reset`), `decision_rank` (missing `text`/`question`, `top_k: 0`, and the small-input return-whole branch — which needs no gateway call because `FLOOR_CHARS` is 8 KiB), `detect_click_object` (missing label, stub-box click at (125, 215), no-match, out-of-range index), and `screen_scroll_to_text` (missing query, immediate stub match). Coverage is now **7 of 72** uncovered: the `mcp_*` tools that need a fake child server (`mcp_discover`, `mcp_exec`, `mcp_start`, `mcp_stop`, `mcp_tool_groups`, `mcp_tools`, `mcp_unregister`). `screen_scroll_to_text` left the list, but only its *found* path and argument refusal are covered — the not-found branch is unreachable against `StubOcr`, which answers every `find_text` query with one match, so exercising it needs a stub fixture that can return no matches.
+  Two things that writing those tests proved, both now encoded as `#[cfg]` gates rather than assumptions:
+  - **A feature-off fallback handler never validates its arguments.** `handle_click_object` and `handle_scroll_to_text` are replaced wholesale under `#[cfg(not(feature = …))]`, so `{}` returns "rebuild with `--features detection`" / "build with 'ocr' feature", not `missing 'label' argument`. An argument-refusal test is therefore only true under its own feature, and the `screen_scroll_to_text` missing-query test failed on the slim leg for exactly this reason before it was gated.
+  - **`decision_rank`'s block count is the splitter's business, not the handler's contract.** `split_blocks` hard-splits an over-long line at `max_chars`, so a 1-char cap yields one block per *character* (16 for a 16-byte input). The assertions bind to the promised invariants instead: `kept == total_blocks`, `dropped == 0`, `batches == 0`, and `content` equal to the input verbatim.
+- Re-measured after this batch: default `cargo test --all-targets` on Windows = **298 passed / 0 failed / 4 ignored** (302 total); `--no-default-features` = 230 passed / 1 ignored; `--features detection` = 301 passed / 4 ignored (handler_tests 135 in 0.06 s, still no model load). `fmt --check` and `clippy --all-targets -- -D warnings` clean.
 **Severity:** 🟡 High — the newest, most intricate surface (element-id caching) shipped with no coverage at all.
 
 ### 44. CI never runs for branch pushes and tests no feature combination; the release workflow has never run
@@ -677,7 +682,7 @@ Three things fall out of that table:
 - **Stage 2 — `OcrCapability` / `DetectionCapability` (`src/gui/ocr.rs`, `src/gui/detection.rs`)**: mirrors the existing `VisionCapability` seam. Handlers reach inference through `GuiClient::ocr()`/`detection()`; `LocalOcr`/`LocalDetection` run the real engines, `StubOcr`/`StubDetection` hand back a fixed result with **no ONNX download and no model load**. This is what lets the `detection` CI leg drop its `--no-run` and actually execute: `cargo test --all-targets --features detection` runs 123 handler tests green in 0.05 s with no `.onnx` touched.
 - **Real-OS policy** (the user's chosen "ignore + gated job"): the one remaining live-desktop probe, `monitor_tests::windows_enumeration_reports_valid_monitors`, is `#[ignore]`d with a `real_os` marker, joining the ignored platform-log probe. A manual `workflow_dispatch`-only `real-os` job in `ci.yml` runs `cargo test --all-targets -- --ignored --nocapture` on all three OSes, so the probes are exercised without making the PR gate depend on runner-installed binaries.
 
-Measured after both stages: default `cargo test --all-targets` on Windows = **288 passed / 0 failed / 4 ignored** (292 total); `--no-default-features` and `--features detection` legs both run green. The table above (the 11.6 s floor, the 2.85 s model load, the untested OCR path) is what these seams removed.
+Measured after both stages: default `cargo test --all-targets` on Windows = **288 passed / 0 failed / 4 ignored** (292 total); `--no-default-features` and `--features detection` legs both run green. The table above (the 11.6 s floor, the 2.85 s model load, the untested OCR path) is what these seams removed. (That count was taken before #43's second batch added 10 tests; the current figure is in the Status index above.)
 
 **Original shape of the fix** (kept for context): this codebase already used the pattern twice (`DisplayCapability`, `AccessibilityCapability`); handing `StubBackend` a decodable PNG was never the fix — it would only have moved the OCR download into the default job. Both moves needed the trait, not the buffer.
 - Confirmed by the platform, not just by timing (2026-11-05, while root-causing #48): a `rust:1-slim-bookworm`
@@ -732,6 +737,11 @@ Current state of the planned feature phases:
   ONNX model. Two OCR handler tests run under the default feature set and the `detection` leg now executes
   instead of compile-only; the one live-desktop probe is `#[ignore]`d into a manual `real-os` CI job. Re-measured:
   **288 passing / 0 failed / 4 ignored** (292 total) on Windows.
+- Fix 2026-11-05 (#43, second batch): the cheap half of the remaining coverage gap is closed — 10 argument and
+  result-shape tests for `system_stats`, `disk_usage`, `decision_stats`, `decision_rank`, `detect_click_object` and
+  `screen_scroll_to_text`, all served by the #47 stubs (no shell-out, no model, no gateway). 7 of 72 tools are now
+  uncovered — the `mcp_*` hub tools, which need a fake child server to exercise the lifecycle. Re-measured:
+  **298 passing / 0 failed / 4 ignored** (302 total) on Windows.
 - Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
   three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned
   that first read into `guardrails: false` for the whole process. `init` is now authoritative in either order,
