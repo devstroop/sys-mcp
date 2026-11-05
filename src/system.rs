@@ -1084,7 +1084,12 @@ impl LogViewer {
                 ));
             }
 
-            let mut lines: Vec<&str> = String::from_utf8_lossy(&output.stdout)
+            // Bind the `Cow` so its borrow outlives the collected `Vec<&str>`;
+            // inlining it into the statement drops the temporary at the
+            // semicolon (E0716). Only this platform's branch spells it out,
+            // because only here does the line list survive the statement.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut lines: Vec<&str> = stdout
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
