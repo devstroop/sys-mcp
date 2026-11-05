@@ -228,6 +228,20 @@ impl GuiBackend for StubBackend {
     fn as_system(&self) -> Option<&dyn crate::system::SystemCapability> {
         Some(StubSystem::shared())
     }
+
+    /// Fixed OCR answers, so `screen_read` / `find_text` handlers never load the
+    /// ONNX engine in a test (issue #47).
+    #[cfg(feature = "ocr")]
+    fn as_ocr(&self) -> Option<&dyn crate::gui::ocr::OcrCapability> {
+        Some(StubOcr::shared())
+    }
+
+    /// Fixed detection answers, so `detect_objects` never loads the YOLO model in
+    /// a test (issue #47).
+    #[cfg(feature = "detection")]
+    fn as_detection(&self) -> Option<&dyn crate::gui::detection::DetectionCapability> {
+        Some(StubDetection::shared())
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -895,6 +909,122 @@ impl crate::system::SystemCapability for StubSystem {
                 .take(count)
                 .collect(),
             None => all.into_iter().take(count).collect(),
+        })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OCR / detection stubs — fixed inference answers, no ONNX model loaded
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A deterministic [`crate::gui::ocr::OcrCapability`] so the `screen_read` /
+/// `find_text` handlers can be exercised under `--features ocr` without the
+/// engine downloading `text-detection.onnx` / `text-recognition.onnx` and running
+/// inference (`docs/ISSUES.md` #47).
+///
+/// The canned line carries a real bounding box and word so a region read's
+/// `translate_to_screen` still has coordinates to shift, and the result echoes the
+/// captured image dimensions so the handler's `Screen WxH` scope label is honest.
+#[cfg(feature = "ocr")]
+pub struct StubOcr;
+
+#[cfg(feature = "ocr")]
+static STUB_OCR: StubOcr = StubOcr;
+
+#[cfg(feature = "ocr")]
+impl StubOcr {
+    pub fn shared() -> &'static StubOcr {
+        &STUB_OCR
+    }
+}
+
+#[cfg(feature = "ocr")]
+#[async_trait]
+impl crate::gui::ocr::OcrCapability for StubOcr {
+    async fn read_screen(
+        &self,
+        screenshot: crate::gui::types::Screenshot,
+    ) -> Result<crate::gui::ocr::OcrResult, GuiError> {
+        let word = crate::gui::ocr::OcrWord {
+            text: "Found".to_string(),
+            x: 10,
+            y: 20,
+            width: 40,
+            height: 12,
+            cx: 30,
+            cy: 26,
+        };
+        let line = crate::gui::ocr::OcrLine {
+            text: "Found".to_string(),
+            x: 10,
+            y: 20,
+            width: 40,
+            height: 12,
+            words: vec![word],
+        };
+        Ok(crate::gui::ocr::OcrResult {
+            text: line.text.clone(),
+            lines: vec![line],
+            screen_width: screenshot.width,
+            screen_height: screenshot.height,
+        })
+    }
+
+    async fn find_text(
+        &self,
+        _screenshot: crate::gui::types::Screenshot,
+        query: String,
+    ) -> Result<Vec<crate::gui::ocr::OcrMatch>, GuiError> {
+        Ok(vec![crate::gui::ocr::OcrMatch {
+            cx: 30,
+            cy: 26,
+            height: 12,
+            line_text: query.clone(),
+            text: query,
+            width: 40,
+            x: 10,
+            y: 20,
+        }])
+    }
+}
+
+/// A deterministic [`crate::gui::detection::DetectionCapability`] so the
+/// `detect_objects` / `detect_click_object` handlers can run under
+/// `--features detection` without downloading and loading the YOLO ONNX model
+/// (`docs/ISSUES.md` #47).
+#[cfg(feature = "detection")]
+pub struct StubDetection;
+
+#[cfg(feature = "detection")]
+static STUB_DETECTION: StubDetection = StubDetection;
+
+#[cfg(feature = "detection")]
+impl StubDetection {
+    pub fn shared() -> &'static StubDetection {
+        &STUB_DETECTION
+    }
+}
+
+#[cfg(feature = "detection")]
+#[async_trait]
+impl crate::gui::detection::DetectionCapability for StubDetection {
+    async fn detect_objects(
+        &self,
+        screenshot: crate::gui::types::Screenshot,
+    ) -> Result<crate::gui::detection::DetectionResult, GuiError> {
+        Ok(crate::gui::detection::DetectionResult {
+            detections: vec![crate::gui::detection::Detection {
+                label: "button".to_string(),
+                confidence: 0.91,
+                x: 100,
+                y: 200,
+                width: 50,
+                height: 30,
+                cx: 125,
+                cy: 215,
+            }],
+            image_width: screenshot.width,
+            image_height: screenshot.height,
         })
     }
 }

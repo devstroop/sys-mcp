@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
+use async_trait::async_trait;
 use image::GenericImageView;
 use serde::{Deserialize, Serialize};
 use tract_onnx::prelude::*;
+
+use crate::error::GuiError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detection {
@@ -307,4 +310,49 @@ pub fn detect_objects(screenshot: &super::types::Screenshot) -> Result<Detection
         image_width: orig_w,
         image_height: orig_h,
     })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Detection capability seam — the surface the detect_* handlers call
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The object-detection surface the `detect_objects` / `detect_click_object`
+/// handlers need, as a capability object rather than a free call into
+/// [`detect_objects`].
+///
+/// [`GuiClient::detect_objects`] used to run [`detect_objects`] directly, so even
+/// a `StubBackend` test downloaded and loaded the YOLO ONNX model — the same
+/// non-hermetic failure as OCR (`docs/ISSUES.md` #47). The test backend returns a
+/// fixed [`DetectionResult`] with no model in the loop.
+#[async_trait]
+pub trait DetectionCapability: Send + Sync {
+    async fn detect_objects(
+        &self,
+        screenshot: crate::gui::types::Screenshot,
+    ) -> Result<DetectionResult, GuiError>;
+}
+
+/// The production [`DetectionCapability`]: runs the real `tract-onnx` model off
+/// the async runtime.
+pub struct LocalDetection;
+
+static LOCAL_DETECTION: LocalDetection = LocalDetection;
+
+impl LocalDetection {
+    pub fn shared() -> &'static LocalDetection {
+        &LOCAL_DETECTION
+    }
+}
+
+#[async_trait]
+impl DetectionCapability for LocalDetection {
+    async fn detect_objects(
+        &self,
+        screenshot: crate::gui::types::Screenshot,
+    ) -> Result<DetectionResult, GuiError> {
+        tokio::task::spawn_blocking(move || detect_objects(&screenshot))
+            .await
+            .map_err(|e| GuiError::DetectionError(e.to_string()))?
+            .map_err(GuiError::DetectionError)
+    }
 }

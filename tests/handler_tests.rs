@@ -674,6 +674,55 @@ async fn test_screen_find_text_missing_query_errors() {
     assert!(text.contains("OCR not available"), "got: {text}");
 }
 
+// The seam added for issue #47 lets these tools be driven to completion against
+// `StubOcr` / `StubDetection` under the feature legs. Before it, a `--features
+// ocr` / `detection` test that reached the success path downloaded and loaded the
+// ONNX model first — so the whole inference surface was only exercisable on a
+// machine with network access and gigabytes of RAM. Each test below asserts the
+// stub's canned payload, which is only reachable if no model was consulted.
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_is_answered_by_the_stub_without_loading_the_engine() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    assert!(
+        text.contains("Found") && text.contains("lines of text detected"),
+        "expected StubOcr's canned line, got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_returns_stub_coordinates_not_model_output() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Found" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubOcr's single match has its centre at (30, 26); seeing those numbers
+    // proves the handler went through the capability seam, not the real engine.
+    assert!(text.contains("1 match"), "expected one match, got: {text}");
+    assert!(
+        text.contains("30") && text.contains("26"),
+        "expected stub cx/cy, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_objects_is_answered_by_the_stub_without_loading_the_model() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "detect_objects", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    assert!(
+        text.contains("button") && text.contains("0.91"),
+        "expected StubDetection's canned box, got: {text}"
+    );
+}
+
 #[tokio::test]
 async fn test_no_such_tool_returns_error() {
     let client = test_client();

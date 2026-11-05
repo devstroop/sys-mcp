@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use async_trait::async_trait;
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams, TextItem};
 use rten::Model;
 use serde::{Deserialize, Serialize};
@@ -403,6 +404,67 @@ pub fn compress_screenshot(
     let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_buf);
 
     Ok((base64_data, new_w, new_h))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OCR capability seam — the surface the screen_read/find_text handlers call
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The OCR surface the `screen_read` and `find_text` handlers need, as a
+/// capability object rather than a free call into [`read_screen`].
+///
+/// Those handlers used to run [`read_screen`]/[`find_text`] directly on a
+/// `spawn_blocking`, so a `StubBackend` test that exercised them still pulled the
+/// ONNX engine online: the first call downloads `text-detection.onnx` and
+/// `text-recognition.onnx` off the network and loads them into memory
+/// (`docs/ISSUES.md` #47). Making it a trait lets the test backend hand back a
+/// fixed [`OcrResult`] with no model, no download and no inference.
+///
+/// The screenshot is captured through the backend before it reaches here, so the
+/// bytes are already hermetic in tests — only the inference itself needed the
+/// seam. Both methods take an owned [`Screenshot`] because `spawn_blocking`
+/// requires `'static` input.
+#[async_trait]
+pub trait OcrCapability: Send + Sync {
+    async fn read_screen(&self, screenshot: Screenshot) -> Result<OcrResult, GuiError>;
+    async fn find_text(
+        &self,
+        screenshot: Screenshot,
+        query: String,
+    ) -> Result<Vec<OcrMatch>, GuiError>;
+}
+
+/// The production [`OcrCapability`]: runs the real `ocrs` engine off the async
+/// runtime, exactly as the handlers did before the seam existed.
+pub struct LocalOcr;
+
+static LOCAL_OCR: LocalOcr = LocalOcr;
+
+impl LocalOcr {
+    /// Shared instance handed out by reference; the engine is a process-wide
+    /// `OnceLock` singleton, so there is nothing to own per client.
+    pub fn shared() -> &'static LocalOcr {
+        &LOCAL_OCR
+    }
+}
+
+#[async_trait]
+impl OcrCapability for LocalOcr {
+    async fn read_screen(&self, screenshot: Screenshot) -> Result<OcrResult, GuiError> {
+        tokio::task::spawn_blocking(move || read_screen(&screenshot))
+            .await
+            .map_err(|e| GuiError::OcrError(format!("OCR task failed: {e}")))?
+    }
+
+    async fn find_text(
+        &self,
+        screenshot: Screenshot,
+        query: String,
+    ) -> Result<Vec<OcrMatch>, GuiError> {
+        tokio::task::spawn_blocking(move || find_text(&screenshot, &query))
+            .await
+            .map_err(|e| GuiError::OcrError(format!("OCR task failed: {e}")))?
+    }
 }
 
 #[cfg(test)]

@@ -109,9 +109,11 @@ pub(crate) async fn handle_read_screen(
             None => (client.screenshot().await.map_err(|e| e.to_string())?, None),
         };
 
-        let mut result = tokio::task::spawn_blocking(move || ocr::read_screen(&shot))
+        let mut result = client
+            .ocr()
+            .map_err(|e| e.to_string())?
+            .read_screen(shot)
             .await
-            .map_err(|e| format!("OCR task failed: {e}"))?
             .map_err(|e| e.to_string())?;
 
         // `screen_width`/`screen_height` on the result are the *captured image*
@@ -187,10 +189,11 @@ pub(crate) async fn handle_find_text(
     {
         let query = str_arg(args, "query")?.to_string();
         let shot = client.screenshot().await.map_err(|e| e.to_string())?;
-        let q = query.clone();
-        let matches = tokio::task::spawn_blocking(move || ocr::find_text(&shot, &q))
+        let matches = client
+            .ocr()
+            .map_err(|e| e.to_string())?
+            .find_text(shot, query.clone())
             .await
-            .map_err(|e| format!("OCR task failed: {e}"))?
             .map_err(|e| e.to_string())?;
 
         if matches.is_empty() {
@@ -260,10 +263,11 @@ pub(crate) async fn handle_scroll_to_text(
         for i in 0..max_scrolls {
             // Take screenshot and OCR
             let shot = client.screenshot().await.map_err(|e| e.to_string())?;
-            let q = query.clone();
-            let matches = tokio::task::spawn_blocking(move || ocr::find_text(&shot, &q))
+            let matches = client
+                .ocr()
+                .map_err(|e| e.to_string())?
+                .find_text(shot, query.clone())
                 .await
-                .map_err(|e| format!("OCR task failed: {e}"))?
                 .map_err(|e| e.to_string())?;
 
             if !matches.is_empty() {

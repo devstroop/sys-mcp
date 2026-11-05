@@ -649,4 +649,17 @@ impl GuiBackend for LocalBackend {
     fn as_system(&self) -> Option<&dyn crate::system::SystemCapability> {
         Some(crate::system::LocalSystem::shared())
     }
+
+    /// The real `ocrs` engine — downloads and loads the ONNX models on first use.
+    #[cfg(feature = "ocr")]
+    fn as_ocr(&self) -> Option<&dyn crate::gui::ocr::OcrCapability> {
+        Some(crate::gui::ocr::LocalOcr::shared())
+    }
+
+    /// The real `tract-onnx` detector — downloads and loads the YOLO model on
+    /// first use.
+    #[cfg(feature = "detection")]
+    fn as_detection(&self) -> Option<&dyn crate::gui::detection::DetectionCapability> {
+        Some(crate::gui::detection::LocalDetection::shared())
+    }
 }
