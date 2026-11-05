@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (306 passing / 4 ignored today) |
+| 6 | Test coverage is critically low | ✅ Fixed (335 passing / 4 ignored today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (306 passing / 4 ignored today; 7 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (335 passing / 4 ignored today; 7 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -53,7 +53,7 @@ it was read from.
 | 31 | OCR inference compiled unoptimized made `screen_read` exceed client timeout | ✅ Fixed (dev-profile opt-level 3) |
 | 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
 | 33 | `screen_read` returned crop-relative coordinates for region reads, so `mouse_click` missed the target | ✅ Fixed |
-| 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | 🟡 Open |
+| 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | ✅ Fixed (native-scale window sweep at the detector's 600x800 working size; `strategy` on the three OCR tools; every read reports its own coverage) |
 | 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | ✅ Fixed |
 | 36 | Guard fail-mode is ignored on the decision-client construction path (fails open) | ✅ Fixed |
 | 37 | Windows window enumeration never resolves `process_name` | ✅ Fixed |
@@ -225,13 +225,47 @@ the stdout lock, and JSON-RPC ids let responses land out of order.
 **Files:** `src/gui/ocr.rs` (`read_screen`), `src/mcp/handlers/ocr.rs` (`handle_find_text`)
 **Problem (observed 2026-11-04):** BUSY's 11-14px menu-pane text was read reliably by a 420x140 region (8/11 lines
 recognised) while a full-screen `screen_read` of the same pixels alternated between reading it and returning 0 lines
-for it. `ocrs` rescales the input to a working size derived from the image dimensions, so a 1920x1080 frame puts
-small glyphs through a different detection scale than a tight crop. Consequence: `screen_find_text` (full-screen only)
-can report "No text matching 'Trial Balance' found on screen" for text that `screen_read` on the region finds at the
-same instant. Recognition accuracy also drifts with scale ("Day Book" read as "Dav Book", "OK (F2)" as "OKE)l").
-**Status:** 🟡 Open — the fix is a search strategy, not a bug fix: for a region-scoped lookup, run detection on
-overlapping tiles at native scale (or upscale small crops) instead of one whole-screen pass, and document that
-`screen_find_text` is a full-screen best-effort locator while `screen_read` + region is the precise one.
+for it. Consequence: `screen_find_text` (full-screen only) can report "No text matching 'Trial Balance' found on screen"
+for text that `screen_read` on the region finds at the same instant. Recognition accuracy also drifts with scale
+("Day Book" read as "Dav Book", "OK (F2)" as "OKE)l").
+**Root cause (measured 2026-11-05, against `ocrs` 0.13.1 and the shipped model, not assumed):** the working size is
+fixed **by the model**, not derived from the image — `TextDetector::detect_text_pixels` reads its input dimensions from
+the tensor, and the shipped `text-detection.onnx` declares `[1, 1, 800, 600]`, i.e. 600 wide × 800 tall. An image
+*smaller* than that is padded with `BLACK_VALUE`, so glyph pixel size is preserved; an image *larger* is passed through
+`resize_image([in_height, in_width])`, which **ignores the aspect ratio**. A 1920×1080 frame is therefore squeezed to
+**0.31× horizontally** (0.74× vertically), turning an 11px glyph into a ~3px-wide feature the segmentation model never
+fires on, while a 420×140 crop of the same pixels is padded and read at native scale. `OcrEngineParams` exposes no scale
+or max-side knob (only the two models, `debug`, `decode_method`, `alphabet`, `allowed_chars`) and
+`TextDetectorParams::default()`'s `min_area: 100.` / `text_threshold: 0.2` are applied in *original* pixels, so the only
+lever available is the image handed to the detector. The original hypothesis in this entry — that `ocrs` derives the
+working size from the input — was wrong; the loss is not a quality drift with scale, it is a cliff at the tensor size.
+**Measured on one live 1920×1080 desktop capture**, over 12 lines that a tight crop of the same pixels reads correctly:
+a whole-screen pass reads **5**, a 1200-wide window **7**, and windows no larger than 600×800 **12/12**. Run through the
+shipped seam on the same capture, `read_screen` returned **71** lines and `read_screen_thorough` **179**. Overlap is
+load-bearing: counting distinct line texts across the sweep, the same 600×800 grid with zero overlap returned **108**
+lines where 96px of overlap returned **132**, because a line straddling a window edge is read as a fragment or lost.
+**Status:** ✅ Fixed — the search strategy the entry asked for, with the tile geometry taken from the measurement rather
+than guessed. In `src/gui/ocr.rs`: `DETECT_WORKING_SIZE` (600×800, the tensor) and `SEARCH_WINDOW_OVERLAP` (96px) as
+documented constants, `axis_positions` + `search_windows` for the grid (a frame that already fits the working size stays
+**one** window — it is padded, not rescaled, so a region read costs nothing extra), and `merge_window_results` to bring
+each window's boxes back into screen space. The duplicate test is *same text **and** centres within the overlap*, because
+collapsing on text alone would delete a ledger column of "1"s and invent, in the merge, the very absence this issue is
+about removing. `OcrCapability` gained **provided** methods — `read_screen_thorough` and `search_text`, which returns
+`TextSearch { matches, scope }` — so the strategy is geometry over the backend's own primitives and a stub exercises the
+same sweep the desktop does (`FindStrategy` / `SearchScope` / `match_lines` are all pure, all unit-tested, no model).
+Wired into the tools: `screen_read` takes `strategy: "single" | "thorough"` (**default `single`**, the previous
+behaviour, kept because the sweep costs one inference pass per window — 8 on 1920×1080 — and `screen_read` is the tool an
+agent calls most); `screen_find_text` and `screen_scroll_to_text` take `strategy: "auto" | "single"` with **`auto` as the
+default**, escalating only on a miss, because a reported absence is the answer that must not be a lie and the caller
+cannot see the difference in an empty list. Every response now names its own coverage: a default whole-screen read says
+"one downscaled pass … strategy 'thorough' re-reads it as 8 native-scale 600x800 windows", a miss says "Search covered
+8 native-scale windows", and `strategy: "single"` has to admit it looked once. Unknown values are refused by name rather
+than run as the cheaper leg. Two vocabularies on one argument name are deliberate — `screen_read` chooses how much of the
+frame to read, the search tools choose when to escalate — and each tool rejects the other's words. **Found in the same
+code and fixed here:** `screen_scroll_to_text` checked *then* scrolled, so the frame it settled on was never read before
+"not found after N scrolls" was returned; the final screen is now captured and searched (at native scale unless the
+caller opted out) before absence is claimed. Coverage stays honest in both directions — a hit on the first pass reports
+no sweep, and a frame that is already native scale does not pay for a second identical pass.
 **Severity:** 🟡 High — an agent can conclude UI is absent when it is only missed.
 
 ### 37. Windows window enumeration never resolves `process_name`
@@ -799,6 +833,20 @@ Current state of the planned feature phases:
   it received, and the tool layer refuses a value on a verb that cannot use it instead of dropping the argument.
   8 tests added, mutation-checked by dropping the value at the handler. Re-measured: **306 passing / 0 failed /
   4 ignored** (310 total) on Windows; 238 / 0 / 1 slim; 309 / 0 / 4 with `detection`.
+- Fix 2026-11-05 (#34): full-screen OCR now reads small UI text. The detector's working size is fixed by the model
+  tensor (`text-detection.onnx` declares `[1,1,800,600]`), so a 1920×1080 frame was being squeezed to **0.31×**
+  horizontally instead of being tiled — an 11px glyph became a ~3px feature. `src/gui/ocr.rs` gained the measured
+  grid (`DETECT_WORKING_SIZE` 600×800, `SEARCH_WINDOW_OVERLAP` 96px, `axis_positions`/`search_windows`,
+  `merge_window_results`) and `OcrCapability` gained **provided** `read_screen_thorough`/`search_text`, so the stub
+  sweeps the same geometry the desktop does. `screen_read` takes `strategy: single|thorough` (default `single`),
+  `screen_find_text`/`screen_scroll_to_text` take `strategy: auto|single` (default `auto`: escalate only on a miss),
+  every response names its own coverage, and unknown values are refused by name instead of running the cheaper leg.
+  Also fixed in here: `screen_scroll_to_text` declared absence without ever reading the screen it settled on.
+  Recall on one live capture went 5 → 12 of 12 verified lines by window size, and 71 → 179 lines through the shipped
+  seam. 29 tests added (pure geometry/merge/matching, `ScriptedOcr` pass counts, handler vocabulary validation, nine
+  end-to-end `StubBackend` coverages, one schema guard). Re-measured: **335 passing / 0 failed / 4 ignored**
+  (339 total) on Windows; 239 / 0 / 1 with `--no-default-features`; 338 / 0 / 4 with `detection`; `fmt --check`,
+  `clippy --all-targets -- -D warnings` and `clippy --all-targets --all-features -- -D warnings` clean.
 - Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
   three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned
   that first read into `guardrails: false` for the whole process. `init` is now authoritative in either order,

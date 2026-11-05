@@ -35,7 +35,7 @@ pub fn all_tools() -> Vec<Value> {
         // ── OCR — Screen Reading ────────────────────────────────────────
         json!({
             "name": "screen_read",
-            "description": "Read all text on screen via on-device OCR. Returns structured text with word-level bounding boxes and click coordinates (cx, cy). PREFER THIS over screen_capture for understanding screen content — it returns ~2KB instead of a multi-MB image. First call downloads OCR models (~15MB, cached). Optionally specify a region to OCR only part of the screen.",
+            "description": "Read all text on screen via on-device OCR. Returns structured text with word-level bounding boxes and click coordinates (cx, cy). PREFER THIS over screen_capture for understanding screen content — it returns ~2KB instead of a multi-MB image. First call downloads OCR models (~15MB, cached). Optionally specify a region to OCR only part of the screen. A whole-screen read is downscaled to the detector's working size, which drops small text: use strategy 'thorough', or a tight region, when the text you expect is at menu or field-label size (11-14px).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -48,17 +48,29 @@ pub fn all_tools() -> Vec<Value> {
                         "enum": ["full", "lines", "text"],
                         "description": "Response detail level. 'text' = plain text only (smallest), 'lines' = text per line with bounding boxes (no words), 'full' = lines + word-level coordinates (default). Any other value is rejected rather than treated as 'full'.",
                         "default": "full"
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["single", "thorough"],
+                        "description": "How much of the frame is read at the detector's native scale. 'single' (default) runs one pass over the captured frame — on 1920x1080 that squeezes text to ~0.31x width and read 5 of 12 small UI lines in measurement. 'thorough' splits the frame into 600x800 windows with 96px overlap and reads each at native scale: 12 of 12 of the same lines, and 179 lines vs 71 on a live desktop capture. It costs one inference pass per window (8 for 1920x1080), so it is several times slower. Regions that already fit one window cost the same either way. The response label states which coverage ran.",
+                        "default": "single"
                     }
                 }
             }
         }),
         json!({
             "name": "screen_find_text",
-            "description": "Search for specific text on screen via OCR. Returns matching words/phrases with center (cx, cy) coordinates ready for mouse_click. Use this to find buttons, links, menu items, or any text element.",
+            "description": "Search for specific text on screen via OCR. Returns matching words/phrases with center (cx, cy) coordinates ready for mouse_click. Use this to find buttons, links, menu items, or any text element. On a miss it re-reads the screen at native scale by default, because a single whole-screen pass reliably misses small text — the response always reports the coverage that produced it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "Text to search for (case-insensitive substring match)." }
+                    "query": { "type": "string", "description": "Text to search for (case-insensitive substring match)." },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["auto", "single"],
+                        "description": "'auto' (default) searches in one pass and, only if that finds nothing, sweeps the frame in 600x800 native-scale windows — a reported absence then covers the whole screen at readable scale. 'single' stops after one pass and says so, for callers trading recall for latency (the sweep costs one pass per window: 8 on a 1920x1080 screen).",
+                        "default": "auto"
+                    }
                 },
                 "required": ["query"]
             }
@@ -343,7 +355,7 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "screen_scroll_to_text",
-            "description": "Scroll the screen until specific text is found via OCR, or give up after max_scrolls. Useful for finding off-screen content like buttons, links, or sections. Returns the match coordinates when found.",
+            "description": "Scroll the screen until specific text is found via OCR, or give up after max_scrolls. Useful for finding off-screen content like buttons, links, or sections. Returns the match coordinates when found. The final screen is always checked before absence is reported.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -352,7 +364,13 @@ pub fn all_tools() -> Vec<Value> {
                     "max_scrolls": { "type": "integer", "description": "Maximum number of scroll attempts before giving up.", "default": 10 },
                     "scroll_amount": { "type": "integer", "description": "Number of scroll notches per attempt.", "default": 3 },
                     "x": { "type": "integer", "description": "X coordinate to scroll at (defaults to screen center)." },
-                    "y": { "type": "integer", "description": "Y coordinate to scroll at (defaults to screen center)." }
+                    "y": { "type": "integer", "description": "Y coordinate to scroll at (defaults to screen center)." },
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["auto", "single"],
+                        "description": "Coverage of the final verification check, after the last scroll left the screen unread. 'auto' (default) re-reads it in 600x800 native-scale windows so 'not found after N scrolls' is a claim about the whole screen at readable scale. 'single' checks it with one downscaled pass and says so in the response.",
+                        "default": "auto"
+                    }
                 },
                 "required": ["query"]
             }

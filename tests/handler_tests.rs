@@ -1825,6 +1825,206 @@ async fn test_screen_read_rejects_unknown_detail_and_zero_sized_region() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// OCR small-text coverage — issue #34
+//
+// `StubOcr` answers one canned line per `read_screen`, so the number of lines in
+// a response is the observable proof of how many native-scale windows the sweep
+// ran, and the coverage label is the observable proof of what the tool claims to
+// have done about it. No model, no inference, no download (#47).
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_thorough_sweeps_the_screen_at_native_scale() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "strategy": "thorough" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("read at native scale over 8 window(s)"),
+        "the response must say it swept: {text}"
+    );
+    assert!(
+        text.contains("8 lines of text detected"),
+        "one stub line per window means the sweep ran the grid: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_single_pass_admits_the_coverage_it_did_not_have() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    // The default is still the cheap leg, but the caller is told what it did not
+    // cover — which is what let an agent read the missing text as absent UI.
+    assert!(
+        text.contains("one downscaled pass"),
+        "the whole-screen default must flag its own blind spot: {text}"
+    );
+    assert!(
+        text.contains("re-reads it as 8 native-scale 600x800 windows"),
+        "and point at the way out: {text}"
+    );
+    assert!(
+        !text.contains("read at native scale over"),
+        "a single pass must not claim the sweep: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_region_under_thorough_stays_one_window_and_screen_space() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_read",
+        json!({ "x": 300, "y": 400, "width": 100, "height": 100, "strategy": "thorough" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("over 1 window(s)"),
+        "a frame that already fits the detector is not split: {text}"
+    );
+    // The region origin is still added back after the merge, or #33 comes right
+    // back through the new path.
+    assert!(
+        text.contains("coordinates are screen-space") && text.contains("\"x\":310"),
+        "crop-local coordinates must not leak: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_strategy_is_validated_before_any_capture_or_inference() {
+    let client = test_client();
+    // `auto` belongs to `screen_find_text`, not `screen_read`: refusing it here
+    // is the point, not a fallback to the default leg.
+    let result = handle_tool_call(&client, "screen_read", json!({ "strategy": "auto" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("single, thorough"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_find_text",
+        json!({ "query": "Found", "strategy": "thorough" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("auto, single"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found", "strategy": 5 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("must be a string"), "got: {text}");
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_escalates_a_miss_and_reports_the_sweep() {
+    let client = test_client();
+    // "Invoice" is not in the stub's canned line, so this is the false-absence
+    // path #34 is about: the miss must be verified at native scale first, and the
+    // answer must say that it was.
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Invoice" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("No text matching 'Invoice' found on screen."),
+        "got: {text}"
+    );
+    assert!(
+        text.contains("Search covered 8 native-scale windows"),
+        "an absence has to name the coverage that verified it: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_single_strategy_says_it_did_not_look_hard() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_find_text",
+        json!({ "query": "Invoice", "strategy": "single" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("covered one whole-image pass only"),
+        "the opt-out must not be reported as a verified absence: {text}"
+    );
+    assert!(
+        text.contains("needs 8 native-scale windows"),
+        "and must point at the escalation: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_returns_a_hit_without_claiming_a_sweep() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Found" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(text.contains("Found 1 match(es)"), "got: {text}");
+    assert!(
+        !text.contains("native-scale windows"),
+        "the first pass hit, so no sweep ran and none may be claimed: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_verifies_the_final_screen() {
+    let client = test_client();
+    // The loop scrolls after its last check, so the frame it settles on used to
+    // never be read before absence was declared. It is read now, at native scale.
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Invoice", "max_scrolls": 1 }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(text.contains("not found after 1 scrolls"), "got: {text}");
+    assert!(
+        text.contains("final screen was searched by 8 native-scale windows"),
+        "the scrolls are not the coverage: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_single_strategy_skips_the_sweep() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Invoice", "max_scrolls": 1, "strategy": "single" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("final screen was searched by one whole-image pass"),
+        "got: {text}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Accessibility tools — issue #43
 //
 // Driven through `StubA11yBackend`, which serves a fixed tree and the id-cache

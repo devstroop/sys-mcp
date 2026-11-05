@@ -96,10 +96,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Backend now uses `portable-pty` instead of platform-specific PTY APIs
 - MCP Hub integrates with discovery from npm packages containing "mcp"
+- **OCR coverage is now an argument, and every OCR response states what it
+  covered** (`docs/ISSUES.md` #34). `screen_read` takes
+  `strategy: "single" | "thorough"` (default `single`, the previous behaviour);
+  `screen_find_text` and `screen_scroll_to_text` take
+  `strategy: "auto" | "single"` (default `auto`). `thorough`/`auto` read the
+  frame at the detector's native scale by sweeping 600x800 windows with 96px
+  overlap instead of one downscaled pass, and an unknown value is refused rather
+  than run as the cheaper leg — the argument exists precisely so the caller
+  knows how hard the tool looked. Whole-screen reads now label themselves
+  ("one downscaled pass … strategy 'thorough' re-reads it as 8 native-scale
+  600x800 windows") and a text miss names its own coverage
+  ("Search covered 8 native-scale windows")
 
 ### Fixed
 
 - Fixed session manager test in `src/mcp/session.rs`
+- **Full-screen OCR missed small UI text** (`docs/ISSUES.md` #34). `ocrs` hands
+  every image to the detection model's fixed input tensor (600x800 for the
+  shipped model): a larger frame is resized with the aspect ratio ignored, so a
+  1920-wide screen is squeezed to ~0.31x and 11-14px glyphs become ~3px features
+  the detector never fires on. Measured on one live 1920x1080 capture, a whole-
+  screen pass read 5 of 12 lines that a tight crop reads correctly and returned
+  71 lines where the native-scale sweep returned 179. `screen_find_text` now
+  escalates to that sweep automatically on a miss, so it can no longer report
+  text absent from a screen it only looked at once
+- **`screen_scroll_to_text` declared absence without reading the final screen.**
+  The loop checked, then scrolled, so the frame it settled on was never
+  inspected; it is now captured and searched (at native scale by default) before
+  "not found after N scrolls" is returned
 
 ## [0.1.0] - 2025-04-12
 

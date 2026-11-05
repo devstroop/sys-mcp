@@ -69,7 +69,7 @@ AI Agent (Claude, OpenCode, etc.)
 - **mod.rs (GuiClient)** — Facade over `Box<dyn GuiBackend>`. Provides a clean async API. Checks capability availability via `as_*()` methods, returning `UnsupportedCapability` errors when backends don't support a feature.
 - **types.rs** — All shared data types (Screenshot, WindowInfo, Point, Region, etc.). Serializable for JSON responses.
 - **Capability traits** — Each trait defines a clean async interface for one capability area. Backends implement what they support.
-- **ocr.rs** — Standalone OCR module using the `ocrs` crate. Manages model downloads, runs text detection/recognition, provides text search with click coordinates.
+- **ocr.rs** — Standalone OCR module using the `ocrs` crate. Manages model downloads, runs text detection/recognition, provides text search with click coordinates. Also owns the small-text search strategy (`DETECT_WORKING_SIZE`, `search_windows`, `merge_window_results`) that reads a large frame as native-scale windows instead of one downscaled pass.
 - **detection.rs** — Object detection using YOLOv8 via tract-onnx. Detects common UI elements.
 
 ### Backend Layer (`src/gui/backend/`)
@@ -117,6 +117,27 @@ Instead of a monolithic backend interface, capabilities are split into independe
 ### OCR Model Management
 
 OCR models (~15MB total) are downloaded on first use from S3 and cached in the user's cache directory (`%LOCALAPPDATA%/sys-mcp/models/` on Windows). The `OcrEngine` is initialized once via `OnceLock` for the process lifetime.
+
+### OCR Scale and the Native-Scale Sweep
+
+The text-detection model has a **fixed** input size (600x800 for the shipped
+`text-detection.onnx`), and `ocrs` gives every image to that one tensor: an image
+smaller than it is padded with black, so its glyphs keep their pixel size; an
+image larger is resized to it with the aspect ratio ignored. `OcrEngineParams`
+offers no scale or max-side knob, so a whole-screen read is not a wider view of
+the same quality — on 1920x1080 it is a 0.31x horizontal squeeze, and text at
+menu-label size (11-14px) stops being a detectable feature. The mitigation lives
+in `src/gui/ocr.rs` as geometry rather than as engine settings: `search_windows`
+splits a frame into windows no larger than `DETECT_WORKING_SIZE`, overlapping by
+`SEARCH_WINDOW_OVERLAP` so a line on a boundary is fully inside one of them,
+`OcrCapability::read_screen_thorough` runs the real read once per window, and
+`merge_window_results` translates each window's boxes into screen coordinates and
+collapses only same-text lines whose centres are within the overlap distance — so
+repeated words on screen survive the merge. The strategy is opt-in on
+`screen_read` (latency: one pass per window) and automatic on a
+`screen_find_text` miss, because an unverified absence is the failure mode agents
+cannot see. Both the tool schemas and every response label state which coverage
+ran.
 
 ### Screenshot Pipeline
 

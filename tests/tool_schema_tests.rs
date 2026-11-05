@@ -376,3 +376,66 @@ fn accessibility_action_declares_value_as_an_optional_operand() {
         "the tool description must state the pairing rule the handler enforces: {desc}"
     );
 }
+
+/// #34 added `strategy` to the three OCR tools. It must be *declared* (an
+/// undeclared property is invisible to a client that builds its call from the
+/// schema), stay optional, and carry the default the handler actually applies when
+/// it is absent — otherwise the schema advertises one coverage while the server
+/// runs another, which is the confusion the argument exists to remove. The two
+/// vocabularies differ on purpose: `screen_read` picks how much of the frame to
+/// read, the search tools pick when to escalate a miss.
+#[test]
+fn ocr_tools_declare_strategy_with_the_default_the_handler_applies() {
+    let cases = [
+        ("screen_read", "single", vec!["single", "thorough"]),
+        ("screen_find_text", "auto", vec!["auto", "single"]),
+        ("screen_scroll_to_text", "auto", vec!["auto", "single"]),
+    ];
+
+    for (name, default, allowed) in cases {
+        let schema = schema_of(name);
+        let props = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("properties must be an object");
+        let strategy = props
+            .get("strategy")
+            .unwrap_or_else(|| panic!("'{name}' must declare a 'strategy' property"));
+
+        let values: Vec<&str> = strategy
+            .get("enum")
+            .and_then(Value::as_array)
+            .expect("strategy must declare its enum values")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            values, allowed,
+            "'{name}' strategy values must match the names the parser accepts"
+        );
+        assert_eq!(
+            strategy.get("default").and_then(Value::as_str),
+            Some(default),
+            "'{name}' must advertise the coverage it runs when the argument is absent"
+        );
+
+        let description = strategy
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(
+            description.contains("native scale") || description.contains("native-scale"),
+            "'{name}' strategy must say what the coverage buys: {description}"
+        );
+
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !required.iter().any(|r| r.as_str() == Some("strategy")),
+            "'{name}' must keep 'strategy' optional: every call has a working default"
+        );
+    }
+}

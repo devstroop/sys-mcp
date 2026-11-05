@@ -87,6 +87,103 @@ fn parse_region(args: &Value) -> Result<Option<Region>, String> {
     Ok(Some(region))
 }
 
+/// What a `screen_read` covers.
+///
+/// Named in the tool schema, validated here, and reported back in the response
+/// label — a read that found fewer lines than expected is only actionable if the
+/// caller can tell which coverage produced it (`docs/ISSUES.md` #34).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "ocr")]
+enum ReadStrategy {
+    /// One pass over the captured frame. The default because it is what the tool
+    /// has always done, and because it costs one inference pass rather than one
+    /// per window.
+    Single,
+    /// The detector's native scale, over as many [`ocr::search_windows`] as the
+    /// frame needs: 5/12 small UI lines read in one pass became 12/12 swept, and
+    /// 71 lines became 179 on a live desktop capture.
+    Thorough,
+}
+
+/// How far a text lookup escalates before it is allowed to report absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "ocr")]
+enum SearchStrategy {
+    /// One pass, and a miss is a miss. The escape hatch for a caller that is
+    /// paying for latency and only wants a hint.
+    Single,
+    /// One pass, then the native-scale sweep if it found nothing. The default:
+    /// the extra passes are bought only on the answer that must not be a lie.
+    Auto,
+}
+
+#[cfg(feature = "ocr")]
+impl From<SearchStrategy> for ocr::FindStrategy {
+    fn from(strategy: SearchStrategy) -> Self {
+        match strategy {
+            SearchStrategy::Single => ocr::FindStrategy::SinglePass,
+            SearchStrategy::Auto => ocr::FindStrategy::EscalateOnMiss,
+        }
+    }
+}
+
+/// Validate an enum-valued argument the way [`parse_detail`] validates `detail`:
+/// absent or null means the declared default, otherwise the value must be one of
+/// the advertised names, matched after trimming and lower-casing. Nothing is
+/// silently downgraded to a cheaper branch — with `strategy` the caller is asking
+/// precisely how hard the tool looked, so guessing would corrupt the answer.
+#[cfg(feature = "ocr")]
+fn strategy_value<'a>(
+    args: &Value,
+    key: &str,
+    allowed: &[&'a str],
+    default: &'a str,
+) -> Result<&'a str, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::String(raw)) => {
+            let normalized = raw.trim().to_ascii_lowercase();
+            let matched = allowed
+                .iter()
+                .copied()
+                .find(|name| *name == normalized.as_str());
+            matched.ok_or_else(|| {
+                format!(
+                    "invalid argument: '{key}' = {raw:?} is not one of {}",
+                    allowed.join(", ")
+                )
+            })
+        }
+        Some(v) => Err(format!(
+            "invalid argument: '{key}' must be a string ({}), got {v}",
+            allowed.join(", ")
+        )),
+    }
+}
+
+#[cfg(feature = "ocr")]
+fn parse_read_strategy(args: &Value) -> Result<ReadStrategy, String> {
+    Ok(
+        match strategy_value(args, "strategy", &["single", "thorough"], "single")? {
+            "thorough" => ReadStrategy::Thorough,
+            // `strategy_value` has already refused anything that is not one of
+            // the two advertised names, so this arm is the declared default
+            // rather than a catch-all for unvalidated input.
+            _ => ReadStrategy::Single,
+        },
+    )
+}
+
+#[cfg(feature = "ocr")]
+fn parse_search_strategy(args: &Value) -> Result<SearchStrategy, String> {
+    Ok(
+        match strategy_value(args, "strategy", &["auto", "single"], "auto")? {
+            "single" => SearchStrategy::Single,
+            _ => SearchStrategy::Auto,
+        },
+    )
+}
+
 pub(crate) async fn handle_read_screen(
     client: &GuiClient,
     args: &Value,
@@ -98,6 +195,7 @@ pub(crate) async fn handle_read_screen(
         // translate them into screen space, which is what `mouse_click` takes.
         let region = parse_region(args)?;
         let detail = parse_detail(args)?;
+        let strategy = parse_read_strategy(args)?;
         let (shot, region_origin) = match region {
             Some(region) => {
                 let shot = client
@@ -109,19 +207,24 @@ pub(crate) async fn handle_read_screen(
             None => (client.screenshot().await.map_err(|e| e.to_string())?, None),
         };
 
-        let mut result = client
-            .ocr()
-            .map_err(|e| e.to_string())?
-            .read_screen(shot)
-            .await
-            .map_err(|e| e.to_string())?;
+        // The window grid is a function of the captured size alone, so it is
+        // worked out before the frame moves into the read and then reused for
+        // the coverage label.
+        let (shot_w, shot_h) = (shot.width, shot.height);
+        let windows = ocr::search_windows(shot_w, shot_h);
+        let reader = client.ocr().map_err(|e| e.to_string())?;
+        let mut result = match strategy {
+            ReadStrategy::Single => reader.read_screen(shot).await,
+            ReadStrategy::Thorough => reader.read_screen_thorough(shot).await,
+        }
+        .map_err(|e| e.to_string())?;
 
         // `screen_width`/`screen_height` on the result are the *captured image*
         // dimensions. For a region read the coordinates are about to become
         // screen-absolute, so labelling them "Screen 420x340" would put `cy`
         // outside the stated height and read as a corrupt payload. Name the
         // scope explicitly instead.
-        let scope = match region_origin {
+        let base = match region_origin {
             Some((ox, oy)) => {
                 ocr::translate_to_screen(&mut result, (ox, oy));
                 format!(
@@ -130,6 +233,26 @@ pub(crate) async fn handle_read_screen(
                 )
             }
             None => format!("Screen {}x{}", result.screen_width, result.screen_height),
+        };
+
+        // Issue #34: a whole-screen pass hands the detector a squeezed image and
+        // loses small text. The caller cannot see that from the line count, so
+        // the label says which coverage produced the text it is reading.
+        let scope = match strategy {
+            ReadStrategy::Thorough => {
+                format!(
+                    "{base} — read at native scale over {} window(s)",
+                    windows.len()
+                )
+            }
+            ReadStrategy::Single if windows.len() > 1 => {
+                let (work_w, work_h) = ocr::DETECT_WORKING_SIZE;
+                format!(
+                    "{base} — one downscaled pass; small text (11-14px UI labels) may be missing. strategy \"thorough\" re-reads it as {} native-scale {work_w}x{work_h} windows",
+                    windows.len()
+                )
+            }
+            ReadStrategy::Single => base,
         };
 
         let summary = match detail {
@@ -188,24 +311,47 @@ pub(crate) async fn handle_find_text(
     #[cfg(feature = "ocr")]
     {
         let query = str_arg(args, "query")?.to_string();
+        let strategy = parse_search_strategy(args)?;
         let shot = client.screenshot().await.map_err(|e| e.to_string())?;
-        let matches = client
+        let (shot_w, shot_h) = (shot.width, shot.height);
+        let search = client
             .ocr()
             .map_err(|e| e.to_string())?
-            .find_text(shot, query.clone())
+            .search_text(shot, query.clone(), strategy.into())
             .await
             .map_err(|e| e.to_string())?;
 
-        if matches.is_empty() {
+        if search.matches.is_empty() {
+            // An absence has to say how hard it looked. A miss after one
+            // downscaled pass and a miss after the native-scale sweep are
+            // different claims, and an empty list cannot tell them apart — that
+            // is how #34 let an agent conclude UI text did not exist.
+            let swept_windows = ocr::search_windows(shot_w, shot_h).len();
+            let advice = if search.scope == ocr::SearchScope::SinglePass && swept_windows > 1 {
+                format!(
+                    " The search covered {} only; this {shot_w}x{shot_h} frame needs {swept_windows} native-scale windows to read text at UI sizes. Omit 'strategy' or pass \"auto\" to sweep them, or screen_read a tight region.",
+                    search.scope
+                )
+            } else {
+                format!(
+                    " Search covered {}; use screen_read to see all visible text.",
+                    search.scope
+                )
+            };
             Ok(ToolResult::text(format!(
-                "No text matching '{}' found on screen. Try screen_read to see all visible text.",
-                query
+                "No text matching '{query}' found on screen.{advice}"
             )))
         } else {
-            let locations = json_pretty(&matches)?;
+            let locations = json_pretty(&search.matches)?;
+            let coverage = match search.scope {
+                ocr::SearchScope::Windows { count } if count > 1 => {
+                    format!(" searched over {count} native-scale windows")
+                }
+                _ => String::new(),
+            };
             let summary = format!(
-                "Found {} match(es). Use cx/cy coordinates directly with mouse_click.\n{}",
-                matches.len(),
+                "Found {} match(es){coverage}. Use cx/cy coordinates directly with mouse_click.\n{}",
+                search.matches.len(),
                 locations
             );
             Ok(ToolResult::text(summary))
@@ -230,6 +376,7 @@ pub(crate) async fn handle_scroll_to_text(
     #[cfg(feature = "ocr")]
     {
         let query = str_arg(args, "query")?.to_string();
+        let strategy = parse_search_strategy(args)?;
         let direction = match args
             .get("direction")
             .and_then(Value::as_str)
@@ -260,12 +407,14 @@ pub(crate) async fn handle_scroll_to_text(
             .map(|v| v as u32)
             .unwrap_or(screen.height / 2);
 
+        let reader = client.ocr().map_err(|e| e.to_string())?;
+
         for i in 0..max_scrolls {
-            // Take screenshot and OCR
+            // One pass per frame. Sweeping every scroll would multiply the sweep
+            // cost by `max_scrolls` to re-read content the previous scroll had
+            // already swept; the escalation belongs on the final answer.
             let shot = client.screenshot().await.map_err(|e| e.to_string())?;
-            let matches = client
-                .ocr()
-                .map_err(|e| e.to_string())?
+            let matches = reader
                 .find_text(shot, query.clone())
                 .await
                 .map_err(|e| e.to_string())?;
@@ -286,9 +435,27 @@ pub(crate) async fn handle_scroll_to_text(
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
 
+        // The loop scrolls *after* its last check, so the frame it settled on has
+        // never been read — declaring absence there would describe a screen we
+        // never looked at. Check it here, at native scale unless the caller asked
+        // for single passes (`docs/ISSUES.md` #34).
+        let final_shot = client.screenshot().await.map_err(|e| e.to_string())?;
+        let search = reader
+            .search_text(final_shot, query.clone(), strategy.into())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !search.matches.is_empty() {
+            let locations = json_pretty(&search.matches)?;
+            return Ok(ToolResult::text(format!(
+                "Found '{}' after {} scroll(s) on the final screen, searched by {}. Use cx/cy with mouse_click.\n{}",
+                query, max_scrolls, search.scope, locations
+            )));
+        }
+
         Ok(ToolResult::text(format!(
-            "Text '{}' not found after {} scrolls. Try screen_read to see what's currently visible.",
-            query, max_scrolls
+            "Text '{}' not found after {} scrolls. The final screen was searched by {}; use screen_read to see what's currently visible.",
+            query, max_scrolls, search.scope
         )))
     }
 
@@ -410,5 +577,65 @@ mod tests {
 
         let err = parse_region(&json!({ "x": 0, "y": 0, "width": 100, "height": 0 })).unwrap_err();
         assert!(err.contains("got 100x0"), "{err}");
+    }
+
+    #[test]
+    fn strategy_falls_back_to_the_declared_default_only_when_absent() {
+        // Absent or null is the default the schema advertises. Everything else
+        // has to be a name the tool actually documents.
+        assert_eq!(
+            parse_read_strategy(&json!({})).unwrap(),
+            ReadStrategy::Single
+        );
+        assert_eq!(
+            parse_read_strategy(&json!({ "strategy": null })).unwrap(),
+            ReadStrategy::Single
+        );
+        assert_eq!(
+            parse_read_strategy(&json!({ "strategy": "thorough" })).unwrap(),
+            ReadStrategy::Thorough
+        );
+        assert_eq!(
+            parse_search_strategy(&json!({})).unwrap(),
+            SearchStrategy::Auto
+        );
+        assert_eq!(
+            parse_search_strategy(&json!({ "strategy": " SINGLE " })).unwrap(),
+            SearchStrategy::Single
+        );
+    }
+
+    #[test]
+    fn an_unknown_strategy_is_refused_and_names_the_values_for_that_tool() {
+        // The two tools share the argument name but not the vocabulary, because
+        // they mean different things by it: `screen_read` chooses how much of the
+        // frame to read, `screen_find_text` chooses when to escalate. A value from
+        // one list is therefore a typo on the other, and gets refused rather than
+        // quietly running the cheaper leg — the caller is asking how hard the tool
+        // looked, so guessing would corrupt the answer (#34).
+        for raw in ["deep", "full", "auto", ""] {
+            let err = parse_read_strategy(&json!({ "strategy": raw })).unwrap_err();
+            assert!(err.contains("single, thorough"), "{raw:?} => {err}");
+        }
+        for raw in ["thorough", "deep", ""] {
+            let err = parse_search_strategy(&json!({ "strategy": raw })).unwrap_err();
+            assert!(err.contains("auto, single"), "{raw:?} => {err}");
+        }
+        for wrong_type in [json!(5), json!(true), json!(["single"]), json!({ "a": 1 })] {
+            let err = parse_read_strategy(&json!({ "strategy": wrong_type })).unwrap_err();
+            assert!(err.contains("must be a string"), "{wrong_type} => {err}");
+        }
+    }
+
+    #[test]
+    fn search_strategy_maps_onto_the_capability_vocabulary() {
+        assert_eq!(
+            ocr::FindStrategy::from(SearchStrategy::Auto),
+            ocr::FindStrategy::EscalateOnMiss
+        );
+        assert_eq!(
+            ocr::FindStrategy::from(SearchStrategy::Single),
+            ocr::FindStrategy::SinglePass
+        );
     }
 }

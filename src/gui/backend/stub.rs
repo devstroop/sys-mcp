@@ -997,21 +997,18 @@ impl crate::gui::ocr::OcrCapability for StubOcr {
         })
     }
 
+    /// Matches the canned read the way the real engine does — read, then
+    /// [`crate::gui::ocr::match_lines`] — so the stub can express a *miss*.
+    /// Answering every query with one fixed match made `screen_find_text`'s empty
+    /// branch unreachable through `StubBackend`, and that branch is exactly what
+    /// issue #34 changed: it now has to say how hard it looked.
     async fn find_text(
         &self,
-        _screenshot: crate::gui::types::Screenshot,
+        screenshot: crate::gui::types::Screenshot,
         query: String,
     ) -> Result<Vec<crate::gui::ocr::OcrMatch>, GuiError> {
-        Ok(vec![crate::gui::ocr::OcrMatch {
-            cx: 30,
-            cy: 26,
-            height: 12,
-            line_text: query.clone(),
-            text: query,
-            width: 40,
-            x: 10,
-            y: 20,
-        }])
+        let read = self.read_screen(screenshot).await?;
+        Ok(crate::gui::ocr::match_lines(&read, &query))
     }
 }
 
