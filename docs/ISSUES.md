@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (286 tests today) |
+| 6 | Test coverage is critically low | ✅ Fixed (287 tests today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (286 tests today; 13 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (287 tests today; 13 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -63,10 +63,11 @@ it was read from.
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | ✅ Fixed |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (13 of 72 remain) |
-| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + validated locally; remote run pending) |
+| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely: first run found 2 real defects; release side still unexercised) |
 | 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
 | 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | 🟡 Open |
+| 48 | Reading the JEV config before `init` permanently disabled the guardrails (denylist silently off) | ✅ Fixed |
 
 ---
 
@@ -111,6 +112,28 @@ carries the *crop* dimensions and reporting them as the screen size put `cy` bey
 **Problem (verified 2026-11-05):** `assess_with` honours `--jev-guard-fail-mode` correctly — a model transport failure under the default `GuardFailMode::Closed` returns `Ok(Confirm)` and the call is held (`src/decision/guard.rs`, live module). But the dispatcher constructs the client first, and `Err` from `DecisionClient::new(&config)` returns `None` — *proceed* — with no reference to the configured fail mode (`mod.rs` "Fail open (denylist already applied)"). A configuration mistake in endpoint/timeout/key is exactly the case where an operator who enabled `--jev-guardrails` expects a hold, and instead gets the destructive call executed. Its sibling arm `Err(e) => … (failing open)` is unreachable, because `assess` maps every outcome to `Ok`.
 **Status:** ✅ Fixed — `guard_gate` now reads `config.guard_fail_mode` on **both** paths that cannot consult the model: `DecisionClient::new` failure (held under `Closed`, skipped under `Open`) and the previously-unreachable `assess` `Err` arm, which is now routed through the same policy instead of asserting "do not block on plumbing errors". The shared `held(...)` message keeps the caller's escape hatch (`re-call with confirm: true`), so `Closed` remains a hold and never a hard block. The `guard_gate` docstring claiming "model failure fails open" is corrected to describe the configured mode. Caveat kept honest: `DecisionClient::new` only fails if `reqwest::Client::builder().build()` fails, which is not reachable from a test without injecting the constructor, so that arm is verified by inspection plus the end-to-end `handler_fails_closed_when_model_unreachable` test that exercises the sibling path through the dispatcher.
 **Severity:** 🔴 Critical — a safety control that silently becomes a no-op under misconfiguration.
+
+### 48. Reading the JEV config before `init` permanently disabled the guardrails
+
+**Files:** `src/decision/mod.rs` (`config`, `init`), `src/mcp/handlers/mod.rs` (`guard_gate`), `src/decision/guard.rs` (`assess`), `tests/guard_eval.rs`
+**Problem (root-caused 2026-11-05 from the ubuntu-latest failure in CI run 41943845280 — issue #44):** `config()` was `JEV_CONFIG.get_or_init(JevConfig::default).clone()` while `init()` was `let _ = JEV_CONFIG.set(config)`. `OnceLock` is first-*writer*-wins, and `get_or_init` writes: merely *reading* the process config installed `JevConfig::default()` — whose `guardrails` is `false` (`config.rs:132` resolves clap defaults) — and the real install was then discarded silently by `set()` returning `Err`. `guard_gate` opens with `if !config.guardrails { return None }` (= proceed), so the denylist, the guarded-set check, `confirm` handling and the model judgment all stopped running for the rest of the process lifetime — destructive tools dispatched unguarded, with no log line and no error.
+Any caller could arm it: `guard::assess` reads `config().guard_threshold` (guard.rs:388) and `config().guard_fail_mode` (guard.rs:468, 470), and `handlers/decision.rs` (lines 20, 89) plus `handlers/ui_loop.rs` (line 35) read it too. `main` calls `decision::init` first today, so the production window is narrow — but it is a *read* that opens it, not a misconfiguration, and the failure direction is fail-open on the guard's hardest layer.
+**Why Windows hid it (nothing platform-specific):** in `tests/guard_eval.rs` the `handler` module's tests each call an `Once`-guarded `init_guarded_config()` first, but the separate `mod assess` (line 689) calls `assess()` directly — `fail_closed_when_model_unreachable`, `denylist_still_applies_when_model_unreachable`, `threshold_from_config_is_honored_by_assess_with` install nothing. Different module, same process, so its `config()` read poisons the lock the `handler` tests depend on. Under libtest's default multithreaded run, which test executes first decides whether the denylist is alive for the whole binary: windows-latest drew an installer first, ubuntu-latest drew a reader. That is also why the regression test is written to be run with `--exact`, and why #47's isolation problem is a correctness problem here, not a speed one.
+**Symptom on ubuntu-latest — `guard_eval` 10 passed / 4 failed / 2 ignored, every other suite green (same messages reproduced verbatim by reverting the fix, below):**
+
+| test | assertion output |
+| --- | --- |
+| `denylist_refusal_in_handler_and_confirm_cannot_bypass` | `expected denylist refusal, got: File not found: C:\Windows\System32\kernel32.dll` |
+| `shell_write_input_is_screened_by_the_command_denylist` | `expected denylist refusal, got: Session not found: does-not-exist` |
+| `denylist_applies_to_tools_outside_the_guarded_set` | `expected denylist refusal, got: Invalid base64: Invalid input length: 1` |
+| `handler_fails_closed_when_model_unreachable` | `assertion \`left == right\` failed: expected the call to be held, got: Some("Deleted /tmp/.tmpXLBHRJ/fail-closed.txt")` |
+
+Each message is a *handler* answer where a *guard* answer was expected, i.e. `guard_gate` returned `None` and the destructive call ran for real — the third one is `fs_write` reaching its base64 decode, the fourth actually deleted a file it was supposed to hold.
+**Fixed 2026-11-05:** `config()` now reads without installing — `JEV_CONFIG.get().cloned().unwrap_or_default()` — so `init` is authoritative in either order; doc comments on both `init` and `config` state the invariant so the next reader does not "simplify" it back. Regression test `handler::a_config_read_before_init_does_not_disable_the_guard` reads the config *first*, installs, asserts `guardrails` survived, and then asserts a denylisted `fs_delete` is still refused with "denylist" in the message — the interception is proven through the dispatcher, not just the flag.
+**Proven to fail, on the platform that reported it:** the fix was reverted with `sed` **inside the container copy only** (checkout untouched, verified by printing `config()` from `/work`) and `cargo test --test guard_eval -- --test-threads=1` on `rust:1-slim-bookworm` gave **5 failed / 10 passed / 2 ignored** — the four messages above, byte-identical, plus the new test's own assert at `guard_eval.rs:512`. Restoring the fix: 15 passed / 0 failed / 2 ignored. Running just the new test with the fix reverted on Windows (`--exact`, so nothing else installs) failed identically, which is how the defect was shown to be order-specific rather than Linux-specific.
+**Related:** this is a second, sharper reason for #47. A process-global config that tests reach through real code paths makes *safety* assertions order-dependent, and ordering can just as easily produce a passing run as a silently disarmed guard.
+**Status:** ✅ Fixed — verified on Windows (**287 passed / 0 failed / 3 ignored**) and on Linux in Docker (**282 / 0 / 3**; the gap is the `cfg(windows)` tests), plus `cargo fmt --check` 0 and `cargo clippy --all-targets -- -D warnings` 0.
+**Severity:** 🔴 Critical — the guard's master switch was flippable by a read, in the direction that executes destructive calls.
 
 ---
 
@@ -285,6 +308,11 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 **Full local dry-run of the gate set (2026-11-05, after #45).** This is what the `ci.yml` gates will do, run by hand on Windows — the platform CI does *not* cover, so it is complementary evidence rather than a substitute for the remote run:
 
+> Count note: the `cargo test --all-targets` figure in that table (286) is the dry-run's own measurement.
+> After #48's regression test the suite is **287 passed / 0 failed / 3 ignored** on Windows and
+> **282 / 0 / 3** on Linux (`rust:1-slim-bookworm` with `systemd`/`net-tools` installed); the 5-test gap is
+> the `#[cfg(windows)]` tests.
+
 | gate | result |
 | --- | --- |
 | `cargo fmt --check` | exit 0 |
@@ -303,17 +331,64 @@ IDE-attached `sys-mcp.exe` (PID 18672) was running from exactly that path and Wi
 loaded image. Worked around with `--target-dir` rather than killing the live server; the gotcha and the
 workaround are now documented in `CONTRIBUTING.md`.
 
-**Owed / remaining:** none of this has executed remotely — `origin/feat/ocr-onnx-a11y-tools` still points at
-`343ff06`, before this audit's first commit, so every claim above is a local claim; that is the point of
-the trigger change. `cargo-deny` itself has never run here (not installed on this machine), so the
-`deny.toml` schema is doc-verified only. Expect the first remote run to need fixes: the feature legs run on
-Linux while all of the above ran on Windows, `macos-13` may be retired upstream, and the cargo-deny report
-will be red until someone triages it into `deny.toml`. `release.yml` has still never published (`git tag`
-is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing is deliberately **not** added:
-`SHA256SUMS` lets a downloader detect corruption, not establish provenance, and cosign/minisign or Windows
-code signing each need a key decision from the owner.
-**Status:** 🟡 Partially fixed — the gates are wired and schema-validated; the remote evidence is one push away.
-**Severity:** 🟡 High — the worth of every gate below is zero until a run exists, so the push is the remaining work, not a formality.
+**Owed / remaining (as written before the push; see the remote-run record below for what changed):**
+`cargo-deny` itself has never run here (not installed on this machine), so the `deny.toml` schema is
+doc-verified only — and it predicted correctly that the report would be red until triaged. The feature legs
+run on Linux while all of the above ran on Windows, which is exactly the gap that produced the two failures
+below. The `ci.yml` test matrix uses `macos-latest`, so that leg ran on a current image and reached
+`cargo check` — the earlier worry about a retired runner applies only to `release.yml`'s `macos-13`
+x86_64 build leg, which has never run. `release.yml` has
+still never published (`git tag` is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing
+is deliberately **not** added: `SHA256SUMS` lets a downloader detect corruption, not establish provenance, and
+cosign/minisign or Windows code signing each need a key decision from the owner.
+
+#### First remote run — 2026-11-05, and it earned its keep
+
+The branch was pushed (`343ff06..be0eea4`), the new `push: branches: ['**']` trigger fired, and run
+**41943845280** (`CI`, event `push`, sha `be0eea4`) concluded **failure** in 3 of 6 jobs:
+
+| job | conclusion | failing step |
+| --- | --- | --- |
+| `Test (windows-latest)` | ✅ success | — |
+| `Features (no-default-features)` | ✅ success | — |
+| `Features (detection)` | ✅ success | — |
+| `Test (macos-latest)` | ❌ failure | `Check` |
+| `Test (ubuntu-latest)` | ❌ failure | `Test` |
+| `Dependency audit (report only)` | ❌ failure | `cargo-deny` |
+
+Both test-leg failures were **real defects on this branch that Windows-only verification could not see** —
+which is precisely the return the trigger change was bought for. The two feature legs added here passed on
+their first remote execution, including the `--no-default-features` suite that nobody had ever compiled
+before #43 found it uncompilable.
+
+- **macOS `Check`:** `error[E0716]: temporary value dropped while borrowed --> src/system.rs:1087`, in the
+  `log show` parser added by `a858350` (#41) — the `Cow` from `String::from_utf8_lossy` was borrowed inline
+  into a `Vec<&str>` that outlived the statement. Reproduced without a Mac via
+  `rustup target add aarch64-apple-darwin` + `cargo check --no-default-features --all-targets --target
+  aarch64-apple-darwin` (exit 101 → exit 0 after the fix, with a visible `Checking sys-mcp` line so the
+  result was a rebuild, not a cache hit). Fixed in `147ad79`. The slim cross-check covers *all* macOS-only
+  code: there are zero `cfg(all(<platform>, feature = …))` sites and zero platform cfgs inside the ocr /
+  detection / decision modules, so no feature-gated path is macOS-specific. `--features ocr` could not be
+  cross-checked because `ring v0.17.14`'s build script needs a C compiler for the Apple target — a toolchain
+  limit on this machine, not a code finding.
+- **ubuntu `Test`:** `cargo test --all-targets` → `guard_eval` 10 passed / **4 failed** / 2 ignored, every
+  other suite green. Root cause is **issue #48**: a process-wide config read was silently turning the whole
+  guard layer off, and only test *ordering* decided it, not the OS. Worth recording how long the honest
+  version of this took: the first three Linux containers **passed**, because `rust:1-slim-bookworm` has no
+  `journalctl`/`systemctl`/`netstat`. Installing `systemd` + `net-tools` made the real-OS handlers take the
+  same paths ubuntu-latest takes — the runner's *binaries* changing the suite outcome is #47's argument
+  demonstrated by the platform, not by a stopwatch.
+- **`Dependency audit (report only)`:** the job carries job-level `continue-on-error: true` (`ci.yml:119`)
+  yet the API reports its conclusion as `failure`. This run cannot attribute that: it failed for the two
+  reasons above regardless. The next push carries neither, so the question answers itself empirically
+  instead of by reading Actions documentation twice.
+
+**Method note (why the local reproduction was trustworthy):** CI job *logs* need auth (`/actions/jobs/{id}/logs`
+→ 403 without a token; `gh` was not logged in), while `/actions/runs`, `…/jobs` and `…/annotations` are public.
+Annotations give exit codes only (`101`), so every detail above came from reproducing the gate locally on the
+same platform image, not from reading CI output.
+**Status:** 🟡 Partially fixed — gates wired and now proven remotely; two defects found by the first run are fixed.
+**Severity:** 🟡 High — what remains is release-side (a tag, a `workflow_dispatch` run, the signing decision) plus the `deny.toml` triage, not gate-side.
 
 ---
 
@@ -536,7 +611,8 @@ and one of the counts was wrong:
 
 - Two test-count claims in `docs/ISSUES.md` itself disagreed with each other ("171 tests" in the status
   table rows for #6 and #24, "248 tests" in the Phase 11 audit note). Measured: **286 passed, 0 failed,
-  3 ignored** across 14 suites. Both figures were stale; the rows now carry the measured one.
+  3 ignored** across 14 suites. Both figures were stale; the rows now carry the measured one (287 after #48's
+  regression test).
 - Found late, in a file this issue did not list: `CONTRIBUTING.md` "Feature Flags" said
   `cargo build --release # all defaults (ocr, clipboard, web-preview, detection)` and listed
   "`detection` — YOLO object detection (default)". `detection` was made opt-in by #29 and `jev` was missing
@@ -597,6 +673,11 @@ Three things fall out of that table:
 **Consequences:** the `detection` CI leg would download a 12.85 MB third-party asset per run to prove nothing, which is why #44 runs that leg with `--no-run`; the ~11.6 s OS-probing floor measured in the slim build above is paid by every leg, on every OS, and cannot be cached; and "it passed with `StubBackend`" is not evidence that a handler avoided real side effects, which is the assumption behind #42's validation-order test (provable there only by timing: 0.00 s).
 
 **Status:** 🟡 Open — the fix has a shape this codebase already uses twice (`DisplayCapability`, `AccessibilityCapability`): put inference and the system probes behind a backend trait so the stub answers without touching the machine. Note that handing `StubBackend` a decodable PNG is *not* a fix on its own — it would move the OCR model download into the default job instead of merely removing the detection one. Both moves need the trait, not the buffer.
+- Confirmed by the platform, not just by timing (2026-11-05, while root-causing #48): a `rust:1-slim-bookworm`
+  container ran this suite **green**, and the same binaries failed on ubuntu-latest, because slim has no
+  `journalctl`/`systemctl`/`netstat`. Installing `systemd` + `net-tools` reproduced CI exactly. So the suite's
+  green-ness is a property of the runner's installed binaries — the strongest form of #47's claim, and the
+  reason its fix needs the trait rather than a `cfg(target_os)` band-aid.
 **Severity:** 🟡 High — the drift guard's cost and its outcome depend on child processes and a third-party URL, and the OCR path it appears to cover is not covered at all.
 
 ### 26. `network_connections` ignores its `limit` parameter
@@ -637,10 +718,15 @@ Current state of the planned feature phases:
   The "248 tests" figure written in that audit was already stale. Re-measured on the same day, after #43's
   first batch: `cargo test` → **286 passed, 0 failed, 3 ignored** across 14 suites (identical with and
   without `--all-targets`; this crate has no doc tests). Rows 6 and 24 above now carry that number instead
-  of the two figures that disagreed with each other.
+  of the two figures that disagreed with each other (they now read 287, the count after #48's added test).
+- Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
+  three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned
+  that first read into `guardrails: false` for the whole process. `init` is now authoritative in either order,
+  and `a_config_read_before_init_does_not_disable_the_guard` pins it (run with `--exact`, so nothing else can
+  install first). Suite after the fix: **287 passed / 0 failed / 3 ignored** on Windows, **282 / 0 / 3** on Linux.
 - Fix 2026-11-05 (#45): the documentation that contradicted the code is corrected — the guard fail-open sentence, the per-platform accessibility verb claims, 23 pre-rename `gui_*` tool name references across `src/`, `CHANGELOG.md` and `SECURITY.md`, the empty handler banner, and the README/`Cargo.toml` feature-cost numbers (re-measured: `jev` +59 outweighs `detection` +56). The blanket `#![allow(dead_code)]` is gone from all ten handler modules, with `dead_code` proven live by an injected probe.
 
 ### Phase 12 — CI/CD 🔓 Partially done
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
 - Audit 2026-11-05: the matrix works but is not wired to the branch flow — feature-branch pushes trigger nothing, no feature combination is ever built, and `release.yml` has never run because no tag exists. Tracked as issue #44.
-- Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) compile in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Not yet executed remotely — the branch is unpushed, and signing is still missing (needs a key decision).
+- Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) compile in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Executed remotely for the first time on 2026-11-05 (run 41943845280): both feature legs green on Linux, and the matrix caught two defects local Windows verification could not see — a macOS `E0716` (fixed in `147ad79`) and the guard-config ordering bug (fixed as #48). Still never published a release, and signing is still missing (needs a key decision).
