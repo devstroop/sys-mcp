@@ -493,6 +493,41 @@ mod handler {
         GuiClient::new(StubBackend)
     }
 
+    /// Regression for the first-caller-wins defect in `decision::config`.
+    ///
+    /// `config()` used to be `get_or_init(default)`, so *reading* the process
+    /// config installed `guardrails: false` permanently and every later
+    /// `init()` was discarded by `OnceLock::set`. The guard then returned
+    /// early and destructive tools dispatched unguarded. It surfaced as four
+    /// failing tests on ubuntu-latest (issue #44) that passed on Windows purely
+    /// because test ordering there happened to install the config first — the
+    /// bug was never platform-specific, only order-specific.
+    ///
+    /// Most meaningful run on its own (`--exact`), when nothing has installed
+    /// the config yet; in aggregate it asserts the installed value survived.
+    #[tokio::test]
+    async fn a_config_read_before_init_does_not_disable_the_guard() {
+        let _ = sys_mcp::decision::config();
+        init_guarded_config();
+        assert!(
+            sys_mcp::decision::config().guardrails,
+            "reading the config before init installed the defaults and discarded the install"
+        );
+        // The guard must therefore actually intercept, not just be configured.
+        let result = handle_tool_call(
+            &client(),
+            "fs_delete",
+            json!({ "path": "C:\\Windows\\System32\\config\\SAM" }),
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true));
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("denylist"),
+            "the denylist did not run after a config read: {text}"
+        );
+    }
+
     #[tokio::test]
     async fn decision_tool_is_never_guarded() {
         init_guarded_config();
