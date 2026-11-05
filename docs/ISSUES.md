@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (335 passing / 4 ignored today) |
+| 6 | Test coverage is critically low | ✅ Fixed (341 passing / 4 ignored today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (335 passing / 4 ignored today; 7 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (341 passing / 4 ignored today; 7 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -51,7 +51,7 @@ it was read from.
 | 29 | `detection` feature made opt-in (second-heaviest alone, +56; `jev` costs +59) | ✅ Fixed |
 | 30 | Advertised tools unreachable when their feature is off (`detect_objects`, `web_preview`) | ✅ Fixed |
 | 31 | OCR inference compiled unoptimized made `screen_read` exceed client timeout | ✅ Fixed (dev-profile opt-level 3) |
-| 32 | stdio transport serializes every request — one slow tool stalls all tools | 🟡 Open |
+| 32 | stdio transport serializes every request — one slow tool stalls all tools | ✅ Fixed (`handle_request` takes `&self`; requests run in a `JoinSet` capped at 32 in flight; EOF drains; the HTTP transport shared the same lock and is fixed too) |
 | 33 | `screen_read` returned crop-relative coordinates for region reads, so `mouse_click` missed the target | ✅ Fixed |
 | 34 | Full-screen OCR has lower small-text recall than a region read of the same pixels | ✅ Fixed (native-scale window sweep at the detector's 600x800 working size; `strategy` on the three OCR tools; every read reports its own coverage) |
 | 35 | `shell_write` reaches the same PTY as `shell_exec` but is neither guarded nor denylisted | ✅ Fixed |
@@ -215,9 +215,48 @@ before reading the next line. While a request is in flight — e.g. the full-scr
 after the client gave up — *every* other tool call queues behind it and also times out. Observed live:
 `window_list` and `screen_size` returned 40504 while an abandoned `screen_read` was still computing, which
 looks exactly like a hung server and sent debugging down the wrong path.
-**Status:** 🟡 Open — fixing it needs `handle_request` to stop requiring `&mut self` (interior mutability or a
-per-request clone) before handling can be spawned concurrently; response writes are already serialized behind
-the stdout lock, and JSON-RPC ids let responses land out of order.
+**Root cause:** the mutex was never protecting request state. `handle_request` takes `&mut self`, but every
+method it reaches — `handle_initialize`, `handle_tools_list`, `handle_resource_read`, `handle_prompt_get`,
+`handle_tools_call`, `handle_web_preview` — only needs `&self`; the sole real writer is `start_web_preview`,
+which runs once at startup before any request arrives. So a signature artifact put a process-wide lock across
+every `await`, and the loop could not read the next line until the current tool finished. `handle_tools_call`
+is `&mut` for no reason at all — it only calls `&self` methods.
+**Status:** ✅ Fixed — `handle_request` and `handle_tools_call` take `&self`; `web_server` moved behind a
+`std::sync::Mutex<Option<WebServer>>` (written once, read per request; a poisoned lock keeps the value rather
+than reporting "web preview is not running" for a server that is still listening), so `GuiMcpServer.handler` is
+now a plain `Arc<McpRequestHandler>` with nothing locked around it.
+The read loop became `serve_lines(handler, reader, sink)`, generic over both ends so the transport is testable
+without owning the process's stdin and stdout: each parsed request goes into a `JoinSet`, and the loop keeps
+reading. Responses are still written one whole line at a time behind a sink mutex, and the line is *encoded
+before* that mutex is taken, so a slow or failing encode cannot hold up other writes.
+Four decisions inside that loop, all measured rather than assumed:
+- **Admission control, not an unbounded spawn.** `MAX_IN_FLIGHT = 32`; past that the read loop waits for a slot.
+  A flood of requests each holding a screenshot would otherwise trade one stall for an OOM. 32 is above the
+  concurrency any single MCP session uses today, so normal traffic never touches the cap.
+- **EOF drains.** After stdin closes, the loop awaits every in-flight task before returning. A piped client
+  writes its requests and hangs up; without the drain, the slowest response of the batch would vanish when the
+  process exits — #40's false absence one layer down.
+- **A panic costs one request.** It used to poison the shared handler mutex, so every later request on the
+  connection failed for the rest of the session. Now the task set reaps it, logs that the id will never be
+  answered, and the connection stays up.
+- **A response that will not encode comes back as `-32603`** with the request's own id instead of silence.
+**Also fixed here:** the HTTP transport held the *same* `Arc<Mutex<McpRequestHandler>>` across `handle_request`,
+so one slow tool serialized every HTTP session, not just the stdio connection it arrived on. `web-preview`
+built sessions inherited the stdio bug; it is gone with the lock.
+**Consequences callers should know:** responses may now land out of order, correlated by JSON-RPC id (this is
+ordinary JSON-RPC; the stdio framing is still one message per line). Concurrency does not interleave desktop
+events — `LocalBackend` already serializes `RustAutoGui` behind its own mutex, so input actions queue at the
+backend while slow read-only tools (OCR, system probes, waits) run alongside each other, which is the case that
+was hurting.
+**Verified:** 6 unit tests in `src/mcp::server::tests` — `a_slow_tool_does_not_hold_up_the_next_request` (ping
+answered within 300ms while a 600ms `system_wait` is still in flight, and first on the wire),
+`eof_drains_the_responses_still_in_flight`, `every_response_carries_the_id_of_the_request_that_produced_it`,
+`a_malformed_line_is_answered_and_the_loop_keeps_reading`, `more_requests_than_the_admission_cap_all_complete`
+(40 requests, all answered, no deadlock), `one_shared_handler_overlaps_two_requests` (two 300ms waits on one
+`Arc` finish in well under 600ms). Mutation-checked: replacing `in_flight.spawn(...)` with an inline `await`
+makes the headline test fail ("ping was still unanswered after 300ms"), so the assertion is load-bearing and not
+a timing artifact. `system_wait` is the slow request because it is the only handler that awaits on purpose and
+needs no backend at all — no shell-out, no model (`docs/ISSUES.md` #47).
 **Severity:** 🟡 High — a single slow call degrades the whole server's availability.
 
 ### 34. Full-screen OCR has lower small-text recall than a region read of the same pixels
@@ -846,6 +885,18 @@ Current state of the planned feature phases:
   seam. 29 tests added (pure geometry/merge/matching, `ScriptedOcr` pass counts, handler vocabulary validation, nine
   end-to-end `StubBackend` coverages, one schema guard). Re-measured: **335 passing / 0 failed / 4 ignored**
   (339 total) on Windows; 239 / 0 / 1 with `--no-default-features`; 338 / 0 / 4 with `detection`; `fmt --check`,
+  `clippy --all-targets -- -D warnings` and `clippy --all-targets --all-features -- -D warnings` clean.
+- Fix 2026-11-05 (#32): requests on one connection are handled at the same time. The stdio loop held a
+  `Mutex<McpRequestHandler>` across every `await` only because `handle_request` took `&mut self` — nothing in the
+  request path writes to the handler except the one-time web-preview start, which now goes through a
+  `std::sync::Mutex<Option<WebServer>>`. `serve_lines` puts each parsed request in a `JoinSet` and keeps reading,
+  capped at 32 in flight as admission control; writes stay one whole line each and are encoded before the sink
+  lock; stdin EOF drains in-flight answers instead of dropping them; a panic costs one response instead of
+  poisoning the handler for the session; an unencodable response comes back as `-32603` rather than silence. The
+  HTTP transport held the same lock, so every session on the server was serialized too — gone with it. 6 unit
+  tests added, mutation-checked: replacing the spawn with an inline `await` fails
+  `a_slow_tool_does_not_hold_up_the_next_request`. Re-measured: **341 passing / 0 failed / 4 ignored** (345 total)
+  on Windows; 245 / 0 / 1 with `--no-default-features`; 344 / 0 / 4 with `detection`; `fmt --check`,
   `clippy --all-targets -- -D warnings` and `clippy --all-targets --all-features -- -D warnings` clean.
 - Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
   three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned

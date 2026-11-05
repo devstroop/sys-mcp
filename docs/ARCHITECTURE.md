@@ -165,8 +165,18 @@ Optional capabilities are compile-time gated:
 sys-mcp implements MCP protocol version `2024-11-05`:
 
 - **Transport**: stdio (newline-delimited JSON) or HTTP
-- **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `ping`
-- **Capabilities**: `{ "tools": {} }`
+- **Concurrency**: requests on one connection are handled at the same time. `handle_request` takes `&self`, so
+  the transport holds an `Arc<McpRequestHandler>` with no mutex around it and each parsed line goes into a
+  `JoinSet` while the read loop keeps reading (`serve_lines`). Writes are one whole line each, behind a sink
+  mutex, encoded before the lock is taken. In-flight requests are capped at `MAX_IN_FLIGHT` (32) as admission
+  control, stdin EOF drains them rather than dropping their answers, and a panicking request costs its own
+  response instead of poisoning the handler for the session. Responses may therefore land out of order, joined
+  to their calls by JSON-RPC id. Desktop input is unaffected: `LocalBackend` serializes `RustAutoGui` behind its
+  own mutex, so GUI actions queue at the backend while slow read-only tools overlap
+  (`docs/ISSUES.md` #32).
+- **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `resources/list`, `resources/read`,
+  `prompts/list`, `prompts/get`, `ping`
+- **Capabilities**: `{ "tools": {}, "resources": { "subscribe": false, "listChanged": false }, "prompts": { "listChanged": false } }`
 
 Tool results use MCP's `ContentItem` format with `type: "text"` for text results and `type: "image"` with base64-encoded data for screenshots.
 

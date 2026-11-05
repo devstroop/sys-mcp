@@ -108,9 +108,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("one downscaled pass … strategy 'thorough' re-reads it as 8 native-scale
   600x800 windows") and a text miss names its own coverage
   ("Search covered 8 native-scale windows")
+- **Requests on one connection are now handled concurrently, so responses can
+  arrive out of order** (`docs/ISSUES.md` #32). Correlate them by JSON-RPC `id`,
+  as the protocol expects; the framing is still exactly one message per line.
+  A client that needs ordering (click, then read what the click did) must await
+  each response as before — what changed is that an unanswered slow request no
+  longer holds up everything else on the connection.
 
 ### Fixed
 
+- **One slow tool stalled the whole server** (`docs/ISSUES.md` #32). The stdio
+  read loop held a `Mutex<McpRequestHandler>` across each `await`, so `window_list`
+  and `screen_size` timed out behind an abandoned full-screen `screen_read` and the
+  server looked hung. The mutex existed only because `handle_request` took
+  `&mut self`, which nothing in the request path actually needed — the sole writer
+  is the one-time web-preview start. `handle_request` now takes `&self`, requests
+  run in a `JoinSet` while the loop keeps reading, and the same lock removed from
+  stdio also frees the HTTP transport, which had been serializing every session on
+  the server. Writes stay one whole line each (encoded before the sink lock is
+  taken), in-flight requests are capped at 32 as admission control rather than
+  spawned without limit, stdin EOF drains in-flight answers instead of dropping
+  them, and a panicking request now costs its own response instead of poisoning the
+  handler for the rest of the session.
 - Fixed session manager test in `src/mcp/session.rs`
 - **Full-screen OCR missed small UI text** (`docs/ISSUES.md` #34). `ocrs` hands
   every image to the detection model's fixed input tensor (600x800 for the
