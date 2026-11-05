@@ -2,6 +2,8 @@
 //!
 //! Provides [`ServiceManager`] for querying and managing Windows services.
 
+use crate::sysinfo::{ProcessInfo, ProcessManager};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -825,19 +827,33 @@ fn cap_line(value: &str) -> String {
     format!("{}\u{2026}", trimmed.chars().take(400).collect::<String>())
 }
 
+/// Whether `name` can be used as an event-log name without becoming shell
+/// input.
+///
 /// Windows event-log names arrive straight from the caller and are interpolated
 /// into a PowerShell hashtable literal, so the character set is the injection
 /// boundary: `'` is what breaks out of the quoted value. Real log names
 /// (`System`, `Application`, `Security`, `Microsoft-Windows-Kernel-PnP/Config`,
 /// `Windows PowerShell`) only need letters, digits, `_`, `-`, `.`, `/` and a
 /// space, so anything else is refused.
-#[cfg(windows)]
-fn is_event_log_name(name: &str) -> bool {
+///
+/// Not `cfg(windows)` anymore: [`StubSystem`](crate::gui::backend::stub::StubSystem)
+/// enforces the same rule, so the handler's injection refusal is testable on
+/// every platform rather than only where PowerShell exists (issue #47).
+pub(crate) fn is_event_log_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ' '))
+}
+
+/// The refusal text for a name [`is_event_log_name`] rejects. One definition, so
+/// the real Windows path and the stub cannot drift into different contracts.
+pub(crate) fn event_log_name_rejection(raw: &str) -> String {
+    format!(
+        "invalid argument: 'log' is not a usable Windows event log name: {raw:?}. Expected e.g. 'System', 'Application', 'Security', 'Setup', or 'Microsoft-Windows-…/…'"
+    )
 }
 
 /// The PowerShell script behind a Windows event-log query, built apart from the
@@ -881,11 +897,7 @@ impl LogViewer {
             let log_name = match log {
                 None => "System".to_string(),
                 Some(raw) if is_event_log_name(&raw) => raw,
-                Some(raw) => {
-                    return Err(format!(
-                        "invalid argument: 'log' is not a usable Windows event log name: {raw:?}. Expected e.g. 'System', 'Application', 'Security', 'Setup', or 'Microsoft-Windows-…/…'"
-                    ))
-                }
+                Some(raw) => return Err(event_log_name_rejection(&raw)),
             };
 
             let script = windows_log_query(&log_name, level, count);
@@ -1118,6 +1130,157 @@ impl LogViewer {
         }
 
         Ok(entries)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// System capability seam — the surface handlers may call without touching the machine
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The system-monitoring surface the `process_*`, `service_*`, `network_*`,
+/// `system_stats`, `disk_usage` and `system_logs` handlers need, as a trait
+/// object instead of module-level calls.
+///
+/// Those handlers used to ignore the [`crate::gui::GuiClient`] they were handed
+/// and call [`ProcessManager`]-style free paths directly, so every "stub" test
+/// still shelled out for real: 11.6 s of the schema/dispatch drift guard was OS
+/// probing, and its green-ness depended on which binaries the runner happens to
+/// ship — a slim container ran the same suite green where ubuntu-latest failed it
+/// (`docs/ISSUES.md` #47).
+///
+/// Every method is `async` and returns `Result<_, String>` even where the
+/// underlying probe cannot fail, because the blocking task can be dropped on
+/// panic: keeping the join error inside the seam is what lets the real
+/// implementation report the exact wording the handlers reported before the seam
+/// existed, which callers and tests assert on.
+#[async_trait]
+pub trait SystemCapability: Send + Sync {
+    async fn list_processes(&self) -> Result<Vec<ProcessInfo>, String>;
+    async fn kill_process(&self, pid: u32) -> Result<(), String>;
+    async fn process_info(&self, pid: u32) -> Result<ProcessInfo, String>;
+    async fn start_process(&self, command: &str, args: Vec<String>) -> Result<u32, String>;
+
+    async fn list_services(&self) -> Result<Vec<ServiceInfo>, String>;
+    async fn start_service(&self, name: &str) -> Result<(), String>;
+    async fn stop_service(&self, name: &str) -> Result<(), String>;
+    async fn service_status(&self, name: &str) -> Result<ServiceInfo, String>;
+
+    async fn network_info(&self) -> Result<NetworkInfo, String>;
+    async fn list_connections(&self) -> Result<Vec<serde_json::Value>, String>;
+
+    async fn system_stats(&self) -> Result<SystemStats, String>;
+    async fn disk_usage(&self) -> Result<Vec<serde_json::Value>, String>;
+    async fn system_logs(
+        &self,
+        count: usize,
+        level: Option<LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<LogEntry>, String>;
+}
+
+/// The production [`SystemCapability`]: every call reaches the real platform, off
+/// the async runtime.
+pub struct LocalSystem;
+
+static LOCAL_SYSTEM: LocalSystem = LocalSystem;
+
+impl LocalSystem {
+    /// The shared instance a backend hands out by reference; the type is stateless,
+    /// so there is no reason to own one per client.
+    pub fn shared() -> &'static LocalSystem {
+        &LOCAL_SYSTEM
+    }
+
+    /// Run `work` on a blocking thread. A dropped task reports the same
+    /// `"<verb> … task failed: <join error>"` sentence the handlers produced
+    /// inline before the seam existed.
+    async fn blocking<T, F>(context: &str, work: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        tokio::task::spawn_blocking(work)
+            .await
+            .map_err(|e| format!("{context} task failed: {e}"))
+    }
+}
+
+#[async_trait]
+impl SystemCapability for LocalSystem {
+    async fn list_processes(&self) -> Result<Vec<ProcessInfo>, String> {
+        LocalSystem::blocking("Process list", ProcessManager::list_processes).await
+    }
+
+    async fn kill_process(&self, pid: u32) -> Result<(), String> {
+        LocalSystem::blocking("Kill process", move || ProcessManager::kill_process(pid)).await?
+    }
+
+    async fn process_info(&self, pid: u32) -> Result<ProcessInfo, String> {
+        LocalSystem::blocking("Process info", move || {
+            ProcessManager::get_process_info(pid)
+        })
+        .await?
+    }
+
+    async fn start_process(&self, command: &str, args: Vec<String>) -> Result<u32, String> {
+        let command = command.to_string();
+        LocalSystem::blocking("Start process", move || {
+            ProcessManager::start_process(&command, args)
+        })
+        .await?
+    }
+
+    async fn list_services(&self) -> Result<Vec<ServiceInfo>, String> {
+        LocalSystem::blocking("Service list", ServiceManager::list_services).await
+    }
+
+    async fn start_service(&self, name: &str) -> Result<(), String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Start service", move || {
+            ServiceManager::start_service(&name)
+        })
+        .await?
+    }
+
+    async fn stop_service(&self, name: &str) -> Result<(), String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Stop service", move || ServiceManager::stop_service(&name)).await?
+    }
+
+    async fn service_status(&self, name: &str) -> Result<ServiceInfo, String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Service status", move || {
+            ServiceManager::service_status(&name)
+        })
+        .await?
+    }
+
+    async fn network_info(&self) -> Result<NetworkInfo, String> {
+        LocalSystem::blocking("Network info", NetworkManager::get_info).await?
+    }
+
+    async fn list_connections(&self) -> Result<Vec<serde_json::Value>, String> {
+        LocalSystem::blocking("Network connections", NetworkManager::list_connections).await
+    }
+
+    async fn system_stats(&self) -> Result<SystemStats, String> {
+        LocalSystem::blocking("System stats", SystemMonitor::get_stats).await?
+    }
+
+    async fn disk_usage(&self) -> Result<Vec<serde_json::Value>, String> {
+        LocalSystem::blocking("Disk usage", SystemMonitor::get_disk_usage).await
+    }
+
+    async fn system_logs(
+        &self,
+        count: usize,
+        level: Option<LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<LogEntry>, String> {
+        LocalSystem::blocking("System logs", move || {
+            LogViewer::get_system_logs(count, level, log)
+        })
+        .await?
     }
 }
 

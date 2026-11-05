@@ -11,7 +11,7 @@ use crate::gui::types::{
 use crate::gui::window::WindowCapability;
 use async_trait::async_trait;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct StubBackend;
 
@@ -220,6 +220,13 @@ impl GuiBackend for StubBackend {
     /// stay reachable from tests.
     fn as_accessibility(&self) -> Option<&dyn AccessibilityCapability> {
         None
+    }
+
+    /// Fixed probe answers, so the `process_*` / `service_*` / `network_*` /
+    /// `system_stats` / `disk_usage` / `system_logs` handlers stop shelling out
+    /// in tests (issue #47).
+    fn as_system(&self) -> Option<&dyn crate::system::SystemCapability> {
+        Some(StubSystem::shared())
     }
 }
 
@@ -579,5 +586,315 @@ impl AccessibilityCapability for StubA11yBackend {
 impl GuiBackend for StubA11yBackend {
     fn as_accessibility(&self) -> Option<&dyn AccessibilityCapability> {
         Some(self)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// System stub — fixed probe answers, no child processes (`docs/ISSUES.md` #47)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Pids the stub treats as alive. Chosen far away from real pid space so a test
+/// that accidentally hits the real machine cannot look like it passed.
+pub const STUB_PIDS: [u32; 2] = [987_654, 987_655];
+
+/// Service names the stub knows, in list order: one running, one stopped.
+pub const STUB_SERVICES: [&str; 2] = ["StubService", "StubStoppedService"];
+
+/// Commands the stub will "launch". Anything else is refused the way a failed
+/// `spawn` is, which gives the error path a test — the real backend could only
+/// prove it by asking the OS for a binary that does not exist.
+pub const STUB_LAUNCHABLE: [&str; 2] = ["stub-alive.exe", "stub-echo.exe"];
+
+/// Log names the stub serves; anything else yields no entries, so the
+/// "empty because the filter matched nothing" message is reachable offline.
+pub const STUB_LOG_NAMES: [&str; 2] = ["Application", "System"];
+
+/// Test handle for [`StubSystem`]: the calls that mutate state, in order. A
+/// response can echo an argument it never used, so the assertions belong on what
+/// the probe actually received.
+#[derive(Debug, Default)]
+pub struct StubSystemRecorder {
+    pub kills: Vec<u32>,
+    pub launches: Vec<(String, Vec<String>)>,
+    pub service_starts: Vec<String>,
+    pub service_stops: Vec<String>,
+    pub log_requests: Vec<(usize, Option<String>, Option<String>)>,
+}
+
+/// Deterministic [`SystemCapability`] for tests.
+///
+/// Every value is a fixed fixture, so a handler test asserting on probe output is
+/// asserting on this file rather than on the machine's process table, service
+/// list, network stack, disk layout or event log.
+pub struct StubSystem {
+    pub recorder: Arc<Mutex<StubSystemRecorder>>,
+}
+
+impl Default for StubSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StubSystem {
+    pub fn new() -> Self {
+        Self {
+            recorder: Arc::new(Mutex::new(StubSystemRecorder::default())),
+        }
+    }
+
+    /// Handed out by [`StubSystem::shared`] so a stateless backend can expose the
+    /// stub without owning it; the recorder is a process-wide fixture, which is
+    /// why tests read it through the handle returned here rather than assuming it
+    /// starts empty.
+    pub fn shared() -> &'static StubSystem {
+        static STUB_SYSTEM: OnceLock<StubSystem> = OnceLock::new();
+        STUB_SYSTEM.get_or_init(StubSystem::new)
+    }
+
+    // The recorder accumulates for the whole test binary, and tests run in
+    // parallel, so it is only meaningful as "does it contain the argument this
+    // test passed" — each test below uses a distinct pid / service name / count,
+    // which is what makes that assertion order-independent. Snapshots, never
+    // clears.
+
+    /// Pids `kill_process` accepted.
+    pub fn kills(&self) -> Vec<u32> {
+        self.recorder.lock().expect("stub lock").kills.clone()
+    }
+
+    /// `(command, args)` pairs `start_process` accepted.
+    pub fn launches(&self) -> Vec<(String, Vec<String>)> {
+        self.recorder.lock().expect("stub lock").launches.clone()
+    }
+
+    /// Service names `start_service` accepted.
+    pub fn service_starts(&self) -> Vec<String> {
+        self.recorder
+            .lock()
+            .expect("stub lock")
+            .service_starts
+            .clone()
+    }
+
+    /// Service names `stop_service` accepted.
+    pub fn service_stops(&self) -> Vec<String> {
+        self.recorder
+            .lock()
+            .expect("stub lock")
+            .service_stops
+            .clone()
+    }
+
+    /// `(count, level, log)` triples `system_logs` was asked for.
+    pub fn log_requests(&self) -> Vec<(usize, Option<String>, Option<String>)> {
+        self.recorder
+            .lock()
+            .expect("stub lock")
+            .log_requests
+            .clone()
+    }
+
+    fn process(pid: u32) -> crate::sysinfo::ProcessInfo {
+        crate::sysinfo::ProcessInfo {
+            pid,
+            name: if pid == STUB_PIDS[0] {
+                "stub-alive.exe".to_string()
+            } else {
+                "stub-echo.exe".to_string()
+            },
+            cpu_usage: 0.5,
+            memory_bytes: 4_194_304,
+            status: "running".to_string(),
+        }
+    }
+
+    fn service(name: &str) -> crate::system::ServiceInfo {
+        let running = name == STUB_SERVICES[0];
+        crate::system::ServiceInfo {
+            name: name.to_string(),
+            display_name: format!("Stub service {name}"),
+            status: if running { "Running" } else { "Stopped" }.to_string(),
+            start_type: if running { "Auto" } else { "Manual" }.to_string(),
+        }
+    }
+
+    fn entry(level: &str, source: &str, message: &str) -> crate::system::LogEntry {
+        crate::system::LogEntry {
+            // Offset-bearing ISO 8601, the shape the Windows event log reports,
+            // so a test can assert the format the tool advertises.
+            timestamp: "2026-01-02T03:04:05.1234567+05:30".to_string(),
+            source: source.to_string(),
+            level: level.to_string(),
+            message: message.to_string(),
+        }
+    }
+}
+
+#[async_trait]
+impl crate::system::SystemCapability for StubSystem {
+    async fn list_processes(&self) -> Result<Vec<crate::sysinfo::ProcessInfo>, String> {
+        Ok(STUB_PIDS.iter().map(|pid| Self::process(*pid)).collect())
+    }
+
+    async fn kill_process(&self, pid: u32) -> Result<(), String> {
+        if STUB_PIDS.contains(&pid) {
+            self.recorder.lock().expect("stub lock").kills.push(pid);
+            Ok(())
+        } else {
+            // Same wording `ProcessManager::get_process_info` uses, so a test that
+            // asserts the failure text means the same thing on both backends.
+            Err(format!("Process not found: {pid}"))
+        }
+    }
+
+    async fn process_info(&self, pid: u32) -> Result<crate::sysinfo::ProcessInfo, String> {
+        STUB_PIDS
+            .iter()
+            .find(|known| **known == pid)
+            .map(|found| Self::process(*found))
+            .ok_or_else(|| format!("Process not found: {pid}"))
+    }
+
+    async fn start_process(&self, command: &str, args: Vec<String>) -> Result<u32, String> {
+        if STUB_LAUNCHABLE.contains(&command) {
+            let mut recorder = self.recorder.lock().expect("stub lock");
+            recorder.launches.push((command.to_string(), args));
+            // Deterministic "pid": derived from how many launches came before.
+            Ok(987_700 + recorder.launches.len() as u32)
+        } else {
+            Err(format!("Failed to spawn: program not found: {command}"))
+        }
+    }
+
+    async fn list_services(&self) -> Result<Vec<crate::system::ServiceInfo>, String> {
+        Ok(STUB_SERVICES
+            .iter()
+            .map(|name| Self::service(name))
+            .collect())
+    }
+
+    async fn start_service(&self, name: &str) -> Result<(), String> {
+        if STUB_SERVICES.contains(&name) {
+            self.recorder
+                .lock()
+                .expect("stub lock")
+                .service_starts
+                .push(name.to_string());
+            Ok(())
+        } else {
+            Err(format!("Service not found: {name}"))
+        }
+    }
+
+    async fn stop_service(&self, name: &str) -> Result<(), String> {
+        if STUB_SERVICES.contains(&name) {
+            self.recorder
+                .lock()
+                .expect("stub lock")
+                .service_stops
+                .push(name.to_string());
+            Ok(())
+        } else {
+            Err(format!("Service not found: {name}"))
+        }
+    }
+
+    async fn service_status(&self, name: &str) -> Result<crate::system::ServiceInfo, String> {
+        STUB_SERVICES
+            .iter()
+            .find(|known| **known == name)
+            .map(|found| Self::service(found))
+            .ok_or_else(|| format!("Service not found: {name}"))
+    }
+
+    async fn network_info(&self) -> Result<crate::system::NetworkInfo, String> {
+        Ok(crate::system::NetworkInfo {
+            hostname: "stub-host".to_string(),
+            ip_addresses: vec!["192.0.2.10".to_string()],
+            default_gateway: Some("192.0.2.1".to_string()),
+            dns_servers: vec!["192.0.2.53".to_string()],
+        })
+    }
+
+    async fn list_connections(&self) -> Result<Vec<serde_json::Value>, String> {
+        Ok(vec![
+            serde_json::json!({
+                "protocol": "tcp",
+                "local_address": "192.0.2.10:49152",
+                "peer_address": "192.0.2.1:443",
+                "state": "ESTABLISHED",
+                "pid": STUB_PIDS[0]
+            }),
+            serde_json::json!({
+                "protocol": "udp",
+                "local_address": "192.0.2.10:5353",
+                "peer_address": "*",
+                "state": "-"
+            }),
+        ])
+    }
+
+    async fn system_stats(&self) -> Result<crate::system::SystemStats, String> {
+        Ok(crate::system::SystemStats {
+            cpu_usage_percent: 12.5,
+            memory_total_bytes: 8_589_934_592,
+            memory_used_bytes: 2_147_483_648,
+            memory_percent: 25.0,
+            disk_total_bytes: 512_110_190_440,
+            disk_used_bytes: 128_027_547_610,
+            disk_percent: 25.0,
+        })
+    }
+
+    async fn disk_usage(&self) -> Result<Vec<serde_json::Value>, String> {
+        Ok(vec![serde_json::json!({
+            "mount": "C:",
+            "total_bytes": 512_110_190_440u64,
+            "used_bytes": 128_027_547_610u64,
+            "free_bytes": 384_082_642_830u64,
+            "percent": 25.0
+        })])
+    }
+
+    async fn system_logs(
+        &self,
+        count: usize,
+        level: Option<crate::system::LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<crate::system::LogEntry>, String> {
+        self.recorder.lock().expect("stub lock").log_requests.push((
+            count,
+            level.map(|l| l.as_str().to_string()),
+            log.clone(),
+        ));
+
+        // A name that could not be an event-log name is refused with the real
+        // path's own rule and wording, so the injection refusal is testable on
+        // any platform (issue #47). A well-formed name this fixture does not
+        // model means "the filter matched nothing", never an error.
+        if let Some(raw) = &log {
+            if !crate::system::is_event_log_name(raw) {
+                return Err(crate::system::event_log_name_rejection(raw));
+            }
+            if !STUB_LOG_NAMES.contains(&raw.as_str()) {
+                return Ok(vec![]);
+            }
+        }
+
+        let all = vec![
+            Self::entry("Error", "StubSource", "read failed"),
+            Self::entry("Warning", "StubSource", "retrying"),
+            Self::entry("Information", "StubSource", "started"),
+            Self::entry("Information", "StubOther", "idle"),
+        ];
+        Ok(match level {
+            Some(level) => all
+                .into_iter()
+                .filter(|entry| entry.level == level.as_str())
+                .take(count)
+                .collect(),
+            None => all.into_iter().take(count).collect(),
+        })
     }
 }

@@ -644,4 +644,9 @@ impl GuiBackend for LocalBackend {
     fn as_vision(&self) -> Option<&dyn VisionCapability> {
         Some(self)
     }
+
+    /// The real system probes: every call in this backend reaches the machine.
+    fn as_system(&self) -> Option<&dyn crate::system::SystemCapability> {
+        Some(crate::system::LocalSystem::shared())
+    }
 }

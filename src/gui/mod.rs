@@ -326,6 +326,20 @@ impl GuiClient {
             .await
     }
 
+    // ── System probes ────────────────────────────────────────────────
+
+    /// The system-probe seam (`docs/ISSUES.md` #47). Handlers for `process_*`,
+    /// `service_*`, `network_*`, `system_stats`, `disk_usage` and `system_logs`
+    /// go through this instead of calling the platform probes directly, so a
+    /// stub-backed test can answer them without shelling out. `Err` means the
+    /// backend has no system probes attached — the handlers report that rather
+    /// than falling back to the real machine.
+    pub fn system(&self) -> Result<&dyn crate::system::SystemCapability, GuiError> {
+        self.backend
+            .as_system()
+            .ok_or_else(|| GuiError::UnsupportedCapability("system monitoring".into()))
+    }
+
     // ── System info ────────────────────────────────────────────────────
 
     pub async fn system_info(&self) -> Result<SystemInfo, GuiError> {

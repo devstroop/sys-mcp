@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use sys_mcp::gui::GuiClient;
 use sys_mcp::mcp::handlers::handle_tool_call;
-use sys_mcp::{StubA11yBackend, StubA11yRecorder, StubBackend};
+use sys_mcp::{StubA11yBackend, StubA11yRecorder, StubBackend, StubSystem};
 
 fn test_client() -> GuiClient {
     GuiClient::new(StubBackend)
@@ -872,14 +872,13 @@ async fn test_system_logs_rejects_unknown_level_instead_of_defaulting_it() {
     );
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn test_system_logs_reads_the_application_log() {
     let client = test_client();
-    // A real query: the Application log is where a crashing application lands,
-    // and it used to be unreachable although the tool is advertised as reading
-    // "system/event logs". Whether entries exist depends on the machine, so
-    // assert the query was accepted, not that it found something.
+    // Answered by `StubSystem` now (issue #47): this used to shell out to
+    // PowerShell and could only assert that *some* query succeeded. Against the
+    // fixture every claim below is deterministic, and the machine-dependent part
+    // moved to `real_os_windows_application_log_is_readable`.
     let result = handle_tool_call(
         &client,
         "system_logs",
@@ -888,61 +887,66 @@ async fn test_system_logs_reads_the_application_log() {
     .await;
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert_eq!(result.is_error, None, "a valid query must not fail: {text}");
-    // The payload has to be the entries, not a successful-looking empty answer:
-    // the script interpolates `$_` into a PowerShell calculated property, which
-    // only survives argument marshalling if the whole pipeline is intact.
-    // "No entries for …" is the other legitimate outcome, asserted around it.
-    if !text.starts_with("No entries for") {
-        let parsed: serde_json::Value = serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("system_logs must return a JSON array ({e}): {text}"));
-        let entries = parsed
-            .as_array()
-            .unwrap_or_else(|| panic!("expected an array of log entries: {text}"));
-        assert!(!entries.is_empty(), "parsed an empty array from: {text}");
-        for entry in entries {
-            let timestamp = entry["timestamp"].as_str().unwrap_or("");
-            assert!(
-                timestamp.contains('T') && timestamp.contains('+'),
-                "timestamp must be ISO 8601, got {timestamp:?} in: {text}"
-            );
-            assert_eq!(
-                entry["level"].as_str().unwrap_or(""),
-                "Error",
-                "the requested level must be the level reported: {text}"
-            );
-            assert!(
-                !entry["source"].as_str().unwrap_or("").is_empty(),
-                "ProviderName must be populated: {text}"
-            );
-        }
+    let parsed: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("system_logs must return a JSON array ({e}): {text}"));
+    let entries = parsed
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an array of log entries: {text}"));
+    assert!(!entries.is_empty(), "expected entries, got: {text}");
+    for entry in entries {
+        let timestamp = entry["timestamp"].as_str().unwrap_or("");
+        assert!(
+            timestamp.contains('T') && timestamp.contains('+'),
+            "timestamp must be ISO 8601, got {timestamp:?} in: {text}"
+        );
+        assert_eq!(
+            entry["level"].as_str().unwrap_or(""),
+            "Error",
+            "the requested level must be the level reported: {text}"
+        );
+        assert!(
+            !entry["source"].as_str().unwrap_or("").is_empty(),
+            "ProviderName must be populated: {text}"
+        );
     }
+    // The filter reached the probe rather than being dropped in the handler.
+    assert!(
+        StubSystem::shared().log_requests().contains(&(
+            5,
+            Some("Error".to_string()),
+            Some("Application".to_string())
+        )),
+        "the probe never saw this request"
+    );
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn test_system_logs_without_a_level_is_not_an_information_only_view() {
     let client = test_client();
     // The default used to be `Level=4`: a bare call returned informational
-    // events and hid every error on the machine. Through the real transport the
-    // cheap, honest proof is that a bare call is accepted and answers with
-    // entries (of whatever levels this machine happens to have).
+    // events and hid every error on the machine. The fixture carries a mixed
+    // set, so the bare call must come back with the Error entry in it — the
+    // claim this test was always making, now provable instead of tolerated.
     let result = handle_tool_call(&client, "system_logs", json!({"count": 5})).await;
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert_eq!(result.is_error, None, "a bare query must not fail: {text}");
-    if !text.starts_with("No entries for") {
-        let parsed: serde_json::Value =
-            serde_json::from_str(text).expect("expected a JSON array of entries");
-        assert!(
-            parsed.as_array().map(|a| !a.is_empty()).unwrap_or(false),
-            "expected entries, got: {text}"
-        );
-    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(text).expect("expected a JSON array of entries");
+    let entries = parsed.as_array().expect("expected an array");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["level"].as_str() == Some("Error")),
+        "a bare read must include severities above Information: {text}"
+    );
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn test_system_logs_refuses_a_log_name_that_could_escape_the_filter() {
     let client = test_client();
+    // No longer `cfg(windows)`: `StubSystem` enforces the same name rule as the
+    // PowerShell path (issue #47), so the injection boundary is guarded on every
+    // platform instead of only where the real query can run.
     let result = handle_tool_call(
         &client,
         "system_logs",
@@ -959,6 +963,7 @@ async fn test_system_logs_refuses_a_log_name_that_could_escape_the_filter() {
 
 #[cfg(not(windows))]
 #[tokio::test]
+#[ignore = "real-OS probe (issue #47): reads the machine's journal / unified log. Run: cargo test --all-targets -- --ignored real_os"]
 async fn test_system_logs_names_the_platform_it_is_on_when_log_is_unsupported() {
     let client = test_client();
     // `log` is a Windows concept; ignoring it would return the platform default
