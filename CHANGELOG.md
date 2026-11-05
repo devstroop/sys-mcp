@@ -144,6 +144,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The loop checked, then scrolled, so the frame it settled on was never
   inspected; it is now captured and searched (at native scale by default) before
   "not found after N scrolls" is returned
+- **Supply-chain audit findings triaged** (`docs/ISSUES.md` #44, second batch).
+  Nine RUSTSEC advisories reported by `cargo-deny` after `0228f8f` fixed the
+  job's checkout are closed by patch-level bumps: `anyhow 1.0.102 → 1.0.103`,
+  `crossbeam-epoch 0.9.18 → 0.9.20`, `rustls 0.23.45 → 0.23.46`, `rustls-webpki
+  0.103.15 → 0.103.16`, `webpki-roots 1.0.7 → 1.0.10`, and `tokio 1.52.3 →
+  1.53.3` (which crosses the advisory's `>=1.51.6, <1.52.0 OR >=1.53.3` window,
+  not a same-line patch). `deny.toml` now allows BSL-1.0, NCSA, and
+  CDLA-Permissive-2.0 — all OSI-approved, reached transitively through the
+  arboard clipboard chain, `rav1e → ravif → image`, and `webpki-roots`'s root
+  certificate data — with the reason recorded next to each entry. The single
+  wildcard ban is the workspace's own `{ path = "rustautogui", ... }` dep; the
+  fix pins `version = "2.5.0"` in `Cargo.toml` rather than adding a `[bans] skip`
+  that would mask future regressions
 
 ## [0.1.0] - 2025-04-12
 

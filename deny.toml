@@ -47,6 +47,15 @@ allow = [
     "MPL-2.0",
     "Unicode-DFS-2016",
     "Unicode-3.0",
+    # Triaged 2026-11-05 (#44): all three appear transitively and are
+    # OSI-approved permissive licenses. BSL-1.0 comes in via clipboard-win /
+    # error-code (arboard clipboard chain); NCSA via libfuzzer-sys
+    # (rav1e → ravif → image); CDLA-Permissive-2.0 is webpki-roots' data
+    # license for its Mozilla-derived root certificate bundle, which is the
+    # correct SPDX id for a data set rather than source.
+    "BSL-1.0",
+    "NCSA",
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]

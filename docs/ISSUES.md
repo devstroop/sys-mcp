@@ -63,7 +63,7 @@ it was read from.
 | 41 | `system_logs` defaults to Information-only, reads the System log only, and reports every failure as `[]` | ✅ Fixed |
 | 42 | `screen_read` selects region mode on the presence of `x` alone; unknown `detail` silently picks the heaviest branch | ✅ Fixed |
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (7 of 72 remain — the `mcp_*` hub tools need a fake child server) |
-| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely: first run found 2 real defects; release side still unexercised) |
+| 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely; supply-chain triaged green; release side still unexercised) |
 | 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | ✅ Fixed (`invoke_element_action` carries an optional value; `set_value` writes on all three platforms) |
 | 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | ✅ Fixed (SystemCapability + Ocr/Detection seams; the default suite no longer shells out or loads a model) |
@@ -471,6 +471,40 @@ Annotations give exit codes only (`101`), so every detail above came from reprod
 same platform image, not from reading CI output.
 **Status:** 🟡 Partially fixed — gates wired and now proven remotely; two defects found by the first run are fixed.
 **Severity:** 🟡 High — what remains is release-side (a tag, a `workflow_dispatch` run, the signing decision) plus the `deny.toml` triage, not gate-side.
+
+#### Second remote run — plumbing bug in the supply-chain job
+
+The `Dependency audit (report only)` job kept rendering red after `41943845280`, but for a reason unrelated to
+the tree: its `actions/checkout@v4` step omitted `submodules: true`, so `cargo-deny` could not resolve the
+`rustautogui` path dep and `cargo metadata` exited before any check ran. Every other job (test matrix,
+features matrix, real-os probes, release) already fetches submodules; only this step missed the flag.
+Fixed in `0228f8f`. Once the checkout works, cargo-deny runs and reports the real supply-chain findings for
+the first time — the triage below.
+
+**Fixed 2026-11-05 (#44, second batch: supply-chain triage):** all nine RUSTSEC advisories from run
+`42008071452` are closed by patch-level bumps in `Cargo.lock` — `anyhow 1.0.102 → 1.0.103`,
+`crossbeam-epoch 0.9.18 → 0.9.20`, `rustls 0.23.45 → 0.23.46`, `rustls-webpki 0.103.15 → 0.103.16`,
+`webpki-roots 1.0.7 → 1.0.10`, `tokio 1.52.3 → 1.53.3` (this one crossed the advisory's
+`>=1.51.6, <1.52.0 OR >=1.53.3` window, not a same-line patch). No source changes — the affected range
+was on the transitive side of every entry, and each crate's own Cargo.toml constraint (`1.0`, `0.23`,
+`1`) admitted the fixed version already.
+
+The four rejected licenses are allowed in `deny.toml` with the reason recorded next to each entry:
+BSL-1.0 (`clipboard-win` / `error-code` via `arboard`), NCSA (`libfuzzer-sys` via `rav1e → ravif → image`),
+and CDLA-Permissive-2.0 (`webpki-roots` data license for its Mozilla-derived root bundle). All three are
+OSI-approved; the third is a data license and there is no source-license alternative for that crate.
+
+The single wildcard is the workspace's own path dep: `rustautogui = { path = "rustautogui", ... }`
+with no `version`. Rather than a `[bans] skip` entry that would paper over future regressions, the path
+dep now carries `version = "2.5.0"` — the same string as the submodule's `Cargo.toml`, so a submodule
+bump fails to build instead of silently re-opening the wildcard.
+
+**Verified locally (Windows; cargo-deny not installed here, CI is the actual judge):** `cargo fmt --check`
+exit 0; `cargo clippy --all-targets -- -D warnings` and `cargo clippy --all-features --all-targets --
+-D warnings` exit 0; `cargo test --all-targets` **341 / 0 / 4**, `--no-default-features` **245 / 0 / 1**,
+`--features detection` **344 / 0 / 4**. The counts match `a68d041` exactly, so no test disappeared under
+the bumps. `continue-on-error: true` on the `supply-chain` job stays until CI shows one green leg; that
+flip is the last remaining gate-side item on this issue.
 
 ---
 
@@ -909,3 +943,4 @@ Current state of the planned feature phases:
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
 - Audit 2026-11-05: the matrix works but is not wired to the branch flow — feature-branch pushes trigger nothing, no feature combination is ever built, and `release.yml` has never run because no tag exists. Tracked as issue #44.
 - Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) run in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Executed remotely for the first time on 2026-11-05 (run 41943845280): both feature legs green on Linux, and the matrix caught two defects local Windows verification could not see — a macOS `E0716` (fixed in `147ad79`) and the guard-config ordering bug (fixed as #48). After #47 the `detection` leg dropped its `--no-run` and a manual `real-os` job was added for the ignored machine probes. Still never published a release, and signing is still missing (needs a key decision).
+- Fix 2026-11-05 (#44, second batch: supply-chain triage): the `supply-chain` job's checkout gained `submodules: true` (`0228f8f`) so `cargo-deny` can read `rustautogui`'s manifest and actually run. Its first clean report has been triaged in the same batch: nine RUSTSEC advisories closed by patch-level bumps to `anyhow`/`crossbeam-epoch`/`rustls`/`rustls-webpki`/`webpki-roots`/`tokio`; three OSI-approved licenses (BSL-1.0, NCSA, CDLA-Permissive-2.0) added to `deny.toml` with per-entry reasons; the wildcard on the `rustautogui` path dep removed by pinning `version = "2.5.0"` in `Cargo.toml` rather than a `[bans] skip`. Suite unchanged: 341 / 245 / 344 across the three legs, 0 failed each. `continue-on-error` on the job stays until CI proves one green leg.

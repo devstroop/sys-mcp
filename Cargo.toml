@@ -25,8 +25,11 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 hostname = "0.4"
 
-# GUI automation (submodule)
-rustautogui = { path = "rustautogui", default-features = false, features = ["full"] }
+# GUI automation (submodule). The `version` matches the submodule's own
+# Cargo.toml (2.5.0); cargo-deny treats a bare `{ path = ... }` dep as a
+# wildcard, and pinning here keeps the audit clean and makes a submodule
+# bump fail loudly rather than silently (#44).
+rustautogui = { path = "rustautogui", version = "2.5.0", default-features = false, features = ["full"] }
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
