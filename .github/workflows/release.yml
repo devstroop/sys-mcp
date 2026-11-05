@@ -4,9 +4,20 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual runs build, package and smoke-test every leg — i.e. they verify that
+  # a release *would* work — but never publish (see the `release` job's `if`).
+  # This is the only way to exercise the release pipeline before pushing a tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+# Two runs for the same tag would race on the same Release object; queue them
+# instead of cancelling, because cancelling a half-published release leaves a
+# partial asset set behind.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,6 +42,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
 
+          # macos-13 is not staleness: it is the last GitHub runner image that
+          # provides x86_64 macOS, so it is the only way to produce
+          # x86_64-apple-darwin. Do not "modernise" it to macos-latest (arm64),
+          # which would silently produce two aarch64 binaries and no Intel one.
           - name: macos-x86_64
             os: macos-13
             target: x86_64-apple-darwin
@@ -66,6 +81,25 @@ jobs:
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+
+      # A release that does not start is worse than no release. `--version` is
+      # handled by clap before the GUI backend or any transport is touched, so
+      # it exits 0 without opening a screen-capture handle or binding a port
+      # (verified on the local debug build: prints "sys-mcp 0.1.0", exit 0).
+      # Each leg builds for its runner's own architecture, so no emulation is
+      # needed — adding a foreign target to the matrix means gating this step.
+      - name: Smoke test (Unix)
+        if: runner.os != 'Windows'
+        run: ./target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} --version
+
+      # pwsh does not fail a step on a native command's non-zero exit code, so
+      # the code has to be propagated by hand or the smoke test is decoration.
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "./target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -105,6 +139,10 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    # Tag pushes only. A `workflow_dispatch` run stops after the build legs:
+    # everything is compiled, smoke-tested and checksummed, and nothing is
+    # published.
+    if: github.event_name == 'push'
 
     steps:
       - name: Download artifacts
@@ -112,13 +150,42 @@ jobs:
         with:
           path: artifacts
 
-      - name: Display structure
-        run: find artifacts -type f
+      # The build legs upload one artifact per target, each holding a single
+      # archive. GitHub release assets are flat, so flatten them here and fail
+      # loudly if flattening loses a file to a name collision — otherwise the
+      # release would ship fewer binaries than there were build legs.
+      - name: Flatten release assets
+        run: |
+          mkdir -p dist
+          src=$(find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/ \;
+          dst=$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          if [ "$src" -ne "$dst" ]; then
+            echo "::error::flattened $src assets into $dst files — archive names collide across legs"
+            exit 1
+          fi
+          echo "release assets: $dst"
+
+      # Checksums are published next to the binaries so a downloader can verify
+      # what it got. They are a baseline, not trust: an attacker who can replace
+      # the assets can replace SHA256SUMS too. Signing (cosign/minisign, or
+      # Windows code signing) is the step that actually establishes provenance
+      # and needs a key decision from the owner — recorded in issue #44.
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
+          sums=$(wc -l < SHA256SUMS)
+          files=$(find . -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          if [ "$sums" -ne "$files" ]; then
+            echo "::error::SHA256SUMS has $sums lines for $files assets"
+            exit 1
+          fi
+          cat SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/**/*.tar.gz
-            artifacts/**/*.zip
+          # Basenames, so they match the paths recorded in SHA256SUMS.
+          files: dist/*
           generate_release_notes: true

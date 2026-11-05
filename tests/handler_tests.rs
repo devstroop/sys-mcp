@@ -1,8 +1,8 @@
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
 use sys_mcp::gui::GuiClient;
 use sys_mcp::mcp::handlers::handle_tool_call;
-use sys_mcp::StubBackend;
+use sys_mcp::{StubA11yBackend, StubA11yRecorder, StubBackend, StubSystem};
 
 fn test_client() -> GuiClient {
     GuiClient::new(StubBackend)
@@ -660,9 +660,339 @@ async fn test_screen_find_text_missing_query_errors() {
     let result = handle_tool_call(&client, "screen_find_text", json!({})).await;
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
+
+    // Both legs are asserted so the test holds in a `--no-default-features`
+    // build, where the handler never reaches argument validation: the tool is
+    // declared but not compiled, and saying so is the correct answer.
+    #[cfg(feature = "ocr")]
     assert!(
         text.contains("missing required argument: query"),
         "got: {text}"
+    );
+
+    #[cfg(not(feature = "ocr"))]
+    assert!(text.contains("OCR not available"), "got: {text}");
+}
+
+// The seam added for issue #47 lets these tools be driven to completion against
+// `StubOcr` / `StubDetection` under the feature legs. Before it, a `--features
+// ocr` / `detection` test that reached the success path downloaded and loaded the
+// ONNX model first — so the whole inference surface was only exercisable on a
+// machine with network access and gigabytes of RAM. Each test below asserts the
+// stub's canned payload, which is only reachable if no model was consulted.
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_is_answered_by_the_stub_without_loading_the_engine() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    assert!(
+        text.contains("Found") && text.contains("lines of text detected"),
+        "expected StubOcr's canned line, got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_returns_stub_coordinates_not_model_output() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Found" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubOcr's single match has its centre at (30, 26); seeing those numbers
+    // proves the handler went through the capability seam, not the real engine.
+    assert!(text.contains("1 match"), "expected one match, got: {text}");
+    assert!(
+        text.contains("30") && text.contains("26"),
+        "expected stub cx/cy, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_objects_is_answered_by_the_stub_without_loading_the_model() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "detect_objects", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    assert!(
+        text.contains("button") && text.contains("0.91"),
+        "expected StubDetection's canned box, got: {text}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Remaining #43 coverage — tools that appeared in no test at all
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn test_system_stats_answers_from_the_stub_fixture() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "system_stats", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    // `StubSystem`'s numbers (src/gui/backend/stub.rs), so the assertions bind
+    // to this repo rather than to the runner's CPU, RAM or disk.
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert_eq!(v["cpu_usage_percent"], 12.5, "got: {text}");
+    assert_eq!(v["memory_percent"], 25.0, "got: {text}");
+    assert_eq!(v["memory_total_bytes"], 8_589_934_592u64, "got: {text}");
+    for field in ["cpu_usage_percent", "memory_percent", "disk_percent"] {
+        assert!(v.get(field).is_some(), "missing {field}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn test_disk_usage_answers_from_the_stub_fixture() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "disk_usage", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    let drives = v
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an array of mounts, got: {text}"));
+    assert_eq!(drives.len(), 1, "expected the single stub mount: {text}");
+    assert_eq!(drives[0]["mount"], "C:", "got: {text}");
+    assert_eq!(drives[0]["percent"], 25.0, "got: {text}");
+    assert_eq!(drives[0]["total_bytes"], 512_110_190_440u64, "got: {text}");
+}
+
+#[tokio::test]
+async fn test_decision_stats_reports_the_local_ledger_without_a_model_call() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_stats", json!({})).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert!(v.get("summary").is_some(), "missing summary: {text}");
+    assert!(
+        text.contains("net-negative"),
+        "expected the ledger's own caveat, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_decision_stats_reset_is_accepted_and_still_reports() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_stats", json!({ "reset": true })).await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert!(v.get("summary").is_some(), "missing summary: {text}");
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_refuses_missing_text_or_question() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "decision_rank", json!({ "question": "q" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: text"),
+        "got: {text}"
+    );
+
+    let result = handle_tool_call(&client, "decision_rank", json!({ "text": "t" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: question"),
+        "got: {text}"
+    );
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_zero_top_k_is_refused_before_any_work() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": "t", "question": "q", "top_k": 0 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("top_k must be at least 1"), "got: {text}");
+}
+
+#[cfg(feature = "jev")]
+#[tokio::test]
+async fn test_decision_rank_returns_small_input_whole_without_ranking() {
+    let client = test_client();
+    // FLOOR_CHARS is 8 KiB (src/decision/rank.rs), so this input takes the
+    // return-whole branch: the response shape is asserted with no gateway call.
+    let text_in = "alpha\nbeta\ngamma";
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": text_in, "question": "which line is beta" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None);
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let v: Value = serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"));
+    assert_eq!(v["skipped_small"], true, "got: {text}");
+    assert_eq!(
+        v["batches"], 0,
+        "a small input must not spend a batch: {text}"
+    );
+    assert_eq!(v["dropped"], 0, "nothing is silently cut: {text}");
+    assert_eq!(v["failed_batches"], 0, "got: {text}");
+    // The contract is "returned whole": kept == total and the input comes back
+    // byte-for-byte. The block COUNT is deliberately not pinned — split_blocks
+    // hard-splits an over-long line at max_chars, so it is the splitter's
+    // business, not the handler's promise.
+    assert_eq!(v["kept"], v["total_blocks"], "nothing dropped: {text}");
+    assert!(
+        v["total_blocks"].as_u64().unwrap_or(0) >= 1,
+        "expected at least one block, got: {text}"
+    );
+    assert_eq!(
+        v["content"].as_str(),
+        Some(text_in),
+        "input must be returned verbatim, got: {text}"
+    );
+}
+
+#[cfg(not(feature = "jev"))]
+#[tokio::test]
+async fn test_decision_rank_is_advertised_but_reports_its_feature() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "decision_rank",
+        json!({ "text": "t", "question": "q" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not compiled in"),
+        "expected the actionable feature message, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_requires_a_label() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "detect_click_object", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("missing 'label' argument"), "got: {text}");
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_clicks_the_stub_box() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "button" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubDetection's only box is centred at (125, 215), so these numbers prove
+    // the click came from the stub rather than from a real model run.
+    assert!(
+        text.contains("button") && text.contains("125") && text.contains("215"),
+        "expected the stub box centre, got: {text}"
+    );
+}
+
+#[cfg(feature = "detection")]
+#[tokio::test]
+async fn test_detect_click_object_reports_no_match_and_an_out_of_range_index() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "zebra" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("No objects found with label 'zebra'"),
+        "got: {text}"
+    );
+
+    // StubDetection answers exactly one "button", so index 1 cannot resolve.
+    let result = handle_tool_call(
+        &client,
+        "detect_click_object",
+        json!({ "label": "button", "index": 1 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("out of range") && text.contains("found 1 objects"),
+        "got: {text}"
+    );
+}
+
+#[cfg(not(feature = "detection"))]
+#[tokio::test]
+async fn test_detect_click_object_reports_its_feature_when_detection_is_off() {
+    let client = test_client();
+    let result =
+        handle_tool_call(&client, "detect_click_object", json!({ "label": "button" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("rebuild with `--features detection`"),
+        "expected the actionable feature message, got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_requires_a_query() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_scroll_to_text", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("missing required argument: query"),
+        "got: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_reports_found_after_zero_scrolls_via_the_stub() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found", "max_scrolls": 100 }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "the stub must answer: {text}");
+    // StubOcr answers every find_text query with one match, so the very first
+    // iteration returns: no scrolling, no 300 ms waits, no engine.
+    assert!(
+        text.contains("after 0 scroll(s)"),
+        "expected an immediate match, got: {text}"
+    );
+}
+
+#[cfg(not(feature = "ocr"))]
+#[tokio::test]
+async fn test_screen_scroll_to_text_reports_its_feature_when_ocr_is_off() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("ocr"),
+        "expected the feature message, got: {text}"
     );
 }
 
@@ -760,6 +1090,210 @@ async fn test_process_start_nonexistent_command_errors() {
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("Failed to spawn"), "got: {text}");
+}
+
+// ─── Optional array arguments are validated, not absorbed (issue #40) ──────
+
+#[tokio::test]
+async fn test_process_start_rejects_non_array_args() {
+    let client = test_client();
+    // `args` given as a string instead of an array: the old code read
+    // `as_array()` -> None -> `unwrap_or_default()` and silently started the
+    // process with *no* arguments, then reported success. Rejected now, and
+    // before any spawn (the command below cannot exist either, so nothing can
+    // run even if the ordering regressed).
+    let result = handle_tool_call(
+        &client,
+        "process_start",
+        json!({"command": "sys_mcp_definitely_not_a_real_binary_xyz", "args": "--version"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must be an array of strings"),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_process_start_rejects_non_string_elements() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "process_start",
+        json!({"command": "sys_mcp_definitely_not_a_real_binary_xyz", "args": ["ok", 7]}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must contain only strings"),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_register_rejects_non_array_args() {
+    let client = test_client();
+    // Registration only writes to the in-process hub, so a *valid* call here
+    // cannot spawn anything; the invalid one must fail before that write.
+    let invalid = handle_tool_call(
+        &client,
+        "mcp_register",
+        json!({"name": "args-validation-probe", "command": "npx", "args": {"a": 1}}),
+    )
+    .await;
+    assert_eq!(invalid.is_error, Some(true));
+    let text = invalid.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("'args' must be an array of strings"),
+        "got: {text}"
+    );
+    let info = handle_tool_call(&client, "mcp_list", json!({})).await;
+    let listed = info.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        !listed.contains("args-validation-probe"),
+        "a rejected registration must not reach the hub: {listed}"
+    );
+}
+
+// ─── system_logs argument handling (issue #41) ────────────────────────────
+
+#[tokio::test]
+async fn test_system_logs_rejects_unusable_count() {
+    let client = test_client();
+    for args in [
+        json!({"count": 0}),
+        json!({"count": 1001}),
+        json!({"count": "50"}),
+        json!({"count": -3}),
+    ] {
+        let result = handle_tool_call(&client, "system_logs", args.clone()).await;
+        assert_eq!(result.is_error, Some(true), "{args} must be refused");
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("'count'"),
+            "{args} should be a count error, got: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_system_logs_rejects_unknown_level_instead_of_defaulting_it() {
+    let client = test_client();
+    // The old code sent any unrecognized level to `Level=4`, so a request for
+    // Critical came back as a list of Information events.
+    let result = handle_tool_call(&client, "system_logs", json!({"level": "severe"})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("'level'"), "got: {text}");
+    assert!(
+        text.contains("omit 'level' to read them all"),
+        "the error must teach the caller the default, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_system_logs_reads_the_application_log() {
+    let client = test_client();
+    // Answered by `StubSystem` now (issue #47): this used to shell out to
+    // PowerShell and could only assert that *some* query succeeded. Against the
+    // fixture every claim below is deterministic, and the machine-dependent part
+    // moved to `real_os_windows_application_log_is_readable`.
+    let result = handle_tool_call(
+        &client,
+        "system_logs",
+        json!({"count": 5, "level": "Error", "log": "Application"}),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "a valid query must not fail: {text}");
+    let parsed: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("system_logs must return a JSON array ({e}): {text}"));
+    let entries = parsed
+        .as_array()
+        .unwrap_or_else(|| panic!("expected an array of log entries: {text}"));
+    assert!(!entries.is_empty(), "expected entries, got: {text}");
+    for entry in entries {
+        let timestamp = entry["timestamp"].as_str().unwrap_or("");
+        assert!(
+            timestamp.contains('T') && timestamp.contains('+'),
+            "timestamp must be ISO 8601, got {timestamp:?} in: {text}"
+        );
+        assert_eq!(
+            entry["level"].as_str().unwrap_or(""),
+            "Error",
+            "the requested level must be the level reported: {text}"
+        );
+        assert!(
+            !entry["source"].as_str().unwrap_or("").is_empty(),
+            "ProviderName must be populated: {text}"
+        );
+    }
+    // The filter reached the probe rather than being dropped in the handler.
+    assert!(
+        StubSystem::shared().log_requests().contains(&(
+            5,
+            Some("Error".to_string()),
+            Some("Application".to_string())
+        )),
+        "the probe never saw this request"
+    );
+}
+
+#[tokio::test]
+async fn test_system_logs_without_a_level_is_not_an_information_only_view() {
+    let client = test_client();
+    // The default used to be `Level=4`: a bare call returned informational
+    // events and hid every error on the machine. The fixture carries a mixed
+    // set, so the bare call must come back with the Error entry in it — the
+    // claim this test was always making, now provable instead of tolerated.
+    let result = handle_tool_call(&client, "system_logs", json!({"count": 5})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "a bare query must not fail: {text}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(text).expect("expected a JSON array of entries");
+    let entries = parsed.as_array().expect("expected an array");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["level"].as_str() == Some("Error")),
+        "a bare read must include severities above Information: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_system_logs_refuses_a_log_name_that_could_escape_the_filter() {
+    let client = test_client();
+    // No longer `cfg(windows)`: `StubSystem` enforces the same name rule as the
+    // PowerShell path (issue #47), so the injection boundary is guarded on every
+    // platform instead of only where the real query can run.
+    let result = handle_tool_call(
+        &client,
+        "system_logs",
+        json!({"log": "Application'; Get-Process; #"}),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not a usable Windows event log name"),
+        "got: {text}"
+    );
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+#[ignore = "real-OS probe (issue #47): reads the machine's journal / unified log. Run: cargo test --all-targets -- --ignored real_os"]
+async fn test_system_logs_names_the_platform_it_is_on_when_log_is_unsupported() {
+    let client = test_client();
+    // `log` is a Windows concept; ignoring it would return the platform default
+    // and read as if the caller's log choice had been honored.
+    let result = handle_tool_call(&client, "system_logs", json!({"log": "Application"})).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("Windows event log"), "got: {text}");
 }
 
 #[tokio::test]
@@ -1246,4 +1780,865 @@ async fn test_vision_wait_for_image_negative_timeout() {
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].text.as_deref().unwrap_or("");
     assert!(text.contains("non-negative integer"), "got: {text}");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// screen_read argument validation
+//
+// These only exercise arguments that must be refused, and `screen_read` checks
+// them before it captures a screen or loads an OCR model — so no test here can
+// reach the model download. That ordering is part of the contract.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_rejects_half_a_region() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "x": 10, "y": 20 })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("all four of x, y, width and height"),
+        "got: {text}"
+    );
+    assert!(text.contains("missing: width, height"), "got: {text}");
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_rejects_unknown_detail_and_zero_sized_region() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "detail": "txt" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("full, lines, text"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_read",
+        json!({ "x": 0, "y": 0, "width": 0, "height": 50 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("positive width and height"), "got: {text}");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OCR small-text coverage — issue #34
+//
+// `StubOcr` answers one canned line per `read_screen`, so the number of lines in
+// a response is the observable proof of how many native-scale windows the sweep
+// ran, and the coverage label is the observable proof of what the tool claims to
+// have done about it. No model, no inference, no download (#47).
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_thorough_sweeps_the_screen_at_native_scale() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({ "strategy": "thorough" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("read at native scale over 8 window(s)"),
+        "the response must say it swept: {text}"
+    );
+    assert!(
+        text.contains("8 lines of text detected"),
+        "one stub line per window means the sweep ran the grid: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_single_pass_admits_the_coverage_it_did_not_have() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_read", json!({})).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    // The default is still the cheap leg, but the caller is told what it did not
+    // cover — which is what let an agent read the missing text as absent UI.
+    assert!(
+        text.contains("one downscaled pass"),
+        "the whole-screen default must flag its own blind spot: {text}"
+    );
+    assert!(
+        text.contains("re-reads it as 8 native-scale 600x800 windows"),
+        "and point at the way out: {text}"
+    );
+    assert!(
+        !text.contains("read at native scale over"),
+        "a single pass must not claim the sweep: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_read_region_under_thorough_stays_one_window_and_screen_space() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_read",
+        json!({ "x": 300, "y": 400, "width": 100, "height": 100, "strategy": "thorough" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("over 1 window(s)"),
+        "a frame that already fits the detector is not split: {text}"
+    );
+    // The region origin is still added back after the merge, or #33 comes right
+    // back through the new path.
+    assert!(
+        text.contains("coordinates are screen-space") && text.contains("\"x\":310"),
+        "crop-local coordinates must not leak: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_strategy_is_validated_before_any_capture_or_inference() {
+    let client = test_client();
+    // `auto` belongs to `screen_find_text`, not `screen_read`: refusing it here
+    // is the point, not a fallback to the default leg.
+    let result = handle_tool_call(&client, "screen_read", json!({ "strategy": "auto" })).await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("single, thorough"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_find_text",
+        json!({ "query": "Found", "strategy": "thorough" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("auto, single"), "got: {text}");
+
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Found", "strategy": 5 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.contains("must be a string"), "got: {text}");
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_escalates_a_miss_and_reports_the_sweep() {
+    let client = test_client();
+    // "Invoice" is not in the stub's canned line, so this is the false-absence
+    // path #34 is about: the miss must be verified at native scale first, and the
+    // answer must say that it was.
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Invoice" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("No text matching 'Invoice' found on screen."),
+        "got: {text}"
+    );
+    assert!(
+        text.contains("Search covered 8 native-scale windows"),
+        "an absence has to name the coverage that verified it: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_single_strategy_says_it_did_not_look_hard() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_find_text",
+        json!({ "query": "Invoice", "strategy": "single" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("covered one whole-image pass only"),
+        "the opt-out must not be reported as a verified absence: {text}"
+    );
+    assert!(
+        text.contains("needs 8 native-scale windows"),
+        "and must point at the escalation: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_find_text_returns_a_hit_without_claiming_a_sweep() {
+    let client = test_client();
+    let result = handle_tool_call(&client, "screen_find_text", json!({ "query": "Found" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(text.contains("Found 1 match(es)"), "got: {text}");
+    assert!(
+        !text.contains("native-scale windows"),
+        "the first pass hit, so no sweep ran and none may be claimed: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_verifies_the_final_screen() {
+    let client = test_client();
+    // The loop scrolls after its last check, so the frame it settles on used to
+    // never be read before absence was declared. It is read now, at native scale.
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Invoice", "max_scrolls": 1 }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(text.contains("not found after 1 scrolls"), "got: {text}");
+    assert!(
+        text.contains("final screen was searched by 8 native-scale windows"),
+        "the scrolls are not the coverage: {text}"
+    );
+}
+
+#[cfg(feature = "ocr")]
+#[tokio::test]
+async fn test_screen_scroll_to_text_single_strategy_skips_the_sweep() {
+    let client = test_client();
+    let result = handle_tool_call(
+        &client,
+        "screen_scroll_to_text",
+        json!({ "query": "Invoice", "max_scrolls": 1, "strategy": "single" }),
+    )
+    .await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert_eq!(result.is_error, None, "got: {text}");
+    assert!(
+        text.contains("final screen was searched by one whole-image pass"),
+        "got: {text}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Accessibility tools — issue #43
+//
+// Driven through `StubA11yBackend`, which serves a fixed tree and the id-cache
+// contract the platform backends implement. The fixture's depth-first ids are:
+//   stub:0 window "Stub Window"
+//   stub:1 menu bar "Menu"        stub:2 menu item "File"
+//   stub:3 checkbox "Trial Balance"
+//   stub:4 edit "Voucher No"
+//   stub:5 separator (no name)
+//   stub:6 button "OK (F2)"
+//   stub:7 table "Day Book"       stub:8 text "Row 1"
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn a11y_client() -> (GuiClient, StubA11yRecorder) {
+    let (backend, recorder) = StubA11yBackend::new();
+    (GuiClient::new(backend), recorder)
+}
+
+/// The tool response body as JSON. `accessibility_tree` / `accessibility_properties`
+/// return a bare document; `accessibility_find` prefixes a human summary line,
+/// so the JSON starts at the first newline for those.
+fn tool_json(result: &sys_mcp::protocol::mcp::ToolResult) -> Value {
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    let body = match text.find('\n') {
+        Some(pos) if text.starts_with("Found ") => &text[pos + 1..],
+        _ => text,
+    };
+    serde_json::from_str(body).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
+}
+
+/// Every id in the tree, depth-first, in the order the walk minted them.
+fn all_ids(node: &Value) -> Vec<String> {
+    let mut ids = vec![node
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()];
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child in children {
+            ids.extend(all_ids(child));
+        }
+    }
+    ids
+}
+
+/// First node whose name matches, searched depth-first.
+fn find_by_name<'a>(node: &'a Value, name: &str) -> Option<&'a Value> {
+    if node.get("name").and_then(Value::as_str) == Some(name) {
+        return Some(node);
+    }
+    node.get("children")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|c| find_by_name(c, name))
+}
+
+#[tokio::test]
+async fn test_accessibility_tools_fail_as_unsupported_without_a_backend() {
+    // The premise of #43, kept pinned: the plain stub has no accessibility
+    // implementation, so the capability error path is the only reachable one.
+    // Arguments are filled in because the handlers validate them first — with
+    // empty arguments this would report a missing argument instead.
+    let client = test_client();
+    let args = json!({ "element_id": "stub:0", "action": "invoke", "query": "any" });
+    for name in [
+        "accessibility_tree",
+        "accessibility_find",
+        "accessibility_properties",
+        "accessibility_action",
+    ] {
+        let result = handle_tool_call(&client, name, args.clone()).await;
+        assert_eq!(result.is_error, Some(true), "'{name}' must fail here");
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("capability not supported: accessibility"),
+            "'{name}' => {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_accessibility_tree_returns_the_fixture_with_resolvable_ids() {
+    let (client, _recorder) = a11y_client();
+    let result = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    let tree = tool_json(&result);
+
+    assert_eq!(tree["id"], json!("stub:0"));
+    assert_eq!(tree["role"], json!("window"));
+    assert_eq!(tree["name"], json!("Stub Window"));
+    assert_eq!(tree["children"].as_array().unwrap().len(), 6);
+
+    // Ids are minted depth-first and handed to the caller, which is the only
+    // reason a later `accessibility_properties` call can resolve them.
+    let expected: Vec<String> = (0..9).map(|i| format!("stub:{i}")).collect();
+    assert_eq!(all_ids(&tree), expected);
+
+    let button = find_by_name(&tree, "OK (F2)").expect("button in tree");
+    assert_eq!(button["role"], json!("button"));
+    assert_eq!(button["cx"], json!(680), "640 + 80/2");
+    assert_eq!(button["cy"], json!(572), "560 + 24/2");
+    assert!(button["actions"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("invoke")));
+
+    let checkbox = find_by_name(&tree, "Trial Balance").expect("checkbox in tree");
+    assert_eq!(checkbox["value"], json!("1"));
+    assert!(checkbox["states"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("checked")));
+
+    let edit = find_by_name(&tree, "Voucher No").expect("edit in tree");
+    assert_eq!(edit["value"], json!("12060623"));
+    assert!(edit["description"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("Voucher number"));
+
+    // An element with no name must serialize the key as null rather than
+    // dropping it, or a caller cannot tell "unnamed" from "not returned".
+    let separator = find_by_name(&tree, "Nonexistent Name");
+    assert!(separator.is_none());
+    let separator = &tree["children"][3];
+    assert_eq!(separator["role"], json!("separator"));
+    assert_eq!(separator["name"], json!(null));
+}
+
+#[tokio::test]
+async fn test_accessibility_tree_max_depth_trims_children_and_the_id_space() {
+    let (client, _recorder) = a11y_client();
+
+    let result = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 0 })).await;
+    let root = tool_json(&result);
+    assert_eq!(root["id"], json!("stub:0"));
+    assert_eq!(root["children"].as_array().unwrap().len(), 0);
+
+    let result = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 1 })).await;
+    let tree = tool_json(&result);
+    assert_eq!(tree["children"].as_array().unwrap().len(), 6);
+    // Depth 1 reaches the window's own children but no grandchildren: the menu
+    // item under "Menu" and the text under "Day Book" are not walked, so they
+    // are not issued ids either.
+    let expected: Vec<String> = (0..7).map(|i| format!("stub:{i}")).collect();
+    assert_eq!(all_ids(&tree), expected);
+
+    // `max_depth` reaching the backend at all is what this asserts: with the
+    // default (no argument) the same fixture yields nine ids, not seven.
+    let result = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    assert_eq!(all_ids(&tool_json(&result)).len(), 9);
+}
+
+#[tokio::test]
+async fn test_accessibility_find_matches_name_and_role_separately() {
+    let (client, _recorder) = a11y_client();
+
+    let result = handle_tool_call(&client, "accessibility_find", json!({ "query": "trial" })).await;
+    let text = result.content[0].text.as_deref().unwrap_or("");
+    assert!(text.starts_with("Found 1 element(s)"), "got: {text}");
+    let matches = tool_json(&result);
+    assert_eq!(matches[0]["name"], json!("Trial Balance"));
+    assert_eq!(matches[0]["role"], json!("checkbox"));
+
+    // A `role` filter reads the role only, so it finds the unnamed separator
+    // that the name query above could never match.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "role": "separator" }),
+    )
+    .await;
+    let matches = tool_json(&result);
+    assert_eq!(matches.as_array().unwrap().len(), 1);
+    assert_eq!(matches[0]["name"], json!(null));
+
+    // And the reverse: a name query must not match on role text.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "query": "separator" }),
+    )
+    .await;
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "No matching UI elements found."
+    );
+
+    // Substring, case-insensitive, on both fields at once.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_find",
+        json!({ "query": "OK (", "role": "BUTTON" }),
+    )
+    .await;
+    assert_eq!(matches_count(&result), 1);
+
+    // The ids a find returned belong to the walk it just ran, so they resolve.
+    let id = tool_json(&result)[0]["id"].as_str().unwrap().to_string();
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": id }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "id {id} should still resolve");
+    assert_eq!(tool_json(&result)["name"], json!("OK (F2)"));
+}
+
+fn matches_count(result: &sys_mcp::protocol::mcp::ToolResult) -> usize {
+    if result.content[0]
+        .text
+        .as_deref()
+        .unwrap_or("")
+        .starts_with("No matching")
+    {
+        return 0;
+    }
+    tool_json(result).as_array().unwrap().len()
+}
+
+#[tokio::test]
+async fn test_accessibility_properties_returns_one_element_without_its_subtree() {
+    let (client, _recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    // "Menu" is the menu bar; in the full walk it carries the "File" item.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:1" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None);
+    let node = tool_json(&result);
+    assert_eq!(
+        node["id"],
+        json!("stub:1"),
+        "the id must come back unchanged"
+    );
+    assert_eq!(node["name"], json!("Menu"));
+    assert_eq!(
+        node["children"].as_array().unwrap().len(),
+        0,
+        "properties must not re-walk the subtree (issue #39)"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_properties_requires_an_element_id() {
+    let (client, _recorder) = a11y_client();
+    let result = handle_tool_call(&client, "accessibility_properties", json!({})).await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": 3 }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_ids_are_invalidated_by_the_next_walk() {
+    // The contract the tools advertise: an id resolves only until the next tree
+    // walk. It used to be untestable because no stub served a tree at all.
+    let (client, _recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+    let deep = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(deep.is_error, None, "stub:8 exists after the full walk");
+
+    // A shallower walk re-mints the id space and never reaches the ninth node.
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({ "max_depth": 1 })).await;
+    let stale = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(stale.is_error, Some(true));
+    let text = stale.content[0].text.as_deref().unwrap_or("");
+    assert!(
+        text.contains("not in the current accessibility cache"),
+        "{text}"
+    );
+    assert!(
+        text.contains("call accessibility_tree or accessibility_find again"),
+        "the error must say how to get a usable id: {text}"
+    );
+
+    // An id that was never issued fails the same way, and a fresh find walks the
+    // whole tree again, so the deep id is live once more.
+    let never = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:99" }),
+    )
+    .await;
+    assert_eq!(never.is_error, Some(true));
+    let _ = handle_tool_call(&client, "accessibility_find", json!({ "query": "Row" })).await;
+    let again = handle_tool_call(
+        &client,
+        "accessibility_properties",
+        json!({ "element_id": "stub:8" }),
+    )
+    .await;
+    assert_eq!(again.is_error, None, "a new walk re-issues the ids");
+}
+
+#[tokio::test]
+async fn test_accessibility_action_reaches_the_backend_with_the_requested_verb() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:6", "action": "Invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "Invoked 'Invoke' on element stub:6."
+    );
+
+    // The response text alone cannot prove the backend was called — a handler
+    // can echo an argument it never used. The recorder is the other side.
+    assert_eq!(
+        recorder.invocations(),
+        vec![("stub:6".to_string(), "Invoke".to_string(), None)]
+    );
+
+    let _ = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:3", "action": "toggle" }),
+    )
+    .await;
+    assert_eq!(
+        recorder.invocations(),
+        vec![
+            ("stub:6".to_string(), "Invoke".to_string(), None),
+            ("stub:3".to_string(), "toggle".to_string(), None),
+        ],
+        "the verb is passed through unchanged; alias normalization is platform code"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_action_records_nothing_when_the_call_is_refused() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:6" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: action"
+    );
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "action": "invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "missing required argument: element_id"
+    );
+
+    // A live element id plus an unknown verb does reach the backend, but an
+    // unresolvable id must not be invoked at all.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:42", "action": "invoke" }),
+    )
+    .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        result.content[0]
+            .text
+            .as_deref()
+            .unwrap_or("")
+            .contains("not in the current accessibility cache"),
+        "got: {:?}",
+        result.content
+    );
+    assert!(
+        recorder.invocations().is_empty(),
+        "a refused action must not have reached the backend: {:?}",
+        recorder.invocations()
+    );
+}
+
+// ── set_value: the write path issue #46 added to the capability trait ──────
+
+#[tokio::test]
+async fn test_accessibility_set_value_threads_the_value_to_the_backend() {
+    // #46's gap was that the trait could name an action but not carry its
+    // operand, so UIA's SetValue was unreachable. A response that echoes the
+    // verb proves nothing about the operand — the recorder is the assertion.
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": "99999999" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "Invoked 'set_value' on element stub:4 with the given value."
+    );
+    assert_eq!(
+        recorder.invocations(),
+        vec![(
+            "stub:4".to_string(),
+            "set_value".to_string(),
+            Some("99999999".to_string())
+        )],
+        "the value has to arrive at the backend, not only in the response text"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_set_value_accepts_a_number_and_an_empty_string() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    // {"value": 42} is how a caller naturally addresses a spinner, so the
+    // number survives as text instead of being rejected for its JSON type.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": 42 }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+
+    // And the empty string is a value, not an absent argument: clearing a field
+    // is a legitimate edit.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": "" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+
+    assert_eq!(
+        recorder.invocations(),
+        vec![
+            (
+                "stub:4".to_string(),
+                "set_value".to_string(),
+                Some("42".to_string())
+            ),
+            (
+                "stub:4".to_string(),
+                "set_value".to_string(),
+                Some(String::new())
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_set_value_without_a_value_is_refused_before_the_backend() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    for args in [
+        json!({ "element_id": "stub:4", "action": "set_value" }),
+        // An explicit null means absent, the same as omitting the key.
+        json!({ "element_id": "stub:4", "action": "set_value", "value": null }),
+    ] {
+        let result = handle_tool_call(&client, "accessibility_action", args).await;
+        assert_eq!(result.is_error, Some(true), "got: {:?}", result.content);
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(text.contains("needs a value"), "got: {text}");
+    }
+    assert!(
+        recorder.invocations().is_empty(),
+        "a refused write must not have reached the backend: {:?}",
+        recorder.invocations()
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_action_refuses_a_value_for_a_verb_that_cannot_use_it() {
+    // #40's rule applied to the new argument: an argument the backend has no use
+    // for is refused rather than quietly dropped, so the caller learns its
+    // request was not carried out the way it meant it.
+    for action in ["invoke", "press", "toggle", "focus", "increment"] {
+        let (client, recorder) = a11y_client();
+        let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:6", "action": action, "value": "x" }),
+        )
+        .await;
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "'{action}' must not accept a value"
+        );
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(text.contains("does not take a value"), "{action}: {text}");
+        assert!(
+            recorder.invocations().is_empty(),
+            "'{action}' with a value reached the backend anyway"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_accessibility_action_refuses_a_value_that_is_not_text_or_a_number() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    for value in [json!({ "a": 1 }), json!(true), json!(["a"])] {
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:4", "action": "set_value", "value": value }),
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true), "got: {:?}", result.content);
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("value must be a string or a number"),
+            "{text}"
+        );
+    }
+    assert!(
+        recorder.invocations().is_empty(),
+        "{:?}",
+        recorder.invocations()
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_value_verb_aliases_pass_the_same_arity_check() {
+    // The tool layer normalizes the way the platform dispatchers do, so these
+    // spellings are read as the verb that takes the value instead of as a
+    // mismatched pair. The alias itself is passed through unchanged — turning
+    // 'Set-Value' into 'set_value' is platform code, as #43 recorded.
+    for action in ["Set-Value", "set_text", "SET_VALUE", "setvalue"] {
+        let (client, recorder) = a11y_client();
+        let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:4", "action": action, "value": "12060623" }),
+        )
+        .await;
+        assert_eq!(result.is_error, None, "{action}: {:?}", result.content);
+        assert_eq!(
+            recorder.invocations(),
+            vec![(
+                "stub:4".to_string(),
+                action.to_string(),
+                Some("12060623".to_string())
+            )],
+            "{action} did not reach the backend with its value"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_set_value_without_a_value_is_refused_by_the_backend_too() {
+    // The trait's value contract is not only the tool layer's business: a direct
+    // API caller gets the same refusal from a backend, so no implementation can
+    // turn "no value" into a silent no-op.
+    let (client, recorder) = a11y_client();
+    let _ = client.get_accessibility_tree(None, None).await.unwrap();
+
+    let error = client
+        .invoke_element_action("stub:4", "set_value", None)
+        .await
+        .expect_err("a write with nothing to write must fail");
+    let text = error.to_string();
+    assert!(text.contains("needs a value argument"), "got: {text}");
+    assert!(
+        recorder.invocations().is_empty(),
+        "the refusal still reached the recorder: {:?}",
+        recorder.invocations()
+    );
 }

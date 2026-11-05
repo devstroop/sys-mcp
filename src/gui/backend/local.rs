@@ -544,9 +544,14 @@ impl AccessibilityCapability for LocalBackend {
             .get_element_properties(element_id)
     }
 
-    async fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    async fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         self.accessibility_manager
-            .invoke_element_action(element_id, action)
+            .invoke_element_action(element_id, action, value)
     }
 }
 
@@ -643,5 +648,23 @@ impl GuiBackend for LocalBackend {
 
     fn as_vision(&self) -> Option<&dyn VisionCapability> {
         Some(self)
+    }
+
+    /// The real system probes: every call in this backend reaches the machine.
+    fn as_system(&self) -> Option<&dyn crate::system::SystemCapability> {
+        Some(crate::system::LocalSystem::shared())
+    }
+
+    /// The real `ocrs` engine — downloads and loads the ONNX models on first use.
+    #[cfg(feature = "ocr")]
+    fn as_ocr(&self) -> Option<&dyn crate::gui::ocr::OcrCapability> {
+        Some(crate::gui::ocr::LocalOcr::shared())
+    }
+
+    /// The real `tract-onnx` detector — downloads and loads the YOLO model on
+    /// first use.
+    #[cfg(feature = "detection")]
+    fn as_detection(&self) -> Option<&dyn crate::gui::detection::DetectionCapability> {
+        Some(crate::gui::detection::LocalDetection::shared())
     }
 }

@@ -12,5 +12,11 @@ pub mod system;
 pub mod terminal;
 pub mod web;
 
-pub use gui::backend::stub::StubBackend;
+#[cfg(feature = "detection")]
+pub use gui::backend::stub::StubDetection;
+#[cfg(feature = "ocr")]
+pub use gui::backend::stub::StubOcr;
+pub use gui::backend::stub::{
+    StubA11yBackend, StubA11yCall, StubA11yRecorder, StubBackend, StubSystem, StubSystemRecorder,
+};
 pub use mcp::hub::McpHub;

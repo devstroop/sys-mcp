@@ -243,7 +243,41 @@ impl GuiClient {
         self.accessibility()?.find_elements(query).await
     }
 
+    pub async fn get_element_properties(
+        &self,
+        element_id: &str,
+    ) -> Result<AccessibilityNode, GuiError> {
+        self.accessibility()?
+            .get_element_properties(element_id)
+            .await
+    }
+
+    /// Invoke `action` on an element. `value` is the operand for the actions
+    /// that write something (currently `set_value`); see
+    /// [`AccessibilityCapability::invoke_element_action`] for the contract.
+    pub async fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
+        self.accessibility()?
+            .invoke_element_action(element_id, action, value)
+            .await
+    }
+
     // ── OCR ─────────────────────────────────────────────────────────
+
+    /// OCR capability, or a clear error when the backend cannot run inference.
+    /// Handlers reach the engine through this rather than the free
+    /// [`crate::gui::ocr`] functions, so a `StubBackend` test never loads the
+    /// ONNX model (`docs/ISSUES.md` #47).
+    #[cfg(feature = "ocr")]
+    pub(crate) fn ocr(&self) -> Result<&dyn crate::gui::ocr::OcrCapability, GuiError> {
+        self.backend
+            .as_ocr()
+            .ok_or_else(|| GuiError::UnsupportedCapability("on-device OCR".into()))
+    }
 
     #[cfg(feature = "ocr")]
     pub async fn read_screen(
@@ -254,21 +288,26 @@ impl GuiClient {
             Some(r) => self.backend.screenshot_region(r).await?,
             None => self.backend.screenshot().await?,
         };
-        tokio::task::spawn_blocking(move || crate::gui::ocr::read_screen(&screenshot))
-            .await
-            .map_err(|e| GuiError::OcrError(e.to_string()))?
+        self.ocr()?.read_screen(screenshot).await
     }
 
     // ── Object Detection ──────────────────────────────────────────────
 
+    /// Detection capability, or a clear error when the backend cannot run it
+    /// (issue #47, same reasoning as [`GuiClient::ocr`]).
+    #[cfg(feature = "detection")]
+    pub(crate) fn detection(
+        &self,
+    ) -> Result<&dyn crate::gui::detection::DetectionCapability, GuiError> {
+        self.backend
+            .as_detection()
+            .ok_or_else(|| GuiError::UnsupportedCapability("object detection".into()))
+    }
+
     #[cfg(feature = "detection")]
     pub async fn detect_objects(&self) -> Result<crate::gui::detection::DetectionResult, GuiError> {
         let screenshot = self.backend.screenshot().await?;
-        let result =
-            tokio::task::spawn_blocking(move || crate::gui::detection::detect_objects(&screenshot))
-                .await
-                .map_err(|e| GuiError::DetectionError(e.to_string()))?;
-        result.map_err(GuiError::DetectionError)
+        self.detection()?.detect_objects(screenshot).await
     }
 
     // ── Vision / template matching ───────────────────────────────────
@@ -305,6 +344,20 @@ impl GuiClient {
         self.vision()?
             .wait_for_image(template_encoded, precision, region, timeout_ms)
             .await
+    }
+
+    // ── System probes ────────────────────────────────────────────────
+
+    /// The system-probe seam (`docs/ISSUES.md` #47). Handlers for `process_*`,
+    /// `service_*`, `network_*`, `system_stats`, `disk_usage` and `system_logs`
+    /// go through this instead of calling the platform probes directly, so a
+    /// stub-backed test can answer them without shelling out. `Err` means the
+    /// backend has no system probes attached — the handlers report that rather
+    /// than falling back to the real machine.
+    pub fn system(&self) -> Result<&dyn crate::system::SystemCapability, GuiError> {
+        self.backend
+            .as_system()
+            .ok_or_else(|| GuiError::UnsupportedCapability("system monitoring".into()))
     }
 
     // ── System info ────────────────────────────────────────────────────

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use serde_json::{json, Value};
 

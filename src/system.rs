@@ -2,6 +2,8 @@
 //!
 //! Provides [`ServiceManager`] for querying and managing Windows services.
 
+use crate::sysinfo::{ProcessInfo, ProcessManager};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
@@ -689,134 +691,756 @@ impl SystemMonitor {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
+    /// Platform-native timestamp. Windows reports ISO 8601 local time, Linux
+    /// reports seconds since the Unix epoch, macOS reports whatever
+    /// `log show --style compact` printed. Not yet a single format — see
+    /// `docs/ISSUES.md` #41.
     pub timestamp: String,
     pub source: String,
+    /// Empty when the platform's log format carries no per-entry severity
+    /// (macOS compact output, and Linux records without a `PRIORITY` field).
+    /// It is never filled in with the level the caller asked for.
     pub level: String,
     pub message: String,
+}
+
+/// Severity filter for [`LogViewer::get_system_logs`].
+///
+/// The names are the Windows event-viewer labels, because Windows is the
+/// platform whose log records genuinely carry per-entry severity. The other
+/// platforms map onto their own vocabulary ([`LogLevel::journald_priority`],
+/// [`LogLevel::apple_level`]); a level a platform cannot express is refused
+/// rather than quietly rounded to the nearest supported word, which would
+/// return a filtered result the caller cannot tell apart from the one they asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Critical,
+    Error,
+    Warning,
+    Information,
+    Verbose,
+}
+
+impl LogLevel {
+    /// Case-insensitive, and tolerant of the abbreviations the platforms use
+    /// (`err`, `warn`, `info`, `debug`) so a caller that writes `"error"` in
+    /// lowercase gets its errors instead of an argument error.
+    pub fn parse(raw: &str) -> Option<LogLevel> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "critical" | "fatal" => Some(Self::Critical),
+            "error" | "err" => Some(Self::Error),
+            "warning" | "warn" => Some(Self::Warning),
+            "information" | "info" => Some(Self::Information),
+            "verbose" | "debug" => Some(Self::Verbose),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "Critical",
+            Self::Error => "Error",
+            Self::Warning => "Warning",
+            Self::Information => "Information",
+            Self::Verbose => "Verbose",
+        }
+    }
+
+    /// `Get-WinEvent -FilterHashtable` `Level` value.
+    // Each platform mapper is referenced from inside that platform's `cfg`
+    // block, so the other two builds see it as unused. The mappings are
+    // exercised by tests on every platform.
+    #[allow(dead_code)]
+    fn windows_level(self) -> &'static str {
+        match self {
+            Self::Critical => "1",
+            Self::Error => "2",
+            Self::Warning => "3",
+            Self::Information => "4",
+            Self::Verbose => "5",
+        }
+    }
+
+    /// `journalctl -p` priority name. journald treats `-p` as a *threshold*:
+    /// this priority and everything more severe.
+    #[allow(dead_code)]
+    fn journald_priority(self) -> &'static str {
+        match self {
+            Self::Critical => "crit",
+            Self::Error => "err",
+            Self::Warning => "warning",
+            Self::Information => "info",
+            Self::Verbose => "debug",
+        }
+    }
+
+    /// Map a journald `PRIORITY` number back to the reported level name.
+    #[allow(dead_code)]
+    fn from_journald_priority(raw: &str) -> String {
+        match raw.trim() {
+            "0" | "1" | "2" => Self::Critical.as_str(),
+            "3" => Self::Error.as_str(),
+            "4" => Self::Warning.as_str(),
+            "5" | "6" => Self::Information.as_str(),
+            "7" => Self::Verbose.as_str(),
+            other => return other.to_string(),
+        }
+        .to_string()
+    }
+
+    /// `log show --level` accepts debug / info / error / fault only, and
+    /// treats them as a threshold. `Warning` has no equivalent, so a caller on
+    /// macOS is told instead of being handed error-and-above entries labelled
+    /// as if they were the warning they asked for.
+    #[allow(dead_code)]
+    fn apple_level(self) -> Option<&'static str> {
+        match self {
+            Self::Critical => Some("fault"),
+            Self::Error => Some("error"),
+            Self::Warning => None,
+            Self::Information => Some("info"),
+            Self::Verbose => Some("debug"),
+        }
+    }
+}
+
+/// Longest message a single entry may carry into the tool result. An event-log
+/// message can be many kilobytes, and 50 of those is a context overflow; the
+/// marker makes the cut visible rather than pretending the message was short.
+const MAX_LOG_MESSAGE_CHARS: usize = 2000;
+
+fn cap_field(value: String, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value;
+    }
+    let kept: String = value.chars().take(limit).collect();
+    format!("{kept}\u{2026}[message truncated at {limit} chars]")
+}
+
+/// One-line version for stderr text going into an error message.
+fn cap_line(value: &str) -> String {
+    let flat = value.replace(['\r', '\n'], " ");
+    let trimmed = flat.trim();
+    if trimmed.chars().count() <= 400 {
+        return trimmed.to_string();
+    }
+    format!("{}\u{2026}", trimmed.chars().take(400).collect::<String>())
+}
+
+/// Whether `name` can be used as an event-log name without becoming shell
+/// input.
+///
+/// Windows event-log names arrive straight from the caller and are interpolated
+/// into a PowerShell hashtable literal, so the character set is the injection
+/// boundary: `'` is what breaks out of the quoted value. Real log names
+/// (`System`, `Application`, `Security`, `Microsoft-Windows-Kernel-PnP/Config`,
+/// `Windows PowerShell`) only need letters, digits, `_`, `-`, `.`, `/` and a
+/// space, so anything else is refused.
+///
+/// Not `cfg(windows)` anymore: [`StubSystem`](crate::gui::backend::stub::StubSystem)
+/// enforces the same rule, so the handler's injection refusal is testable on
+/// every platform rather than only where PowerShell exists (issue #47).
+pub(crate) fn is_event_log_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ' '))
+}
+
+/// The refusal text for a name [`is_event_log_name`] rejects. One definition, so
+/// the real Windows path and the stub cannot drift into different contracts.
+pub(crate) fn event_log_name_rejection(raw: &str) -> String {
+    format!(
+        "invalid argument: 'log' is not a usable Windows event log name: {raw:?}. Expected e.g. 'System', 'Application', 'Security', 'Setup', or 'Microsoft-Windows-…/…'"
+    )
+}
+
+/// The PowerShell script behind a Windows event-log query, built apart from the
+/// execution so a test can assert its exact text: the brace nesting of
+/// `-FilterHashtable @{…}` inside a format string is easy to get wrong, and a
+/// malformed script fails as a PowerShell parse error rather than as log data.
+#[cfg(windows)]
+fn windows_log_query(log_name: &str, level: Option<LogLevel>, count: usize) -> String {
+    let mut script = format!("Get-WinEvent -FilterHashtable @{{LogName='{log_name}'");
+    // `Level` is omitted when the caller named no level, so "no level" means
+    // every level — including Error and Warning, the entries a log query is
+    // called for. Defaulting to Information made the tool hide failures.
+    if let Some(level) = level {
+        script.push_str(&format!("; Level={}", level.windows_level()));
+    }
+    script.push_str(&format!(
+        "}} -MaxEvents {count} | Select-Object @{{n='TimeCreated';e={{$_.TimeCreated.ToString('o')}}}}, ProviderName, LevelDisplayName, Message | ConvertTo-Json"
+    ));
+    script
 }
 
 pub struct LogViewer;
 
 impl LogViewer {
-    pub fn get_system_logs(count: usize, level: Option<String>) -> Vec<LogEntry> {
+    /// Read the platform event log, newest entries first.
+    ///
+    /// `Err` means the query could not be run or reported a failure. An empty
+    /// `Vec` now means exactly one thing: the filter matched no entries. It used
+    /// to mean that as well as "PowerShell is not on PATH", "the filter was
+    /// rejected", and "the response did not parse" — a diagnostic tool reporting
+    /// a clean log when it had failed to read one.
+    pub fn get_system_logs(
+        count: usize,
+        level: Option<LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<LogEntry>, String> {
         let mut entries = Vec::new();
-        let level_filter = level.unwrap_or_else(|| "Information".to_string());
 
         #[cfg(windows)]
         {
-            let filter = format!(
-                "Get-WinEvent -FilterHashtable @{{LogName='System'; Level={}}} -MaxEvents {} | Select-Object TimeCreated, ProviderName, LevelDisplayName, Message | ConvertTo-Json",
-                match level_filter.as_str() {
-                    "Error" => "2",
-                    "Warning" => "3",
-                    "Information" => "4",
-                    _ => "4"
-                },
-                count
-            );
+            let log_name = match log {
+                None => "System".to_string(),
+                Some(raw) if is_event_log_name(&raw) => raw,
+                Some(raw) => return Err(event_log_name_rejection(&raw)),
+            };
 
-            if let Ok(output) = Command::new("powershell")
-                .args(["-NoProfile", "-Command", &filter])
+            let script = windows_log_query(&log_name, level, count);
+            let output = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
                 .stdout(Stdio::piped())
                 .output()
-            {
-                if let Ok(text) = String::from_utf8(output.stdout) {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        let arr = if json.is_array() {
-                            json.as_array().unwrap().clone()
-                        } else {
-                            vec![json]
-                        };
-                        for item in arr {
-                            entries.push(LogEntry {
-                                timestamp: item
-                                    .get("TimeCreated")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                source: item
-                                    .get("ProviderName")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                level: item
-                                    .get("LevelDisplayName")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                message: item
-                                    .get("Message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                            });
-                        }
-                    }
+                .map_err(|e| format!("could not run powershell to read '{log_name}': {e}"))?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                // `Get-WinEvent` reports "nothing matched" by writing an error
+                // record and exiting non-zero with empty stdout. That is a true
+                // empty answer, not a failure; everything else must surface.
+                if stdout.trim().is_empty() && stderr.contains("No events were found") {
+                    return Ok(entries);
                 }
+                return Err(format!(
+                    "event-log query on '{log_name}' failed ({}): {}",
+                    output.status,
+                    cap_line(&stderr)
+                ));
+            }
+
+            let trimmed = stdout.trim();
+            if trimmed.is_empty() {
+                return Ok(entries);
+            }
+            let json: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+                format!(
+                    "could not parse the event-log response ({e}); it began: {}",
+                    cap_line(trimmed)
+                )
+            })?;
+
+            // `ConvertTo-Json` emits a bare object when a single event matched
+            // and an array otherwise.
+            let items: Vec<&serde_json::Value> = match &json {
+                serde_json::Value::Array(arr) => arr.iter().collect(),
+                single => vec![single],
+            };
+            for item in items {
+                entries.push(LogEntry {
+                    timestamp: item
+                        .get("TimeCreated")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    source: item
+                        .get("ProviderName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    level: item
+                        .get("LevelDisplayName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    message: cap_field(
+                        item.get("Message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        MAX_LOG_MESSAGE_CHARS,
+                    ),
+                });
             }
         }
 
         #[cfg(target_os = "linux")]
         {
-            let count_str = count.to_string();
-            let journal_args = if let Ok(level_num) = match level_filter.as_str() {
-                "Error" => Ok::<&str, ()>("err"),
-                "Warning" => Ok("warning"),
-                _ => Ok("info"),
-            } {
-                vec!["-p", level_num, "-n", &count_str]
-            } else {
-                vec!["-n", &count_str]
-            };
-
-            if let Ok(output) = Command::new("journalctl").args(&journal_args).output() {
-                for line in String::from_utf8_lossy(&output.stdout).lines().take(count) {
-                    let parts: Vec<&str> = line.splitn(3, ' ').collect();
-                    if parts.len() >= 3 {
-                        entries.push(LogEntry {
-                            timestamp: parts[0].to_string(),
-                            source: parts.get(1).unwrap_or(&"").to_string(),
-                            level: "Info".to_string(),
-                            message: parts[2..].join(" "),
-                        });
-                    }
-                }
+            if log.is_some() {
+                return Err(
+                    "invalid argument: 'log' names a Windows event log. The Linux journal is one store; this tool does not expose unit filtering, so drop 'log' to read the whole journal."
+                        .to_string(),
+                );
             }
+            let count_str = count.to_string();
+            let mut journal_args: Vec<&str> =
+                vec!["--no-pager", "--quiet", "-n", &count_str, "-o", "json"];
+            if let Some(level) = level {
+                journal_args.extend(["-p", level.journald_priority()]);
+            }
+
+            let output = Command::new("journalctl")
+                .args(&journal_args)
+                .output()
+                .map_err(|e| format!("could not run journalctl: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "journalctl failed ({}): {}",
+                    output.status,
+                    cap_line(&String::from_utf8_lossy(&output.stderr))
+                ));
+            }
+
+            // `-o json` rather than the default text format: the text line
+            // carries no severity, and the previous code labelled every entry
+            // "Info" because that was the filter's name, not the record's level.
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let item: serde_json::Value = serde_json::from_str(line)
+                    .map_err(|e| format!("could not parse a journal record ({e}): {line}"))?;
+
+                let raw_ts = match item.get("__REALTIME_TIMESTAMP") {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(serde_json::Value::Number(n)) => n.to_string(),
+                    _ => String::new(),
+                };
+                // Microseconds since the epoch, rendered as decimal seconds so
+                // the value stays exact (an f64 would drop the sub-microsecond
+                // digits at this magnitude). Anything unparseable is passed
+                // through rather than dropped.
+                let timestamp = match raw_ts.parse::<u64>() {
+                    Ok(micros) => format!("{}.{:06}", micros / 1_000_000, micros % 1_000_000),
+                    Err(_) => raw_ts,
+                };
+
+                let level_name = match item.get("PRIORITY") {
+                    Some(serde_json::Value::String(s)) => LogLevel::from_journald_priority(s),
+                    Some(serde_json::Value::Number(n)) => {
+                        LogLevel::from_journald_priority(&n.to_string())
+                    }
+                    _ => String::new(),
+                };
+
+                // `MESSAGE` is a string, or an array of byte values when the
+                // record is not valid UTF-8.
+                let message = match item.get("MESSAGE") {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(serde_json::Value::Array(bytes)) => {
+                        let raw: Vec<u8> = bytes
+                            .iter()
+                            .filter_map(|b| b.as_u64().and_then(|n| u8::try_from(n).ok()))
+                            .collect();
+                        String::from_utf8_lossy(&raw).into_owned()
+                    }
+                    _ => String::new(),
+                };
+
+                let source = item
+                    .get("SYSLOG_IDENTIFIER")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| item.get("_COMM").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+
+                entries.push(LogEntry {
+                    timestamp,
+                    source,
+                    level: level_name,
+                    message: cap_field(message, MAX_LOG_MESSAGE_CHARS),
+                });
+            }
+            // journalctl emits oldest-first; the Windows event log and this
+            // tool's description both promise newest-first.
+            entries.reverse();
         }
 
         #[cfg(target_os = "macos")]
         {
-            let _count_str = count.to_string();
-            let level_flag = match level_filter.as_str() {
-                "Error" => "error",
-                "Warning" => "warning",
-                _ => "info",
-            };
+            if log.is_some() {
+                return Err(
+                    "invalid argument: 'log' names a Windows event log. The macOS unified log is queried with a predicate, which this tool does not expose; drop 'log' to read the whole log."
+                        .to_string(),
+                );
+            }
+            let mut log_args: Vec<String> = vec![
+                "show".into(),
+                "--last".into(),
+                "1h".into(),
+                "--style".into(),
+                "compact".into(),
+            ];
+            if let Some(level) = level {
+                let word = level.apple_level().ok_or_else(|| format!(
+                    "invalid argument: 'level' = '{}' cannot be applied to the macOS unified log, which filters on debug, info, error and fault only. Omit 'level' to read every entry.",
+                    level.as_str()
+                ))?;
+                log_args.extend(["--level".into(), word.into()]);
+            }
 
-            if let Ok(output) = Command::new("log")
-                .args([
-                    "show", "--last", "1h", "--level", level_flag, "--style", "compact",
-                ])
+            let output = Command::new("log")
+                .args(&log_args)
                 .output()
-            {
-                for line in String::from_utf8_lossy(&output.stdout).lines().take(count) {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    let parts: Vec<&str> = line.splitn(4, ' ').collect();
-                    if parts.len() >= 4 {
-                        entries.push(LogEntry {
-                            timestamp: parts[0].to_string(),
-                            source: parts[2].to_string(),
-                            level: level_filter.clone(),
-                            message: parts[3..].join(" "),
-                        });
-                    }
+                .map_err(|e| format!("could not run 'log': {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "log show failed ({}): {}",
+                    output.status,
+                    cap_line(&String::from_utf8_lossy(&output.stderr))
+                ));
+            }
+
+            // Bind the `Cow` so its borrow outlives the collected `Vec<&str>`;
+            // inlining it into the statement drops the temporary at the
+            // semicolon (E0716). Only this platform's branch spells it out,
+            // because only here does the line list survive the statement.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut lines: Vec<&str> = stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect();
+            lines.reverse();
+            for line in lines.into_iter().take(count) {
+                let parts: Vec<&str> = line.splitn(4, ' ').collect();
+                if parts.len() < 4 {
+                    continue;
                 }
+                entries.push(LogEntry {
+                    timestamp: parts[0].to_string(),
+                    source: parts[2].to_string(),
+                    // `--style compact` prints no severity per line, so there is
+                    // nothing honest to report; `--style json` would carry it.
+                    level: String::new(),
+                    message: cap_field(parts[3..].join(" "), MAX_LOG_MESSAGE_CHARS),
+                });
             }
         }
 
-        entries
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = (count, level, log);
+            return Err("system_logs is not implemented for this platform.".to_string());
+        }
+
+        Ok(entries)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// System capability seam — the surface handlers may call without touching the machine
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The system-monitoring surface the `process_*`, `service_*`, `network_*`,
+/// `system_stats`, `disk_usage` and `system_logs` handlers need, as a trait
+/// object instead of module-level calls.
+///
+/// Those handlers used to ignore the [`crate::gui::GuiClient`] they were handed
+/// and call [`ProcessManager`]-style free paths directly, so every "stub" test
+/// still shelled out for real: 11.6 s of the schema/dispatch drift guard was OS
+/// probing, and its green-ness depended on which binaries the runner happens to
+/// ship — a slim container ran the same suite green where ubuntu-latest failed it
+/// (`docs/ISSUES.md` #47).
+///
+/// Every method is `async` and returns `Result<_, String>` even where the
+/// underlying probe cannot fail, because the blocking task can be dropped on
+/// panic: keeping the join error inside the seam is what lets the real
+/// implementation report the exact wording the handlers reported before the seam
+/// existed, which callers and tests assert on.
+#[async_trait]
+pub trait SystemCapability: Send + Sync {
+    async fn list_processes(&self) -> Result<Vec<ProcessInfo>, String>;
+    async fn kill_process(&self, pid: u32) -> Result<(), String>;
+    async fn process_info(&self, pid: u32) -> Result<ProcessInfo, String>;
+    async fn start_process(&self, command: &str, args: Vec<String>) -> Result<u32, String>;
+
+    async fn list_services(&self) -> Result<Vec<ServiceInfo>, String>;
+    async fn start_service(&self, name: &str) -> Result<(), String>;
+    async fn stop_service(&self, name: &str) -> Result<(), String>;
+    async fn service_status(&self, name: &str) -> Result<ServiceInfo, String>;
+
+    async fn network_info(&self) -> Result<NetworkInfo, String>;
+    async fn list_connections(&self) -> Result<Vec<serde_json::Value>, String>;
+
+    async fn system_stats(&self) -> Result<SystemStats, String>;
+    async fn disk_usage(&self) -> Result<Vec<serde_json::Value>, String>;
+    async fn system_logs(
+        &self,
+        count: usize,
+        level: Option<LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<LogEntry>, String>;
+}
+
+/// The production [`SystemCapability`]: every call reaches the real platform, off
+/// the async runtime.
+pub struct LocalSystem;
+
+static LOCAL_SYSTEM: LocalSystem = LocalSystem;
+
+impl LocalSystem {
+    /// The shared instance a backend hands out by reference; the type is stateless,
+    /// so there is no reason to own one per client.
+    pub fn shared() -> &'static LocalSystem {
+        &LOCAL_SYSTEM
+    }
+
+    /// Run `work` on a blocking thread. A dropped task reports the same
+    /// `"<verb> … task failed: <join error>"` sentence the handlers produced
+    /// inline before the seam existed.
+    async fn blocking<T, F>(context: &str, work: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        tokio::task::spawn_blocking(work)
+            .await
+            .map_err(|e| format!("{context} task failed: {e}"))
+    }
+}
+
+#[async_trait]
+impl SystemCapability for LocalSystem {
+    async fn list_processes(&self) -> Result<Vec<ProcessInfo>, String> {
+        LocalSystem::blocking("Process list", ProcessManager::list_processes).await
+    }
+
+    async fn kill_process(&self, pid: u32) -> Result<(), String> {
+        LocalSystem::blocking("Kill process", move || ProcessManager::kill_process(pid)).await?
+    }
+
+    async fn process_info(&self, pid: u32) -> Result<ProcessInfo, String> {
+        LocalSystem::blocking("Process info", move || {
+            ProcessManager::get_process_info(pid)
+        })
+        .await?
+    }
+
+    async fn start_process(&self, command: &str, args: Vec<String>) -> Result<u32, String> {
+        let command = command.to_string();
+        LocalSystem::blocking("Start process", move || {
+            ProcessManager::start_process(&command, args)
+        })
+        .await?
+    }
+
+    async fn list_services(&self) -> Result<Vec<ServiceInfo>, String> {
+        LocalSystem::blocking("Service list", ServiceManager::list_services).await
+    }
+
+    async fn start_service(&self, name: &str) -> Result<(), String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Start service", move || {
+            ServiceManager::start_service(&name)
+        })
+        .await?
+    }
+
+    async fn stop_service(&self, name: &str) -> Result<(), String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Stop service", move || ServiceManager::stop_service(&name)).await?
+    }
+
+    async fn service_status(&self, name: &str) -> Result<ServiceInfo, String> {
+        let name = name.to_string();
+        LocalSystem::blocking("Service status", move || {
+            ServiceManager::service_status(&name)
+        })
+        .await?
+    }
+
+    async fn network_info(&self) -> Result<NetworkInfo, String> {
+        LocalSystem::blocking("Network info", NetworkManager::get_info).await?
+    }
+
+    async fn list_connections(&self) -> Result<Vec<serde_json::Value>, String> {
+        LocalSystem::blocking("Network connections", NetworkManager::list_connections).await
+    }
+
+    async fn system_stats(&self) -> Result<SystemStats, String> {
+        LocalSystem::blocking("System stats", SystemMonitor::get_stats).await?
+    }
+
+    async fn disk_usage(&self) -> Result<Vec<serde_json::Value>, String> {
+        LocalSystem::blocking("Disk usage", SystemMonitor::get_disk_usage).await
+    }
+
+    async fn system_logs(
+        &self,
+        count: usize,
+        level: Option<LogLevel>,
+        log: Option<String>,
+    ) -> Result<Vec<LogEntry>, String> {
+        LocalSystem::blocking("System logs", move || {
+            LogViewer::get_system_logs(count, level, log)
+        })
+        .await?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_names_parse_case_insensitively_and_with_platform_abbreviations() {
+        // A caller that writes `"error"` means the Windows label `"Error"`, and
+        // one that writes `"err"` is using journald's word. Rejecting either
+        // would be an argument error over a name collision, not a real mistake.
+        for (raw, want) in [
+            ("Critical", LogLevel::Critical),
+            ("fatal", LogLevel::Critical),
+            (" ERROR ", LogLevel::Error),
+            ("err", LogLevel::Error),
+            ("warn", LogLevel::Warning),
+            ("Warning", LogLevel::Warning),
+            ("info", LogLevel::Information),
+            ("Information", LogLevel::Information),
+            ("debug", LogLevel::Verbose),
+            ("Verbose", LogLevel::Verbose),
+        ] {
+            assert_eq!(LogLevel::parse(raw), Some(want), "parse({raw:?})");
+        }
+
+        // Anything else is refused rather than defaulted: the old code sent an
+        // unrecognized level to `Level=4`, so a request for "Critical" silently
+        // returned Information events.
+        for raw in ["", "severe", "informational", "warnerr", "0"] {
+            assert_eq!(LogLevel::parse(raw), None, "parse({raw:?}) must reject");
+        }
+    }
+
+    #[test]
+    fn level_names_map_to_each_platforms_own_vocabulary() {
+        assert_eq!(LogLevel::Critical.windows_level(), "1");
+        assert_eq!(LogLevel::Error.windows_level(), "2");
+        assert_eq!(LogLevel::Warning.windows_level(), "3");
+        assert_eq!(LogLevel::Information.windows_level(), "4");
+        assert_eq!(LogLevel::Verbose.windows_level(), "5");
+
+        assert_eq!(LogLevel::Critical.journald_priority(), "crit");
+        assert_eq!(LogLevel::Error.journald_priority(), "err");
+        assert_eq!(LogLevel::Verbose.journald_priority(), "debug");
+
+        // journald emits its own numbers; read them back as the tool's names.
+        assert_eq!(LogLevel::from_journald_priority("3"), "Error");
+        assert_eq!(LogLevel::from_journald_priority("4"), "Warning");
+        assert_eq!(LogLevel::from_journald_priority("6"), "Information");
+        assert_eq!(LogLevel::from_journald_priority("7"), "Verbose");
+        // An out-of-range priority is passed through, not coerced to a name.
+        assert_eq!(LogLevel::from_journald_priority("9"), "9");
+
+        // The macOS log has no warning level, so asking for one must not be
+        // answered with the nearest supported word.
+        assert_eq!(LogLevel::Error.apple_level(), Some("error"));
+        assert_eq!(LogLevel::Critical.apple_level(), Some("fault"));
+        assert_eq!(LogLevel::Warning.apple_level(), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn event_log_names_are_the_injection_boundary() {
+        // `log` reaches PowerShell inside a single-quoted hashtable value, so
+        // the allowlist is what stands between a name and a script.
+        for good in [
+            "System",
+            "Application",
+            "Security",
+            "Setup",
+            "Windows PowerShell",
+            "Microsoft-Windows-Kernel-PnP/Config",
+            "ServiceModel-Host",
+        ] {
+            assert!(is_event_log_name(good), "{good:?} is a real log name");
+        }
+        let too_long = "x".repeat(129);
+        for bad in [
+            "",
+            "Syste'm",
+            "System'; Get-Process; #",
+            "System\"",
+            "Sys`tem",
+            "Sys\tem",
+            "System;Level=1",
+            "Sy stem)",
+            too_long.as_str(),
+        ] {
+            assert!(!is_event_log_name(bad), "{bad:?} must be refused");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_query_omits_the_level_clause_when_none_is_requested() {
+        // The bug this issue is about: with no `level`, the old script always
+        // emitted `Level=4`, so a bare `system_logs` call hid every Error and
+        // Warning entry.
+        let all = windows_log_query("System", None, 50);
+        assert!(all.contains("LogName='System'"), "{all}");
+        assert!(
+            !all.contains("Level="),
+            "no level must mean every level: {all}"
+        );
+        assert!(all.contains("-MaxEvents 50"), "{all}");
+
+        let errors = windows_log_query("Application", Some(LogLevel::Error), 5);
+        assert!(errors.contains("LogName='Application'"), "{errors}");
+        assert!(errors.contains("; Level=2"), "{errors}");
+        assert!(errors.contains("-MaxEvents 5"), "{errors}");
+
+        // Brace nesting is what makes or breaks the hashtable syntax, and a
+        // malformed script fails as a PowerShell parse error rather than as
+        // log data, so assert it here instead of discovering it in the field.
+        for script in [all, errors] {
+            assert_eq!(
+                script.matches('{').count(),
+                script.matches('}').count(),
+                "unbalanced hashtable braces: {script}"
+            );
+            assert!(script.ends_with("| ConvertTo-Json"), "{script}");
+        }
+    }
+
+    #[test]
+    fn long_messages_are_cut_with_a_visible_marker() {
+        let short = cap_field("disk failure predicted".to_string(), 2000);
+        assert_eq!(short, "disk failure predicted");
+
+        let long = cap_field(
+            "x".repeat(MAX_LOG_MESSAGE_CHARS + 500),
+            MAX_LOG_MESSAGE_CHARS,
+        );
+        assert!(long.starts_with(&"x".repeat(MAX_LOG_MESSAGE_CHARS)));
+        assert!(long.contains("message truncated"), "{long}");
+
+        // Character count, not byte count, so a provider message containing
+        // multi-byte text is not cut through the middle of a code point.
+        let text = cap_field(
+            "é".repeat(MAX_LOG_MESSAGE_CHARS + 10),
+            MAX_LOG_MESSAGE_CHARS,
+        );
+        assert!(
+            text.starts_with(&"é".repeat(MAX_LOG_MESSAGE_CHARS)),
+            "the cut must land on a code-point boundary"
+        );
+        assert!(!text.contains('\u{FFFD}'), "no replacement char: {text}");
+        assert!(text.contains("message truncated"), "{text}");
+    }
+
+    #[test]
+    fn command_stderr_collapses_to_one_bounded_line() {
+        let noisy = "Get-WinEvent : \r\nCannot find \n a path.\n";
+        let line = cap_line(noisy);
+        assert!(!line.contains('\n') && !line.contains('\r'), "{line:?}");
+        assert!(line.starts_with("Get-WinEvent :"), "{line}");
+
+        let huge = cap_line(&"e".repeat(5000));
+        assert!(huge.chars().count() <= 401, "{}", huge.chars().count());
     }
 }

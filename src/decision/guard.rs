@@ -6,7 +6,9 @@
 //! 1. **Rust denylist** ([`check_denylist`]) — hardcoded, model-independent,
 //!    pure Rust. Runs *before any network call* and cannot be overridden by
 //!    the model or by the caller's `confirm: true` argument. Works with the
-//!    `jev` feature disabled and with no network.
+//!    `jev` feature disabled and with no network. It is keyed on what a tool
+//!    *does*, not on the operator-narrowable `--jev-guard-tools` list, so
+//!    shrinking the model's scope cannot open a hole in deterministic policy.
 //! 2. **JEV `noul` judgment** ([`assess`], requires the `jev` feature) — one
 //!    binary question ("safe to run without human confirmation?"). The model
 //!    may only downgrade a call to `Confirm`; it can never produce `Deny`
@@ -39,10 +41,18 @@ pub const GUARD_TRUE_CRITERIA: &str = "Routine, reversible, non-destructive acti
 pub const GUARD_FALSE_CRITERIA: &str =
     "Destructive, irreversible, security-sensitive, or affects system stability";
 
-/// Default set of guarded tools (used when `--jev-guard-tools` is unset).
+/// Default set of guarded tools (used when `--jev-guard-tools` is unset) —
+/// i.e. the tools the *model* judges. The denylist is broader and independent
+/// of this list; see [`check_denylist`].
+///
+/// `shell_write` belongs here even though `shell_exec` already does: both reach
+/// the same interpreter (`shell_write` pushes bytes into the live PTY that
+/// `shell_open` created), so guarding only the named-command tool leaves the
+/// destructive effect reachable through its sibling.
 pub fn guarded_tools() -> &'static [&'static str] {
     &[
         "shell_exec",
+        "shell_write",
         "fs_delete",
         "process_kill",
         "service_stop",
@@ -137,10 +147,16 @@ const CRITICAL_SERVICES: &[&str] = &[
     "securityhealthservice", // Defender security health
 ];
 
-/// Destructive command patterns for `shell_exec`. Matched (substring)
-/// against the lowercased command with whitespace collapsed. Deliberately
-/// narrow: this list only catches clear-cut, high-blast-radius commands —
-/// the model judgment + confirmation gate the long tail.
+/// Destructive command patterns for the shell tools — `shell_exec`'s
+/// `command` and `shell_write`'s `input`, which are the same thing by the time
+/// they reach an interpreter. Matched (substring) against the lowercased text
+/// with whitespace collapsed. Deliberately narrow: this list only catches
+/// clear-cut, high-blast-radius commands — the model judgment + confirmation
+/// gate the long tail.
+///
+/// Limitation worth stating: the match is per call. Text split across several
+/// `shell_write` calls into one PTY is never assembled here, so chunked input
+/// relies on layer 2 judging each fragment, not on this list.
 const DESTRUCTIVE_COMMAND_PATTERNS: &[&str] = &[
     "format ",     // `format C:` / `format D: /FS:NTFS` — wipes a volume
     "diskpart",    // disk partitioning (clean, format, delete partition)
@@ -152,7 +168,8 @@ const DESTRUCTIVE_COMMAND_PATTERNS: &[&str] = &[
     "> /dev/nvme", // redirect onto a raw NVMe device
 ];
 
-/// Unix system directories whose contents are hard-blocked for `fs_delete`.
+/// Unix system directories whose contents are hard-blocked for the tools that
+/// destroy or overwrite a path (`fs_delete`, `fs_write`).
 const PROTECTED_UNIX_PREFIXES: &[&str] = &[
     "/etc/", "/bin/", "/sbin/", "/usr/", "/boot/", "/lib/", "/lib64/", "/proc/", "/sys/",
 ];
@@ -188,7 +205,10 @@ fn rm_rf_unix_root(cmd: &str) -> bool {
         })
 }
 
-/// Why a `fs_delete` path is blocked, or `None`.
+/// Why a path targeted by a destroying or overwriting tool is blocked, or
+/// `None`. The reasons name the *path class*, not the operation: this check is
+/// shared by `fs_delete` and `fs_write`, and the tool name is already in the
+/// message the guard builds around it.
 fn deny_reason_for_path(raw: &str) -> Option<&'static str> {
     // Preserve a leading double-backslash for UNC paths before normalizing
     // elsewhere; normalize_path() maps '/' → '\' but keeps '//server' intact as
@@ -208,29 +228,29 @@ fn deny_reason_for_path(raw: &str) -> Option<&'static str> {
             && (b.len() == 2 || (b[2] == b'\\' && b.len() == 3))
     };
     if drive_root(&path) {
-        return Some("fs_delete of a drive root");
+        return Some("a drive root");
     }
     if path == "\\" {
-        return Some("fs_delete of the filesystem root");
+        return Some("the filesystem root");
     }
     // Windows directory and everything under it (covers System32, SysWOW64,
     // WinSxS, …).
     if path == "c:\\windows" || path.starts_with("c:\\windows\\") {
-        return Some("fs_delete under C:\\Windows");
+        return Some("a path under C:\\Windows");
     }
     // Any system32/syswow64 segment wherever it appears (other drive letters
     // or renamed Windows dirs).
     if path.contains("\\system32") || path.contains("\\syswow64") {
-        return Some("fs_delete of a system32/syswow64 path");
+        return Some("a system32/syswow64 path");
     }
     // Unix system dirs (path may still contain '/' if the caller sent a
     // POSIX path — check the original too).
     let unix = raw.trim();
     if unix == "/" {
-        return Some("fs_delete of the filesystem root");
+        return Some("the filesystem root");
     }
     if PROTECTED_UNIX_PREFIXES.iter().any(|p| unix.starts_with(p)) {
-        return Some("fs_delete of a Unix system directory");
+        return Some("a Unix system directory");
     }
     None
 }
@@ -262,25 +282,32 @@ fn deny_reason_for_service(tool: &str, name: &str) -> Option<&'static str> {
     }
 }
 
-/// Why a shell command is blocked, or `None`.
+/// Why a shell command is blocked, or `None`. Tool-neutral for the same reason
+/// as [`deny_reason_for_path`] — `shell_exec` and `shell_write` share it.
 fn deny_reason_for_command(cmd: &str) -> Option<&'static str> {
     let cmd = normalize_text(cmd);
     if rm_rf_unix_root(&cmd) || DESTRUCTIVE_COMMAND_PATTERNS.iter().any(|p| cmd.contains(p)) {
-        Some("shell_exec matching a destructive command pattern")
+        Some("a destructive command pattern")
     } else {
         None
     }
 }
 
-/// Check the hardcoded, model-independent denylist for a guarded call.
+/// Check the hardcoded, model-independent denylist for a tool call.
 ///
 /// Returns a `Deny` verdict when `tool` + `args` match a hard-blocked
 /// pattern, `None` otherwise. Pure Rust: no network, no model, works with
 /// the `jev` feature disabled. Applied before every model call and never
 /// bypassed by `confirm: true`.
+///
+/// Every tool whose effect this module can recognize is inspected, whether or
+/// not it is in the guarded set — the guarded set decides who gets *judged*,
+/// not who gets *blocked*. A tool absent from this match has no rule to break.
 pub fn check_denylist(tool: &str, args: &Value) -> Option<GuardVerdict> {
     let reason = match tool {
-        "fs_delete" => args
+        // Writing over a protected path is as fatal as deleting it — the OS
+        // does not distinguish when the file is replaced by garbage.
+        "fs_delete" | "fs_write" => args
             .get("path")
             .and_then(Value::as_str)
             .and_then(deny_reason_for_path),
@@ -294,6 +321,13 @@ pub fn check_denylist(tool: &str, args: &Value) -> Option<GuardVerdict> {
             .and_then(|name| deny_reason_for_service(tool, name)),
         "shell_exec" => args
             .get("command")
+            .and_then(Value::as_str)
+            .and_then(deny_reason_for_command),
+        // The PTY input channel. Same interpreter, same patterns, different
+        // argument name — this arm is what closes the `shell_open` +
+        // `shell_write` route around the `shell_exec` denylist.
+        "shell_write" => args
+            .get("input")
             .and_then(Value::as_str)
             .and_then(deny_reason_for_command),
         "process_start" => {
@@ -479,6 +513,7 @@ mod tests {
         let tools = guarded_tools();
         for t in [
             "shell_exec",
+            "shell_write",
             "fs_delete",
             "process_kill",
             "service_stop",
@@ -634,6 +669,67 @@ mod tests {
     }
 
     #[test]
+    fn denylist_covers_shell_write_input() {
+        // The route this closes: shell_open + shell_write reaches the same live
+        // PTY as shell_exec, so the same patterns must apply to `input`.
+        for cmd in [
+            "format C: /q\n",
+            "del /s /q C:\\Users\\me\\Documents\n",
+            "rm -rf /\n",
+            "diskpart /s clean.txt",
+        ] {
+            let v = check_denylist("shell_write", &json!({ "session_id": "s1", "input": cmd }))
+                .unwrap_or_else(|| panic!("shell_write input {cmd:?} must be denied"));
+            assert_eq!(v.action, GuardAction::Deny, "cmd: {cmd}");
+        }
+        for cmd in ["npm install\n", "git status\n", "cd project && make\n"] {
+            assert!(
+                check_denylist("shell_write", &json!({ "session_id": "s1", "input": cmd }))
+                    .is_none(),
+                "shell_write input {cmd:?} must not be denied"
+            );
+        }
+        // Missing `input` → no hit; the handler errors on the absent argument.
+        assert!(check_denylist("shell_write", &json!({ "session_id": "s1" })).is_none());
+    }
+
+    #[test]
+    fn denylist_covers_fs_write_paths() {
+        // Overwriting a protected path is as fatal as deleting it, so the path
+        // rule is shared — without `guard_gate` consulting it for this tool.
+        for path in [
+            "C:\\Windows\\System32\\drivers\\etc\\hosts",
+            "C:\\",
+            "C:\\Windows\\explorer.exe",
+            "/etc/passwd",
+        ] {
+            assert!(
+                check_denylist("fs_write", &json!({ "path": path, "content": "x" })).is_some(),
+                "fs_write of {path} must be denied"
+            );
+        }
+        assert!(check_denylist(
+            "fs_write",
+            &json!({ "path": "D:\\Projects\\app\\src\\main.rs", "content": "fn main() {}" })
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn denylist_reason_names_the_target_not_the_operation() {
+        // `fs_delete` and `fs_write` share the path helper, and the message the
+        // guard builds around the reason already names the tool — a reason that
+        // said "fs_delete …" would lie for the other caller.
+        for tool in ["fs_delete", "fs_write"] {
+            let v = check_denylist(tool, &json!({ "path": "C:\\" })).unwrap();
+            assert!(
+                !v.reason.contains("fs_"),
+                "{tool} reason duplicates an operation name: {v:?}"
+            );
+        }
+    }
+
+    #[test]
     fn denylist_process_start_checks_command_and_args() {
         // Direct invocation of format.com with args is caught via join.
         assert!(check_denylist(
@@ -654,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn denylist_ignores_unguarded_tools() {
+    fn denylist_ignores_tools_with_no_rule() {
         assert!(check_denylist("fs_read", &json!({ "path": "C:\\Windows" })).is_none());
         assert!(check_denylist("decision", &json!({})).is_none());
         assert!(check_denylist("unknown_tool", &json!({})).is_none());

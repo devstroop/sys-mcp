@@ -47,12 +47,19 @@ static JEV_CONFIG: OnceLock<JevConfig> = OnceLock::new();
 ///
 /// Called once at startup from `main` with the parsed `ServerConfig`.
 /// If never called, [`config`] falls back to env/CLI defaults.
+///
+/// `init` is authoritative regardless of call order: reading [`config`] first
+/// must not pin the process to the defaults and then discard the real install.
 pub fn init(config: JevConfig) {
     let _ = JEV_CONFIG.set(config);
 }
 
 /// The active JEV configuration: the value installed via [`init`], or the
 /// clap-resolved default (honors `JEV_*` env vars).
+///
+/// Reads without installing. The previous `get_or_init` made the *first*
+/// caller win, so a reader that ran before `init` locked every process-wide
+/// guard decision to `guardrails: false` and silently disabled the denylist.
 pub fn config() -> JevConfig {
-    JEV_CONFIG.get_or_init(JevConfig::default).clone()
+    JEV_CONFIG.get().cloned().unwrap_or_default()
 }

@@ -13,11 +13,22 @@ use serde_json::{json, Value};
 use sys_mcp::gui::GuiClient;
 use sys_mcp::mcp::handlers::handle_tool_call;
 use sys_mcp::mcp::tools::all_tools;
-use sys_mcp::StubBackend;
+use sys_mcp::{StubA11yBackend, StubBackend};
 
 /// Every tool advertised by `tools/list`.
 fn declared_tools() -> Vec<Value> {
     all_tools()
+}
+
+/// A declared tool's schema, by name.
+fn schema_of(name: &str) -> Value {
+    let tool = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == name)
+        .unwrap_or_else(|| panic!("tool '{name}' is not declared"));
+    tool.get("inputSchema")
+        .expect("missing inputSchema")
+        .clone()
 }
 
 fn tool_name(t: &Value) -> String {
@@ -187,5 +198,244 @@ async fn ui_decide_reachable_with_actionable_availability_message() {
         // With the flag on the call proceeds into argument validation;
         // either way it is an explicit, actionable failure here (no goal).
         assert!(!text.contains("unknown tool"), "got: {text}");
+    }
+}
+
+/// The accessibility tools that address an element by id must *declare* the
+/// arguments they refuse to run without, and must refuse them when they are
+/// absent. A schema that omits a required argument invites exactly the call the
+/// handler rejects, and the drift guards above cannot see it because they only
+/// check that `required` entries exist as properties.
+#[tokio::test]
+async fn accessibility_required_args_are_declared_and_enforced() {
+    let (backend, _recorder) = StubA11yBackend::new();
+    let client = GuiClient::new(backend);
+
+    let cases = [
+        ("accessibility_properties", json!({}), "element_id"),
+        (
+            "accessibility_action",
+            json!({ "element_id": "stub:0" }),
+            "action",
+        ),
+        (
+            "accessibility_action",
+            json!({ "action": "invoke" }),
+            "element_id",
+        ),
+    ];
+    for (name, args, arg) in cases {
+        let required = schema_of(name)
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            required.iter().any(|r| r.as_str() == Some(arg)),
+            "schema for '{name}' must list '{arg}' in required — the handler rejects a call without it"
+        );
+
+        let result = handle_tool_call(&client, name, args).await;
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "'{name}' accepted a call without '{arg}'"
+        );
+        assert_eq!(
+            joined_text(&result),
+            format!("missing required argument: {arg}"),
+            "'{name}' must name the argument it is missing"
+        );
+    }
+
+    // The reverse: a tool the schema declares as needing nothing must actually
+    // run with no arguments, or the schema is advertising a call that fails.
+    for name in ["accessibility_tree", "accessibility_find"] {
+        let schema = schema_of(name);
+        assert!(
+            schema.get("required").is_none(),
+            "'{name}' must not declare required arguments"
+        );
+        let result = handle_tool_call(&client, name, json!({})).await;
+        assert_eq!(
+            result.is_error,
+            None,
+            "'{name}' => {}",
+            joined_text(&result)
+        );
+    }
+}
+
+/// The four accessibility tools are the newest surface in the server and the
+/// only one whose contract spans two calls (an id from one call feeding the
+/// next). Their descriptions are what tell an agent that contract, so they must
+/// keep naming the tools involved.
+#[test]
+fn accessibility_descriptions_name_the_id_contract_and_the_other_tools() {
+    for name in [
+        "accessibility_tree",
+        "accessibility_find",
+        "accessibility_properties",
+        "accessibility_action",
+    ] {
+        let tool = declared_tools()
+            .into_iter()
+            .find(|t| tool_name(t) == name)
+            .expect("declared");
+        let desc = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(!desc.is_empty(), "{name} has no description");
+        assert!(
+            desc.contains("accessibility"),
+            "'{name}' description does not describe itself as accessibility: {desc}"
+        );
+    }
+
+    // The id contract is stated on the two tools that consume an id, and it
+    // names both producers, so a caller can find where the id came from.
+    for name in ["accessibility_properties", "accessibility_action"] {
+        let tool = declared_tools()
+            .into_iter()
+            .find(|t| tool_name(t) == name)
+            .expect("declared");
+        let desc = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(desc.contains("most recent"), "'{name}': {desc}");
+        assert!(desc.contains("accessibility_tree"), "'{name}': {desc}");
+    }
+    let tree = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == "accessibility_tree")
+        .expect("declared");
+    let tree_desc = tree
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        tree_desc.contains("ids are invalidated") || tree_desc.contains("states"),
+        "the tree description must mention what it returns: {tree_desc}"
+    );
+}
+
+/// #46 added `value`, the operand `set_value` writes. It has to be *declared* —
+/// an undeclared property is invisible to a client that builds its call from the
+/// schema — and it has to stay optional, because only one verb uses it. The
+/// pairing rule ("required when the action is set_value, refused otherwise")
+/// cannot be expressed in JSON Schema, so the description is what carries it.
+#[test]
+fn accessibility_action_declares_value_as_an_optional_operand() {
+    let schema = schema_of("accessibility_action");
+    let props = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("properties must be an object");
+    assert!(
+        props.contains_key("value"),
+        "'value' is accepted by the handler but not declared in the schema"
+    );
+
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !required.iter().any(|r| r.as_str() == Some("value")),
+        "'value' must stay optional: only set_value needs it, and every other verb rejects it"
+    );
+
+    let value_desc = props["value"]
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        value_desc.contains("set_value"),
+        "the value property must name the verb it belongs to: {value_desc}"
+    );
+    // Clearing a field is a legal write, so the schema has to say the empty
+    // string means something rather than "no value given".
+    assert!(
+        value_desc.contains("empty string"),
+        "the value property must say an empty string clears the field: {value_desc}"
+    );
+
+    let tool = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == "accessibility_action")
+        .expect("declared");
+    let desc = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        desc.contains("set_value") && desc.contains("requires"),
+        "the tool description must state the pairing rule the handler enforces: {desc}"
+    );
+}
+
+/// #34 added `strategy` to the three OCR tools. It must be *declared* (an
+/// undeclared property is invisible to a client that builds its call from the
+/// schema), stay optional, and carry the default the handler actually applies when
+/// it is absent — otherwise the schema advertises one coverage while the server
+/// runs another, which is the confusion the argument exists to remove. The two
+/// vocabularies differ on purpose: `screen_read` picks how much of the frame to
+/// read, the search tools pick when to escalate a miss.
+#[test]
+fn ocr_tools_declare_strategy_with_the_default_the_handler_applies() {
+    let cases = [
+        ("screen_read", "single", vec!["single", "thorough"]),
+        ("screen_find_text", "auto", vec!["auto", "single"]),
+        ("screen_scroll_to_text", "auto", vec!["auto", "single"]),
+    ];
+
+    for (name, default, allowed) in cases {
+        let schema = schema_of(name);
+        let props = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("properties must be an object");
+        let strategy = props
+            .get("strategy")
+            .unwrap_or_else(|| panic!("'{name}' must declare a 'strategy' property"));
+
+        let values: Vec<&str> = strategy
+            .get("enum")
+            .and_then(Value::as_array)
+            .expect("strategy must declare its enum values")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            values, allowed,
+            "'{name}' strategy values must match the names the parser accepts"
+        );
+        assert_eq!(
+            strategy.get("default").and_then(Value::as_str),
+            Some(default),
+            "'{name}' must advertise the coverage it runs when the argument is absent"
+        );
+
+        let description = strategy
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(
+            description.contains("native scale") || description.contains("native-scale"),
+            "'{name}' strategy must say what the coverage buys: {description}"
+        );
+
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !required.iter().any(|r| r.as_str() == Some("strategy")),
+            "'{name}' must keep 'strategy' optional: every call has a working default"
+        );
     }
 }

@@ -5,6 +5,11 @@
 //! `path.exists()` then reported as a valid model **forever**. These use a
 //! local HTTP stub so no network is involved.
 
+// `src/download.rs` is only compiled when a model-fetching feature is on, so
+// without this gate a `--no-default-features` build of the test targets fails
+// on `sys_mcp::download` rather than on anything the test itself does wrong.
+#![cfg(any(feature = "ocr", feature = "detection"))]
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;

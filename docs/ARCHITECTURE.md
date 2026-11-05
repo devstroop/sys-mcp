@@ -69,14 +69,14 @@ AI Agent (Claude, OpenCode, etc.)
 - **mod.rs (GuiClient)** — Facade over `Box<dyn GuiBackend>`. Provides a clean async API. Checks capability availability via `as_*()` methods, returning `UnsupportedCapability` errors when backends don't support a feature.
 - **types.rs** — All shared data types (Screenshot, WindowInfo, Point, Region, etc.). Serializable for JSON responses.
 - **Capability traits** — Each trait defines a clean async interface for one capability area. Backends implement what they support.
-- **ocr.rs** — Standalone OCR module using the `ocrs` crate. Manages model downloads, runs text detection/recognition, provides text search with click coordinates.
+- **ocr.rs** — Standalone OCR module using the `ocrs` crate. Manages model downloads, runs text detection/recognition, provides text search with click coordinates. Also owns the small-text search strategy (`DETECT_WORKING_SIZE`, `search_windows`, `merge_window_results`) that reads a large frame as native-scale windows instead of one downscaled pass.
 - **detection.rs** — Object detection using YOLOv8 via tract-onnx. Detects common UI elements.
 
 ### Backend Layer (`src/gui/backend/`)
 
 - **mod.rs (GuiBackend trait)** — Super-trait combining required capabilities (Display + Input) with optional ones accessed via `as_*()` downcasting.
 - **local.rs (LocalBackend)** — The main backend. Wraps `RustAutoGui` in a Mutex for thread safety, delegates window management to platform-specific code, uses `arboard` for clipboard.
-- **stub.rs (StubBackend)** — Test backend that returns mock responses for testing.
+- **stub.rs (StubBackend, StubA11yBackend)** — Test backends returning fixed responses, no OS access. `StubBackend` deliberately serves no accessibility tree, so the `UnsupportedCapability` path stays reachable; `StubA11yBackend` adds a fixed nine-element tree that re-mints and invalidates element ids the way the platform backends do, plus a recorder that lets the `accessibility_*` handler tests assert what the backend actually received.
 
 ### Terminal/PTY Layer (`src/terminal/`)
 
@@ -87,7 +87,7 @@ AI Agent (Claude, OpenCode, etc.)
 ### Platform Layer (`src/platform/`)
 
 - **window/** — OS-specific window management implementations behind a common `PlatformWindowManager` interface. Real implementations on all three platforms: Win32 on Windows, `x11rb` with EWMH atoms on Linux (X11 only — no Wayland), and `CGWindowListCopyWindowInfo` + Cocoa/objc messaging on macOS. All expose list/active/focus/move/resize/minimize/maximize/restore/close/title/bounds/find-by-title.
-- **accessibility/** — Real platform accessibility trees behind a common `PlatformAccessibility` interface: Windows UI Automation (COM `IUIAutomation`, `ControlViewWalker`), macOS `AXUIElement` C FFI, and Linux AT-SPI2 over D-Bus (`zbus`, blocking API; ignores `window_id`, walks from the AT-SPI root). `get_tree` and `find_elements` are implemented on all three; `get_element_properties` and `invoke_element_action` still return `UnsupportedCapability`.
+- **accessibility/** — Real platform accessibility trees behind a common `PlatformAccessibility` interface: Windows UI Automation (COM `IUIAutomation`, `ControlViewWalker`), macOS `AXUIElement` C FFI, and Linux AT-SPI2 over D-Bus (`zbus`, blocking API; ignores `window_id`, walks from the AT-SPI root). All four trait methods — `get_tree`, `find_elements`, `get_element_properties`, and `invoke_element_action` — are implemented on all three. Element ids stay resolvable between calls via a per-tree element cache on Windows (COM refs) and macOS (`CFRetain`ed `AXUIElementRef`s), cleared on each `get_tree` and on `Drop`; Linux ids are stable AT-SPI object paths that resolve directly. `invoke_element_action` takes an optional `value` operand: `set_value` writes through UIA Value/RangeValue/Legacy `SetValue`, macOS `AXValue`, and AT-SPI `EditableText.SetTextContents`, so a field's content goes in through the tree rather than as keystrokes.
 
 ### Protocol Layer (`src/protocol/`)
 
@@ -118,6 +118,27 @@ Instead of a monolithic backend interface, capabilities are split into independe
 
 OCR models (~15MB total) are downloaded on first use from S3 and cached in the user's cache directory (`%LOCALAPPDATA%/sys-mcp/models/` on Windows). The `OcrEngine` is initialized once via `OnceLock` for the process lifetime.
 
+### OCR Scale and the Native-Scale Sweep
+
+The text-detection model has a **fixed** input size (600x800 for the shipped
+`text-detection.onnx`), and `ocrs` gives every image to that one tensor: an image
+smaller than it is padded with black, so its glyphs keep their pixel size; an
+image larger is resized to it with the aspect ratio ignored. `OcrEngineParams`
+offers no scale or max-side knob, so a whole-screen read is not a wider view of
+the same quality — on 1920x1080 it is a 0.31x horizontal squeeze, and text at
+menu-label size (11-14px) stops being a detectable feature. The mitigation lives
+in `src/gui/ocr.rs` as geometry rather than as engine settings: `search_windows`
+splits a frame into windows no larger than `DETECT_WORKING_SIZE`, overlapping by
+`SEARCH_WINDOW_OVERLAP` so a line on a boundary is fully inside one of them,
+`OcrCapability::read_screen_thorough` runs the real read once per window, and
+`merge_window_results` translates each window's boxes into screen coordinates and
+collapses only same-text lines whose centres are within the overlap distance — so
+repeated words on screen survive the merge. The strategy is opt-in on
+`screen_read` (latency: one pass per window) and automatic on a
+`screen_find_text` miss, because an unverified absence is the failure mode agents
+cannot see. Both the tool schemas and every response label state which coverage
+ran.
+
 ### Screenshot Pipeline
 
 Screenshots flow through: `RustAutoGui.save_screenshot()` → temp PNG file → read bytes → decode with `image` crate → (optional crop/resize/JPEG compress) → base64 encode → MCP response. JPEG compression at quality 60 with 0.5x scaling keeps full-screen screenshots under ~200KB.
@@ -133,6 +154,10 @@ Optional capabilities are compile-time gated:
 - `clipboard` — adds `arboard` dependency
 - `web-preview` — adds `axum` web server dependency
 - `detection` — adds `tract-onnx` for YOLO object detection
+- `jev` — adds `reqwest` (rustls) for the JEV/System One decision layer; **on by
+  default** (the public gateway is free and zero-setup). Compiles in the
+  `decision`/`decision_rank`/`decision_stats`/`ui_decide` tools; the guardrails
+  and action loop remain off at runtime behind their own flags.
 - `opencl` — enables GPU-accelerated template matching in rustautogui
 
 ## MCP Protocol
@@ -140,8 +165,18 @@ Optional capabilities are compile-time gated:
 sys-mcp implements MCP protocol version `2024-11-05`:
 
 - **Transport**: stdio (newline-delimited JSON) or HTTP
-- **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `ping`
-- **Capabilities**: `{ "tools": {} }`
+- **Concurrency**: requests on one connection are handled at the same time. `handle_request` takes `&self`, so
+  the transport holds an `Arc<McpRequestHandler>` with no mutex around it and each parsed line goes into a
+  `JoinSet` while the read loop keeps reading (`serve_lines`). Writes are one whole line each, behind a sink
+  mutex, encoded before the lock is taken. In-flight requests are capped at `MAX_IN_FLIGHT` (32) as admission
+  control, stdin EOF drains them rather than dropping their answers, and a panicking request costs its own
+  response instead of poisoning the handler for the session. Responses may therefore land out of order, joined
+  to their calls by JSON-RPC id. Desktop input is unaffected: `LocalBackend` serializes `RustAutoGui` behind its
+  own mutex, so GUI actions queue at the backend while slow read-only tools overlap
+  (`docs/ISSUES.md` #32).
+- **Methods**: `initialize`, `initialized`, `tools/list`, `tools/call`, `resources/list`, `resources/read`,
+  `prompts/list`, `prompts/get`, `ping`
+- **Capabilities**: `{ "tools": {}, "resources": { "subscribe": false, "listChanged": false }, "prompts": { "listChanged": false } }`
 
 Tool results use MCP's `ContentItem` format with `type: "text"` for text results and `type: "image"` with base64-encoded data for screenshots.
 

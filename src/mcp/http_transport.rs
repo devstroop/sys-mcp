@@ -9,7 +9,6 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::config::ServerConfig;
@@ -19,14 +18,18 @@ use crate::protocol::mcp::McpRequest;
 pub struct HttpServer {
     config: ServerConfig,
     session_mgr: SessionManagerHandle,
-    mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+    /// No mutex: handling a request takes `&self` (`docs/ISSUES.md` #32). The
+    /// lock here used to be held across the whole `handle_request` await, so one
+    /// slow tool serialised every HTTP session on the server, not just the
+    /// stdio connection it arrived on.
+    mcp_handler: Arc<super::server::McpRequestHandler>,
 }
 
 impl HttpServer {
     pub fn new(
         config: ServerConfig,
         session_mgr: SessionManagerHandle,
-        mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+        mcp_handler: Arc<super::server::McpRequestHandler>,
     ) -> Self {
         Self {
             config,
@@ -94,7 +97,7 @@ impl HttpServer {
 #[derive(Clone)]
 struct HttpState {
     session_mgr: SessionManagerHandle,
-    mcp_handler: Arc<Mutex<super::server::McpRequestHandler>>,
+    mcp_handler: Arc<super::server::McpRequestHandler>,
 }
 
 async fn health_handler() -> Json<Value> {
@@ -179,12 +182,7 @@ async fn mcp_handler(
     };
 
     // Handle MCP request
-    let response = state
-        .mcp_handler
-        .lock()
-        .await
-        .handle_request(&mcp_request)
-        .await;
+    let response = state.mcp_handler.handle_request(&mcp_request).await;
 
     // Serialize response
     let response_json = match serde_json::to_string(&response) {

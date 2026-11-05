@@ -40,9 +40,7 @@ pub(crate) async fn handle_decision(
         "redacted": validated.redacted,
     });
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&output).unwrap_or_else(|_| output.to_string()),
-    ))
+    Ok(ToolResult::text(super::json_pretty(&output)?))
 }
 
 #[cfg(not(feature = "jev"))]
@@ -109,9 +107,7 @@ pub(crate) async fn handle_decision_rank(
         },
     });
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string()),
-    ))
+    Ok(ToolResult::text(super::json_pretty(&payload)?))
 }
 
 #[cfg(not(feature = "jev"))]
@@ -148,7 +144,5 @@ pub(crate) async fn handle_decision_stats(
                  small inputs, which is exactly what this ledger is for.",
     });
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string()),
-    ))
+    Ok(ToolResult::text(super::json_pretty(&payload)?))
 }

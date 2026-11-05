@@ -64,6 +64,8 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
         // Accessibility
         "accessibility_tree" => accessibility::handle_accessibility_tree(client, &args).await,
         "accessibility_find" => accessibility::handle_find_ui_element(client, &args).await,
+        "accessibility_properties" => accessibility::handle_element_properties(client, &args).await,
+        "accessibility_action" => accessibility::handle_element_action(client, &args).await,
 
         // Template matching
         "vision_find_image" => vision::handle_find_image(client, &args).await,
@@ -185,13 +187,19 @@ pub async fn handle_tool_call(client: &GuiClient, tool_name: &str, args: Value) 
 /// call must not proceed (held for confirmation, or denied by the Rust
 /// denylist), `None` to dispatch normally.
 ///
-/// Layer order (see `decision::guard` docs): hardcoded Rust denylist first
-/// (never bypassed, model-free, offline), then the caller's `confirm: true`
-/// acknowledgment (bypasses only the model check), then the JEV `noul`
-/// judgment. Model failure fails *open* — a decision model must not become
-/// an availability single point of failure — but the denylist still applies.
+/// Layer order (see `decision::guard` docs): the hardcoded Rust denylist runs
+/// first — model-free, offline, applied to every tool it can inspect
+/// regardless of `--jev-guard-tools`, and never bypassed by `confirm: true` or
+/// by the model. Then the JEV `noul` judgment runs for tools in the guarded
+/// set, which the caller's `confirm: true` acknowledgment skips.
+///
+/// When the model cannot be consulted the configured `--jev-guard-fail-mode`
+/// decides on *every* path that cannot reach it: `closed` (the default) holds
+/// the call for a human, `open` lets it through with the judgment skipped.
+/// Under `closed` a guard failure is never a silent allow.
 #[cfg(feature = "jev")]
 async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
+    use crate::config::GuardFailMode;
     use crate::decision::client::DecisionClient;
     use crate::decision::guard::{self, GuardAction};
 
@@ -199,7 +207,20 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
     if !config.guardrails {
         return None; // guardrails off (the default) — behave exactly as before
     }
-    // The decision tools are never guarded. `decision` and `decision_rank`
+
+    // Layer 1: hard Rust denylist. Runs before the guarded-set check on
+    // purpose: narrowing `--jev-guard-tools` shrinks what the *model* judges
+    // and must not be able to delete a deterministic block. Applies before any
+    // network call, so it holds with the model unreachable, and is never
+    // bypassed by `confirm: true`.
+    if let Some(verdict) = guard::check_denylist(tool_name, args) {
+        return Some(ToolResult::error(format!(
+            "Refused by the JEV guard denylist: {tool_name} matched a hard-blocked destructive pattern ({}). This is deterministic Rust policy and cannot be overridden with confirm=true.",
+            verdict.reason
+        )));
+    }
+
+    // The decision tools are never judged. `decision` and `decision_rank`
     // would recurse if they were; `decision_stats` reads local bookkeeping
     // only. `ui_decide` has its own, stricter gates inside the loop
     // (irreversible-action confirmation, freshness, literal-only typing), so
@@ -215,15 +236,6 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
         return None;
     }
 
-    // Layer 1: hard Rust denylist. Applies before any network call and is
-    // never bypassed by `confirm: true` or by the model.
-    if let Some(verdict) = guard::check_denylist(tool_name, args) {
-        return Some(ToolResult::error(format!(
-            "Refused by the JEV guard denylist: {tool_name} matched a hard-blocked destructive pattern ({}). This is deterministic Rust policy and cannot be overridden with confirm=true.",
-            verdict.reason
-        )));
-    }
-
     // Layer 3 (caller confirmation) skips the model judgment entirely — no
     // network call, no score. The denylist above still applied.
     if guard::confirm_requested(args) {
@@ -233,13 +245,27 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
         return None;
     }
 
-    // Layer 2: one `noul` judgment against the redacted state.
+    // Layer 2: one `noul` judgment against the redacted state. Two paths can
+    // fail to consult the model — building the client and the assessment call
+    // itself — and both obey the configured fail mode, so a bad endpoint,
+    // timeout or key cannot quietly turn a `closed` guard into no guard at all.
+    let fail_open = matches!(config.guard_fail_mode, GuardFailMode::Open);
+    let held = |why: String| {
+        Some(ToolResult::error(format!(
+            "Action held for confirmation by the JEV guard: {tool_name} could not be judged ({why}). Nothing was executed; the Rust denylist was applied. If this action is intended, re-call {tool_name} with the same arguments plus \"confirm\": true; otherwise drop the call."
+        )))
+    };
     let client = match DecisionClient::new(&config) {
         Ok(c) => c,
         Err(e) => {
-            // Fail open (denylist already applied).
-            log::warn!("JEV guard skipped for {tool_name}: failed to build decision client: {e}");
-            return None;
+            log::warn!(
+                "JEV guard: cannot build decision client for {tool_name}: {e} (fail mode = {:?})",
+                config.guard_fail_mode
+            );
+            if fail_open {
+                return None;
+            }
+            return held(format!("decision client could not be created: {e}"));
         }
     };
     match guard::assess(&client, tool_name, args).await {
@@ -257,10 +283,18 @@ async fn guard_gate(tool_name: &str, args: &Value) -> Option<ToolResult> {
             ))),
         },
         Err(e) => {
-            // `assess` fail-opens internally; this arm is defensive. Do not
-            // block the user on guard plumbing errors.
-            log::warn!("JEV guard assess failed for {tool_name}: {e} (failing open)");
-            None
+            // `assess` maps every model outcome to `Ok`, so reaching here means
+            // the guard plumbing itself failed. Same policy as above: this is a
+            // "could not consult the model" path, not a licence to proceed.
+            log::warn!(
+                "JEV guard: assess failed for {tool_name}: {e} (fail mode = {:?})",
+                config.guard_fail_mode
+            );
+            if fail_open {
+                None
+            } else {
+                held(format!("guard assessment failed: {e}"))
+            }
         }
     }
 }
@@ -293,10 +327,61 @@ pub(crate) fn opt_u32(args: &Value, key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+/// Optional array-of-strings argument.
+///
+/// Absent (or `null`) yields an empty `Vec`, which is what callers mean by
+/// "no arguments". A value that is present but not an array is rejected rather
+/// than absorbed: `as_array()` returns `None` for a string, a number or an
+/// object, so `unwrap_or_default()` used to discard a misspelled argument list
+/// and start the process or child server with *no* arguments at all — the tool
+/// then reported success for a command that never got the caller's input.
+pub(crate) fn opt_str_array(args: &Value, key: &str) -> Result<Vec<String>, String> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(arr)) => Ok(arr
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| format!("invalid argument: '{key}' must contain only strings"))
+            })
+            .collect::<Result<Vec<String>, String>>()?),
+        Some(_) => Err(format!(
+            "invalid argument: '{key}' must be an array of strings"
+        )),
+    }
+}
+
 pub(crate) fn parse_button(args: &Value) -> MouseButton {
     match args.get("button").and_then(Value::as_str).unwrap_or("left") {
         "right" => MouseButton::Right,
         "middle" => MouseButton::Middle,
         _ => MouseButton::Left,
     }
+}
+
+// ─── Result serialization helpers ───────────────────────────────────────
+
+/// Serialize a tool payload into its text content.
+///
+/// A failure here is a bug in this process, not a state of the user's machine,
+/// so it surfaces as an error instead of being absorbed: `unwrap_or_default()`
+/// on a `String` is `""`, and an empty result carrying no `is_error` flag is
+/// read by an agent as "no windows are open" or "no element matched" — a false
+/// absence manufactured by the tool itself, which is worse than an error for an
+/// autonomous caller.
+///
+/// [`json_pretty`] keeps the indentation the standalone reads use;
+/// [`json_compact`] is for payloads embedded inside a larger text summary,
+/// where pretty-printing would multiply tokens for no benefit.
+pub(crate) fn json_pretty<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map_err(|e| format!("failed to serialize the tool result: {e}"))
+}
+
+/// See [`json_pretty`]. Only the OCR summaries embed JSON inside text today,
+/// so a slim build without the `ocr` feature has no caller.
+#[cfg(feature = "ocr")]
+pub(crate) fn json_compact<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|e| format!("failed to serialize the tool result: {e}"))
 }

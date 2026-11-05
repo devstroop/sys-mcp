@@ -60,16 +60,20 @@ impl Default for ServerConfig {
 /// is never logged or echoed in tool output.
 #[derive(Parser, Debug, Clone, PartialEq)]
 pub struct JevConfig {
-    /// JEV decision endpoint URL (POST /v1/systemone)
+    /// JEV decision endpoint URL (POST /v1/systemone). Defaults to the
+    /// public OpenCode inference gateway, which serves `jev-1.13-free` with
+    /// the shared `public` bearer key — usable out of the box with no setup.
+    /// Point it at a self-hosted or TypeSafe gateway via `JEV_ENDPOINT`.
     #[arg(
         long,
-        default_value = "http://192.168.2.49:5050/v1/systemone",
+        default_value = "https://opencode.ai/inference/systemone/v1/systemone",
         env = "JEV_ENDPOINT"
     )]
     pub endpoint: String,
 
-    /// JEV API key (kept out of logs and tool output)
-    #[arg(long, default_value = "", env = "JEV_API_KEY")]
+    /// JEV API key (kept out of logs and tool output). Defaults to `public`,
+    /// the shared bearer key accepted by the public OpenCode gateway.
+    #[arg(long, default_value = "public", env = "JEV_API_KEY")]
     pub api_key: String,
 
     /// JEV model name

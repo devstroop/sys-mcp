@@ -34,8 +34,11 @@ fn test_jev_config_defaults() {
         return;
     }
     let jev = JevConfig::default();
-    assert_eq!(jev.endpoint, "http://192.168.2.49:5050/v1/systemone");
-    assert_eq!(jev.api_key, "");
+    assert_eq!(
+        jev.endpoint,
+        "https://opencode.ai/inference/systemone/v1/systemone"
+    );
+    assert_eq!(jev.api_key, "public");
     assert_eq!(jev.model, "jev-1.13-free");
     assert_eq!(jev.timeout_secs, 15);
 

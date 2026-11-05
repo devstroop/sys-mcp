@@ -1,8 +1,13 @@
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use std::path::Path;
 
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE, WPARAM};
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, RECT, TRUE, WPARAM};
+use windows::Win32::System::Threading::{
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::error::GuiError;
@@ -214,9 +219,53 @@ fn get_window_info(hwnd: HWND) -> Result<WindowInfo, GuiError> {
         is_minimized,
         is_maximized,
         is_focused: false,
-        process_name: None,
+        process_name: get_process_name(pid),
         process_id: Some(pid),
     })
+}
+
+/// Executable base name for `pid`, e.g. `busy21`.
+///
+/// Reported *without* the `.exe` suffix so it matches what `process_list`
+/// returns on the same platform (`Get-Process` → `ProcessName`, which is the
+/// base name) — the two lists are otherwise joined by callers that want to
+/// prove a window belongs to a given process. Linux (`WM_CLASS`) and macOS
+/// (`kCGWindowOwnerName`) likewise report a bare name, not a path.
+///
+/// `PROCESS_QUERY_LIMITED_INFORMATION` is used rather than the full-Access
+/// right so it works across bitness and against most protected processes. It
+/// still fails on an elevated process when sys-mcp is unelevated; that is
+/// reported as `None` instead of failing the whole enumeration, since the pid
+/// is already authoritative for callers that can query it separately.
+fn get_process_name(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        // MAX_PATH is not a hard limit for `QueryFullProcessImageNameW` (it
+        // fails with ERROR_MORE_DATA and reports the required size), but one
+        // generous buffer keeps this to a single call for any real path.
+        let mut buffer = vec![0u16; 4096];
+        let mut size = buffer.len() as u32;
+        let queried = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0), // 0 == win32 path form
+            PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        );
+        let _ = CloseHandle(handle);
+        if queried.is_err() || size == 0 || size as usize > buffer.len() {
+            return None;
+        }
+        let full = OsString::from_wide(&buffer[..size as usize])
+            .to_string_lossy()
+            .into_owned();
+        Path::new(full.as_str())
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .filter(|stem| !stem.is_empty())
+    }
 }
 
 unsafe extern "system" fn enum_window_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {

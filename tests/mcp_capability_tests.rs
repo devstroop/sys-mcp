@@ -28,7 +28,7 @@ fn body(resp: &sys_mcp::protocol::mcp::McpResponse) -> serde_json::Value {
 
 #[tokio::test]
 async fn initialize_advertises_resources_and_prompts() {
-    let mut h = handler();
+    let h = handler();
     let resp = h.handle_request(&req("initialize", json!({}))).await;
     let caps = body(&resp)["result"]["capabilities"].clone();
 
@@ -45,7 +45,7 @@ async fn initialize_advertises_resources_and_prompts() {
 
 #[tokio::test]
 async fn resources_list_matches_the_catalogue() {
-    let mut h = handler();
+    let h = handler();
     let resp = h.handle_request(&req("resources/list", json!({}))).await;
     let resources = body(&resp)["result"]["resources"]
         .as_array()
@@ -66,7 +66,7 @@ async fn resources_list_matches_the_catalogue() {
 
 #[tokio::test]
 async fn resources_read_returns_an_mcp_contents_envelope() {
-    let mut h = handler();
+    let h = handler();
     let resp = h
         .handle_request(&req(
             "resources/read",
@@ -87,7 +87,7 @@ async fn resources_read_returns_an_mcp_contents_envelope() {
 
 #[tokio::test]
 async fn resources_read_unknown_uri_is_a_protocol_error() {
-    let mut h = handler();
+    let h = handler();
     let resp = h
         .handle_request(&req("resources/read", json!({ "uri": "sys-mcp://nope" })))
         .await;
@@ -105,14 +105,14 @@ async fn resources_read_unknown_uri_is_a_protocol_error() {
 
 #[tokio::test]
 async fn resources_read_requires_a_uri() {
-    let mut h = handler();
+    let h = handler();
     let resp = h.handle_request(&req("resources/read", json!({}))).await;
     assert!(body(&resp).get("error").is_some());
 }
 
 #[tokio::test]
 async fn prompts_list_matches_the_catalogue() {
-    let mut h = handler();
+    let h = handler();
     let resp = h.handle_request(&req("prompts/list", json!({}))).await;
     let prompts = body(&resp)["result"]["prompts"]
         .as_array()
@@ -150,7 +150,7 @@ async fn prompts_list_matches_the_catalogue() {
 
 #[tokio::test]
 async fn prompts_get_returns_a_message() {
-    let mut h = handler();
+    let h = handler();
     let resp = h
         .handle_request(&req(
             "prompts/get",
@@ -169,7 +169,7 @@ async fn prompts_get_returns_a_message() {
 
 #[tokio::test]
 async fn prompts_get_requires_declared_arguments() {
-    let mut h = handler();
+    let h = handler();
 
     // Missing required argument is an error, not a silently-empty template.
     let resp = h
@@ -206,7 +206,7 @@ async fn prompts_get_requires_declared_arguments() {
 
 #[tokio::test]
 async fn prompts_get_unknown_name_lists_the_valid_set() {
-    let mut h = handler();
+    let h = handler();
     let resp = h
         .handle_request(&req("prompts/get", json!({ "name": "nope" })))
         .await;

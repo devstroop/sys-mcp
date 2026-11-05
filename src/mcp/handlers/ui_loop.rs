@@ -67,9 +67,7 @@ pub(crate) async fn handle_ui_decide(
 
     let outcome = ui_loop::run_goal(client, &config, goal, &values, max_steps, confirm).await?;
     let payload = serde_json::to_value(&outcome)
-        .unwrap_or_else(|_| serde_json::json!({ "status": "error", "goal": goal }));
+        .map_err(|e| format!("failed to serialize the ui_decide outcome: {e}"))?;
 
-    Ok(ToolResult::text(
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string()),
-    ))
+    Ok(ToolResult::text(super::json_pretty(&payload)?))
 }
