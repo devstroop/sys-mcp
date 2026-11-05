@@ -76,16 +76,15 @@ jobs:
             no_run: ''
           - name: detection
             flags: '--features detection'
-            # Compile and link the test binaries, but do not execute them.
-            # `every_declared_tool_is_dispatchable` dispatches `detect_objects`
-            # with `{}`; that handler calls the module-level detector rather
-            # than a backend trait, so it provisions the real model first —
-            # measured 2.85 s to load the 12.85 MB YOLOv8n ONNX into tract, and
-            # `ensure_model()` downloads it from GitHub when the cache is cold.
-            # It then analyzes the stub's *empty* image buffer, so the work buys
-            # no assertion at all (issue #47). What #44 is about is the
-            # uncompiled `cfg` arms, which `--no-run` covers.
-            no_run: '--no-run'
+            # Runs the tests, not just compiles them. The `every_declared_tool_
+            # is_dispatchable` drift guard dispatches `detect_objects` with `{}`;
+            # before the inference seam (issue #47) that handler called the
+            # module-level detector, downloaded the 12.85 MB YOLOv8n ONNX and
+            # loaded it into tract (measured 2.85 s) just to analyze the stub's
+            # empty image — so the leg had to run `--no-run`. It now reaches
+            # `StubDetection` through `GuiClient::detection()` and needs no model,
+            # so the whole `detection` suite executes hermetically.
+            no_run: ''
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,3 +124,47 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses bans sources
+
+  # Real-OS probes (issue #47). The default `test`/`features` jobs are fully
+  # hermetic after the SystemCapability and inference seams — nothing there
+  # shells out, reads the event log, builds a live desktop backend or loads an
+  # ONNX model. The handful of tests that genuinely need the machine are
+  # `#[ignore]`d with a `real_os` marker and run here instead.
+  #
+  # Manual gate only (`workflow_dispatch`): these read host state a runner does
+  # not always expose (an interactive Windows session, journald, the unified
+  # log), so scheduling them on every push would make the signal flaky rather
+  # than informative. A maintainer triggers a run when the platform probes
+  # change; the tests self-skip where the environment cannot provide a desktop,
+  # so a green run on a headless runner still means "the probe did not crash".
+  real-os:
+    name: Real-OS probes (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libx11-dev libxtst-dev libxcb-shm0-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: real-os-${{ matrix.os }}
+
+      # `-- --ignored` selects exactly the `#[ignore]`d real-OS probes; the
+      # hermetic suite already ran in the `test` job. `-Z`-free and platform
+      # neutral so it behaves the same on every leg of the matrix.
+      - name: Run ignored real-OS probes
+        run: cargo test --all-targets -- --ignored --nocapture

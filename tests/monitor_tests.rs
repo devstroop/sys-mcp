@@ -27,8 +27,13 @@ async fn stub_backend_reports_a_primary_monitor() {
 /// that case the test passes rather than failing on infrastructure it does not
 /// control. This is the first `#[cfg(...)]`-gated test in the suite, moving
 /// issue #25 forward.
+///
+/// It also builds a real `LocalBackend`, so it is `#[ignore]`d (issue #47): the
+/// default suite must never touch the live desktop. The gated `real-os` CI job
+/// runs it with `-- --ignored` on a machine that can construct the backend.
 #[cfg(windows)]
 #[tokio::test]
+#[ignore = "real-OS probe (issue #47): builds a live LocalBackend and enumerates displays. Run: cargo test --all-targets -- --ignored real_os"]
 async fn windows_enumeration_reports_valid_monitors() {
     let backend = match sys_mcp::gui::backend::local::LocalBackend::new(false) {
         Ok(b) => b,

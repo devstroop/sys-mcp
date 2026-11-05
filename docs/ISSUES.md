@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (287 tests today) |
+| 6 | Test coverage is critically low | ✅ Fixed (288 passing / 4 ignored today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (287 tests today; 13 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (288 passing / 4 ignored today; 13 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -66,7 +66,7 @@ it was read from.
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely: first run found 2 real defects; release side still unexercised) |
 | 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
 | 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
-| 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | 🟡 Open |
+| 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | ✅ Fixed (SystemCapability + Ocr/Detection seams; the default suite no longer shells out or loads a model) |
 | 48 | Reading the JEV config before `init` permanently disabled the guardrails (denylist silently off) | ✅ Fixed |
 
 ---
@@ -670,9 +670,16 @@ Three things fall out of that table:
 - **`detect_objects` provisions the real detector before it can fail.** `detection::detect_objects` runs `ensure_model()` first, so 2.85 s goes into loading the 12.85 MB YOLOv8n ONNX into tract — and `cargo test --all-targets --features detection` was observed *creating* `%LOCALAPPDATA%\sys-mcp\models\yolov8n.onnx` (12,851,049 bytes, written 02:23:36 → 02:23:56), i.e. the test fetched it from `ultralytics/assets`, the URL that already 404-ed once (#27). `models_dir()` falls back to `PathBuf::from(".")` when `dirs_next::cache_dir()` is `None`, so without a cache dir the model lands in the working directory — the checkout, in CI.
 - **No test in the suite has ever run OCR.** `StubBackend::screenshot()` returns `data: vec![]` (with width/height 1920×1080), so `ocr::read_screen` fails at image decode in 0.02 s, before `get_engine()` loads a model. Nothing else in `tests/` or in the `#[cfg(test)]` modules calls `read_screen` or `ocr::` at all (grepped), so the OCR inference path is untested in CI — every `screen_read` behind #31's timings was a manual call — and the two OCR models have never been downloaded by a test. Detection is the mirror case: it pays the expensive step (model provisioning) before the cheap one (image decode), so it spends 2.85 s and still asserts nothing beyond `!text.contains("unknown tool")`.
 
-**Consequences:** the `detection` CI leg would download a 12.85 MB third-party asset per run to prove nothing, which is why #44 runs that leg with `--no-run`; the ~11.6 s OS-probing floor measured in the slim build above is paid by every leg, on every OS, and cannot be cached; and "it passed with `StubBackend`" is not evidence that a handler avoided real side effects, which is the assumption behind #42's validation-order test (provable there only by timing: 0.00 s).
+**Consequences (pre-fix):** the `detection` CI leg downloaded a 12.85 MB third-party asset per run to prove nothing, which is why #44 had to run that leg with `--no-run`; the ~11.6 s OS-probing floor measured in the slim build above was paid by every leg, on every OS, and could not be cached; and "it passed with `StubBackend`" was not evidence that a handler avoided real side effects — the assumption behind #42's validation-order test (provable there only by timing: 0.00 s). The seams below remove all three.
 
-**Status:** 🟡 Open — the fix has a shape this codebase already uses twice (`DisplayCapability`, `AccessibilityCapability`): put inference and the system probes behind a backend trait so the stub answers without touching the machine. Note that handing `StubBackend` a decodable PNG is *not* a fix on its own — it would move the OCR model download into the default job instead of merely removing the detection one. Both moves need the trait, not the buffer.
+**Status:** ✅ Fixed (2026-11-05) — the two seams this issue called for are in, and the default suite no longer touches the machine.
+- **Stage 1 — `SystemCapability` (`src/system.rs`)**: a 13-method async trait answered by `LocalSystem` (production, off the runtime via `spawn_blocking`) and `StubSystem` (fixed fixtures + a call recorder) in tests. The `process_*`/`service_*`/`network_*`/`system_stats`/`disk_usage`/`system_logs` handlers now reach the machine only through `GuiClient::system()`. `handler_tests` dropped from ~11.6 s of OS probing to **0.05 s**, and four `system_logs` tests that used to be `#[cfg(windows)]` + best-effort are now deterministic on every platform.
+- **Stage 2 — `OcrCapability` / `DetectionCapability` (`src/gui/ocr.rs`, `src/gui/detection.rs`)**: mirrors the existing `VisionCapability` seam. Handlers reach inference through `GuiClient::ocr()`/`detection()`; `LocalOcr`/`LocalDetection` run the real engines, `StubOcr`/`StubDetection` hand back a fixed result with **no ONNX download and no model load**. This is what lets the `detection` CI leg drop its `--no-run` and actually execute: `cargo test --all-targets --features detection` runs 123 handler tests green in 0.05 s with no `.onnx` touched.
+- **Real-OS policy** (the user's chosen "ignore + gated job"): the one remaining live-desktop probe, `monitor_tests::windows_enumeration_reports_valid_monitors`, is `#[ignore]`d with a `real_os` marker, joining the ignored platform-log probe. A manual `workflow_dispatch`-only `real-os` job in `ci.yml` runs `cargo test --all-targets -- --ignored --nocapture` on all three OSes, so the probes are exercised without making the PR gate depend on runner-installed binaries.
+
+Measured after both stages: default `cargo test --all-targets` on Windows = **288 passed / 0 failed / 4 ignored** (292 total); `--no-default-features` and `--features detection` legs both run green. The table above (the 11.6 s floor, the 2.85 s model load, the untested OCR path) is what these seams removed.
+
+**Original shape of the fix** (kept for context): this codebase already used the pattern twice (`DisplayCapability`, `AccessibilityCapability`); handing `StubBackend` a decodable PNG was never the fix — it would only have moved the OCR download into the default job. Both moves needed the trait, not the buffer.
 - Confirmed by the platform, not just by timing (2026-11-05, while root-causing #48): a `rust:1-slim-bookworm`
   container ran this suite **green**, and the same binaries failed on ubuntu-latest, because slim has no
   `journalctl`/`systemctl`/`netstat`. Installing `systemd` + `net-tools` reproduced CI exactly. So the suite's
@@ -718,7 +725,13 @@ Current state of the planned feature phases:
   The "248 tests" figure written in that audit was already stale. Re-measured on the same day, after #43's
   first batch: `cargo test` → **286 passed, 0 failed, 3 ignored** across 14 suites (identical with and
   without `--all-targets`; this crate has no doc tests). Rows 6 and 24 above now carry that number instead
-  of the two figures that disagreed with each other (they now read 287, the count after #48's added test).
+  of the two figures that disagreed with each other.
+- Fix 2026-11-05 (#47): the suite is now hermetic. System handlers go through a `SystemCapability`
+  trait (`StubSystem`) and inference through `OcrCapability`/`DetectionCapability` (`StubOcr`/`StubDetection`),
+  so nothing in `cargo test --all-targets` shells out, reads the event log, builds a live backend or loads an
+  ONNX model. Two OCR handler tests run under the default feature set and the `detection` leg now executes
+  instead of compile-only; the one live-desktop probe is `#[ignore]`d into a manual `real-os` CI job. Re-measured:
+  **288 passing / 0 failed / 4 ignored** (292 total) on Windows.
 - Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
   three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned
   that first read into `guardrails: false` for the whole process. `init` is now authoritative in either order,
@@ -729,4 +742,4 @@ Current state of the planned feature phases:
 ### Phase 12 — CI/CD 🔓 Partially done
 - Three-OS test matrix in `ci.yml`; release workflow builds cross-platform binaries on tag push (`release.yml`).
 - Audit 2026-11-05: the matrix works but is not wired to the branch flow — feature-branch pushes trigger nothing, no feature combination is ever built, and `release.yml` has never run because no tag exists. Tracked as issue #44.
-- Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) compile in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Executed remotely for the first time on 2026-11-05 (run 41943845280): both feature legs green on Linux, and the matrix caught two defects local Windows verification could not see — a macOS `E0716` (fixed in `147ad79`) and the guard-config ordering bug (fixed as #48). Still never published a release, and signing is still missing (needs a key decision).
+- Fix 2026-11-05 (#44): every branch now triggers on push, `workflow_dispatch` exists on both workflows, clippy runs `--all-targets`, two feature legs (`--no-default-features`, `--features detection`) run in a new `features` job, a report-only cargo-deny job with a `deny.toml` seed runs, and `release.yml` smoke-tests each binary, flattens assets with a collision check and publishes `SHA256SUMS`. Executed remotely for the first time on 2026-11-05 (run 41943845280): both feature legs green on Linux, and the matrix caught two defects local Windows verification could not see — a macOS `E0716` (fixed in `147ad79`) and the guard-config ordering bug (fixed as #48). After #47 the `detection` leg dropped its `--no-run` and a manual `real-os` job was added for the ignored machine probes. Still never published a release, and signing is still missing (needs a key decision).
