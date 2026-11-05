@@ -2169,7 +2169,7 @@ async fn test_accessibility_action_reaches_the_backend_with_the_requested_verb()
     // can echo an argument it never used. The recorder is the other side.
     assert_eq!(
         recorder.invocations(),
-        vec![("stub:6".to_string(), "Invoke".to_string())]
+        vec![("stub:6".to_string(), "Invoke".to_string(), None)]
     );
 
     let _ = handle_tool_call(
@@ -2181,8 +2181,8 @@ async fn test_accessibility_action_reaches_the_backend_with_the_requested_verb()
     assert_eq!(
         recorder.invocations(),
         vec![
-            ("stub:6".to_string(), "Invoke".to_string()),
-            ("stub:3".to_string(), "toggle".to_string()),
+            ("stub:6".to_string(), "Invoke".to_string(), None),
+            ("stub:3".to_string(), "toggle".to_string(), None),
         ],
         "the verb is passed through unchanged; alias normalization is platform code"
     );
@@ -2238,6 +2238,207 @@ async fn test_accessibility_action_records_nothing_when_the_call_is_refused() {
     assert!(
         recorder.invocations().is_empty(),
         "a refused action must not have reached the backend: {:?}",
+        recorder.invocations()
+    );
+}
+
+// ── set_value: the write path issue #46 added to the capability trait ──────
+
+#[tokio::test]
+async fn test_accessibility_set_value_threads_the_value_to_the_backend() {
+    // #46's gap was that the trait could name an action but not carry its
+    // operand, so UIA's SetValue was unreachable. A response that echoes the
+    // verb proves nothing about the operand — the recorder is the assertion.
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": "99999999" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+    assert_eq!(
+        result.content[0].text.as_deref().unwrap_or(""),
+        "Invoked 'set_value' on element stub:4 with the given value."
+    );
+    assert_eq!(
+        recorder.invocations(),
+        vec![(
+            "stub:4".to_string(),
+            "set_value".to_string(),
+            Some("99999999".to_string())
+        )],
+        "the value has to arrive at the backend, not only in the response text"
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_set_value_accepts_a_number_and_an_empty_string() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    // {"value": 42} is how a caller naturally addresses a spinner, so the
+    // number survives as text instead of being rejected for its JSON type.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": 42 }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+
+    // And the empty string is a value, not an absent argument: clearing a field
+    // is a legitimate edit.
+    let result = handle_tool_call(
+        &client,
+        "accessibility_action",
+        json!({ "element_id": "stub:4", "action": "set_value", "value": "" }),
+    )
+    .await;
+    assert_eq!(result.is_error, None, "got: {:?}", result.content);
+
+    assert_eq!(
+        recorder.invocations(),
+        vec![
+            (
+                "stub:4".to_string(),
+                "set_value".to_string(),
+                Some("42".to_string())
+            ),
+            (
+                "stub:4".to_string(),
+                "set_value".to_string(),
+                Some(String::new())
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_set_value_without_a_value_is_refused_before_the_backend() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    for args in [
+        json!({ "element_id": "stub:4", "action": "set_value" }),
+        // An explicit null means absent, the same as omitting the key.
+        json!({ "element_id": "stub:4", "action": "set_value", "value": null }),
+    ] {
+        let result = handle_tool_call(&client, "accessibility_action", args).await;
+        assert_eq!(result.is_error, Some(true), "got: {:?}", result.content);
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(text.contains("needs a value"), "got: {text}");
+    }
+    assert!(
+        recorder.invocations().is_empty(),
+        "a refused write must not have reached the backend: {:?}",
+        recorder.invocations()
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_action_refuses_a_value_for_a_verb_that_cannot_use_it() {
+    // #40's rule applied to the new argument: an argument the backend has no use
+    // for is refused rather than quietly dropped, so the caller learns its
+    // request was not carried out the way it meant it.
+    for action in ["invoke", "press", "toggle", "focus", "increment"] {
+        let (client, recorder) = a11y_client();
+        let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:6", "action": action, "value": "x" }),
+        )
+        .await;
+        assert_eq!(
+            result.is_error,
+            Some(true),
+            "'{action}' must not accept a value"
+        );
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(text.contains("does not take a value"), "{action}: {text}");
+        assert!(
+            recorder.invocations().is_empty(),
+            "'{action}' with a value reached the backend anyway"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_accessibility_action_refuses_a_value_that_is_not_text_or_a_number() {
+    let (client, recorder) = a11y_client();
+    let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+    for value in [json!({ "a": 1 }), json!(true), json!(["a"])] {
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:4", "action": "set_value", "value": value }),
+        )
+        .await;
+        assert_eq!(result.is_error, Some(true), "got: {:?}", result.content);
+        let text = result.content[0].text.as_deref().unwrap_or("");
+        assert!(
+            text.contains("value must be a string or a number"),
+            "{text}"
+        );
+    }
+    assert!(
+        recorder.invocations().is_empty(),
+        "{:?}",
+        recorder.invocations()
+    );
+}
+
+#[tokio::test]
+async fn test_accessibility_value_verb_aliases_pass_the_same_arity_check() {
+    // The tool layer normalizes the way the platform dispatchers do, so these
+    // spellings are read as the verb that takes the value instead of as a
+    // mismatched pair. The alias itself is passed through unchanged — turning
+    // 'Set-Value' into 'set_value' is platform code, as #43 recorded.
+    for action in ["Set-Value", "set_text", "SET_VALUE", "setvalue"] {
+        let (client, recorder) = a11y_client();
+        let _ = handle_tool_call(&client, "accessibility_tree", json!({})).await;
+
+        let result = handle_tool_call(
+            &client,
+            "accessibility_action",
+            json!({ "element_id": "stub:4", "action": action, "value": "12060623" }),
+        )
+        .await;
+        assert_eq!(result.is_error, None, "{action}: {:?}", result.content);
+        assert_eq!(
+            recorder.invocations(),
+            vec![(
+                "stub:4".to_string(),
+                action.to_string(),
+                Some("12060623".to_string())
+            )],
+            "{action} did not reach the backend with its value"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_set_value_without_a_value_is_refused_by_the_backend_too() {
+    // The trait's value contract is not only the tool layer's business: a direct
+    // API caller gets the same refusal from a backend, so no implementation can
+    // turn "no value" into a silent no-op.
+    let (client, recorder) = a11y_client();
+    let _ = client.get_accessibility_tree(None, None).await.unwrap();
+
+    let error = client
+        .invoke_element_action("stub:4", "set_value", None)
+        .await
+        .expect_err("a write with nothing to write must fail");
+    let text = error.to_string();
+    assert!(text.contains("needs a value argument"), "got: {text}");
+    assert!(
+        recorder.invocations().is_empty(),
+        "the refusal still reached the recorder: {:?}",
         recorder.invocations()
     );
 }

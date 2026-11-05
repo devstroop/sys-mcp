@@ -281,12 +281,13 @@ pub fn all_tools() -> Vec<Value> {
         }),
         json!({
             "name": "accessibility_action",
-            "description": "Invoke a named action on an accessibility element by id (e.g. 'invoke'/'press'/'click' on a button, 'focus', 'increment'/'decrement' on a spinner, or a raw platform action name reported in the element's actions list). The id must come from the most recent accessibility_tree or accessibility_find call. Prefer this over coordinate clicks when the element exposes the action directly.",
+            "description": "Invoke a named action on an accessibility element by id (e.g. 'invoke'/'press'/'click' on a button, 'focus', 'increment'/'decrement' on a spinner, 'set_value' to write text or a number into a field, or a raw platform action name reported in the element's actions list). The id must come from the most recent accessibility_tree or accessibility_find call. 'set_value' requires the 'value' argument and no other action accepts it. Prefer this over coordinate clicks for actions and over keystroke typing for fields, because the element keeps its identity.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "element_id": { "type": "string", "description": "Element id from a prior accessibility_tree / accessibility_find result." },
-                    "action": { "type": "string", "description": "Action to invoke. Common verbs: invoke, press, click, focus, increment, decrement, close, minimize, maximize, restore. Or pass a raw action name from the element's actions list (e.g. 'AXPress')." }
+                    "action": { "type": "string", "description": "Action to invoke. Common verbs: invoke, press, click, focus, increment, decrement, set_value, close, minimize, maximize, restore. Or pass a raw action name from the element's actions list (e.g. 'AXPress')." },
+                    "value": { "type": ["string", "number"], "description": "Operand for 'set_value' only: the text or number to write into the element. An empty string clears the field. Must be omitted for every other action." }
                 },
                 "required": ["element_id", "action"]
             }

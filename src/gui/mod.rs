@@ -252,13 +252,17 @@ impl GuiClient {
             .await
     }
 
+    /// Invoke `action` on an element. `value` is the operand for the actions
+    /// that write something (currently `set_value`); see
+    /// [`AccessibilityCapability::invoke_element_action`] for the contract.
     pub async fn invoke_element_action(
         &self,
         element_id: &str,
         action: &str,
+        value: Option<&str>,
     ) -> Result<(), GuiError> {
         self.accessibility()?
-            .invoke_element_action(element_id, action)
+            .invoke_element_action(element_id, action, value)
             .await
     }
 

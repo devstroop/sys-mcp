@@ -17,6 +17,6 @@ pub use gui::backend::stub::StubDetection;
 #[cfg(feature = "ocr")]
 pub use gui::backend::stub::StubOcr;
 pub use gui::backend::stub::{
-    StubA11yBackend, StubA11yRecorder, StubBackend, StubSystem, StubSystemRecorder,
+    StubA11yBackend, StubA11yCall, StubA11yRecorder, StubBackend, StubSystem, StubSystemRecorder,
 };
 pub use mcp::hub::McpHub;

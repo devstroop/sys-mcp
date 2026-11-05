@@ -319,6 +319,39 @@ impl PlatformAccessibility {
             .collect()
     }
 
+    /// Whether the element answers to an extra AT-SPI interface. Reported by the
+    /// Accessible interface itself, so this is one call rather than a probe per
+    /// candidate interface.
+    fn has_interface(&self, path: &OwnedObjectPath, interface: &str) -> bool {
+        self.call_accessible::<Vec<String>>(path, "GetInterfaces")
+            .map(|names| names.iter().any(|name| name == interface))
+            .unwrap_or(false)
+    }
+
+    /// Write the element's whole text through the EditableText interface. The
+    /// Action interface only carries verbs — there is no AT-SPI action that can
+    /// hold an operand — so a value has to go to a different D-Bus method
+    /// (`docs/ISSUES.md` #46). `SetTextContents` replaces the string, which is
+    /// what "set this field to X" means; an element that is not editable has no
+    /// EditableText interface and the D-Bus error says so.
+    fn set_text_contents(&self, path: &OwnedObjectPath, text: &str) -> Result<(), GuiError> {
+        use zbus::blocking::Proxy;
+        let proxy = Proxy::new(
+            &self.conn,
+            "org.a11y.atspi",
+            path.as_str(),
+            "org.a11y.atspi.EditableText",
+        )
+        .map_err(|e| GuiError::PlatformError(format!("editable-text proxy: {e}")))?;
+        proxy
+            .call_method("SetTextContents", &(text,))
+            .map_err(|e| GuiError::PlatformError(format!(
+                "SetTextContents failed on '{}': {e} — this element does not implement the AT-SPI EditableText interface, so its value is read-only",
+                path.as_str()
+            )))?;
+        Ok(())
+    }
+
     /// Element ids on Linux are AT-SPI D-Bus object paths (see `build_tree`),
     /// so they resolve directly — no cache or re-walk needed.
     fn parse_path(element_id: &str) -> Result<OwnedObjectPath, GuiError> {
@@ -431,11 +464,31 @@ impl PlatformAccessibility {
         // interface for every node would add a D-Bus round-trip per element to
         // every tree walk. Fill it in for the single element asked about here.
         node.actions = self.action_names(&path);
+        // EditableText is not an action, so it never appears in the list above;
+        // it is the element's own declaration that a value can be written here.
+        if self.has_interface(&path, "org.a11y.atspi.EditableText") {
+            node.actions.push("set_value".to_string());
+        }
         Ok(node)
     }
 
-    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    pub fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         let path = Self::parse_path(element_id)?;
+        let normalized = action.trim().to_ascii_lowercase().replace('-', "_");
+        if matches!(normalized.as_str(), "set_value" | "setvalue" | "set_text") {
+            let Some(wanted) = value else {
+                return Err(GuiError::PlatformError(format!(
+                    "the '{action}' action on element '{element_id}' writes a value and needs a value argument; none was given"
+                )));
+            };
+            // Empty string is a legitimate write: it clears the field.
+            return self.set_text_contents(&path, wanted);
+        }
         let names = self.action_names(&path);
         let index = names
             .iter()

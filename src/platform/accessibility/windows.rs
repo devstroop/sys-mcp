@@ -1,4 +1,4 @@
-use windows::core::Interface;
+use windows::core::{Interface, BSTR};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -293,6 +293,9 @@ impl PlatformAccessibility {
             actions.push("increment".to_string());
             actions.push("decrement".to_string());
         }
+        if Self::has_writable_value(element) {
+            actions.push("set_value".to_string());
+        }
         if Self::pattern::<IUIAutomationScrollItemPattern>(element, UIA_ScrollItemPatternId)
             .is_some()
         {
@@ -316,6 +319,47 @@ impl PlatformAccessibility {
         }
 
         actions
+    }
+
+    /// Whether a `set_value` write can actually land on this element. UIA
+    /// reports read-only separately from the pattern's presence, so a read-only
+    /// ValuePattern must not be advertised: this list is the set of verbs that
+    /// cannot fail.
+    fn has_writable_value(element: &IUIAutomationElement) -> bool {
+        unsafe {
+            if let Some(value) =
+                Self::pattern::<IUIAutomationValuePattern>(element, UIA_ValuePatternId)
+            {
+                if !value
+                    .CurrentIsReadOnly()
+                    .map(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+            if let Some(range) =
+                Self::pattern::<IUIAutomationRangeValuePattern>(element, UIA_RangeValuePatternId)
+            {
+                if !range
+                    .CurrentIsReadOnly()
+                    .map(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Error for a write UIA will not accept. Read-only is the element's own
+    /// declaration, so the caller is told what to do next instead of facing an
+    /// opaque COM failure.
+    fn read_only_refusal(element_id: &str) -> GuiError {
+        GuiError::PlatformError(format!(
+            "element '{element_id}' is read-only, so its value cannot be written; focus it and type into it instead"
+        ))
     }
 
     /// Error for a verb the element does not expose. Echoes the element's live
@@ -622,11 +666,24 @@ impl PlatformAccessibility {
     /// only Invoke or the legacy default action, and a caller describing its
     /// intent should not have to know which of the three a given toolkit
     /// implemented.
-    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    ///
+    /// `value` is the operand for the one verb that writes — `set_value` (its
+    /// text or number cannot be carried by an action name). Passing it to any
+    /// other verb is refused by the tool layer before it gets here; an absent
+    /// value for `set_value` is refused here, because the backend is also a
+    /// public API surface. `Some("")` means "write nothing", which clears the
+    /// field.
+    pub fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         let element = self.lookup(element_id)?;
         let normalized = action.trim().to_ascii_lowercase().replace('-', "_");
         let verb = match normalized.as_str() {
             "press" | "click" | "tap" | "do_default_action" => "activate",
+            "setvalue" | "set_text" => "set_value",
             other => other,
         };
 
@@ -736,6 +793,87 @@ impl PlatformAccessibility {
                     range
                         .SetValue(target)
                         .map_err(|e| GuiError::PlatformError(format!("SetValue(range): {e}")))?;
+                }
+                "set_value" => {
+                    // The write half of the value patterns #38 only read. A
+                    // field's content is delivered here rather than typed, so
+                    // the element keeps its identity and the session does not
+                    // depend on keyboard focus (`docs/ISSUES.md` #46).
+                    let Some(wanted) = value else {
+                        return Err(GuiError::PlatformError(format!(
+                            "the '{action}' action on element '{element_id}' writes a value and needs a value argument; none was given"
+                        )));
+                    };
+                    if let Some(pattern) =
+                        Self::pattern::<IUIAutomationValuePattern>(&element, UIA_ValuePatternId)
+                    {
+                        if pattern
+                            .CurrentIsReadOnly()
+                            .map(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            return Err(Self::read_only_refusal(element_id));
+                        }
+                        // SetValue takes the BSTR by reference, so it outlives
+                        // the call as a local rather than a temporary.
+                        let bstr = BSTR::from(wanted);
+                        pattern
+                            .SetValue(&bstr)
+                            .map_err(|e| GuiError::PlatformError(format!("SetValue: {e}")))?;
+                    } else if let Some(pattern) = Self::pattern::<IUIAutomationRangeValuePattern>(
+                        &element,
+                        UIA_RangeValuePatternId,
+                    ) {
+                        if pattern
+                            .CurrentIsReadOnly()
+                            .map(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            return Err(Self::read_only_refusal(element_id));
+                        }
+                        let target: f64 = wanted.trim().parse().map_err(|_| {
+                            GuiError::PlatformError(format!(
+                                "element '{element_id}' takes a numeric value, but '{wanted}' is not a number"
+                            ))
+                        })?;
+                        if !target.is_finite() {
+                            // "nan"/"inf" parse as f64 and would be written
+                            // straight through to the control.
+                            return Err(GuiError::PlatformError(format!(
+                                "element '{element_id}' takes a finite numeric value, but '{wanted}' is not one"
+                            )));
+                        }
+                        // Refused rather than clamped: silently answering a
+                        // different request than the caller made is the
+                        // false-success family in `docs/ISSUES.md` #40.
+                        if let (Ok(min), Ok(max)) =
+                            (pattern.CurrentMinimum(), pattern.CurrentMaximum())
+                        {
+                            if min <= max && (target < min || target > max) {
+                                return Err(GuiError::PlatformError(format!(
+                                    "{target} is outside element '{element_id}'s range {min} to {max}"
+                                )));
+                            }
+                        }
+                        pattern.SetValue(target).map_err(|e| {
+                            GuiError::PlatformError(format!("SetValue(range): {e}"))
+                        })?;
+                    } else if let Some(pattern) = Self::pattern::<
+                        IUIAutomationLegacyIAccessiblePattern,
+                    >(
+                        &element, UIA_LegacyIAccessiblePatternId
+                    ) {
+                        // MSAA `accValue` is settable on editable text, and
+                        // Win32/VCL controls that stop at the legacy bridge are
+                        // exactly what this backend gets pointed at — the same
+                        // reason the read path falls back here.
+                        let bstr = BSTR::from(wanted);
+                        pattern.SetValue(&bstr).map_err(|e| {
+                            GuiError::PlatformError(format!("LegacyIAccessible SetValue: {e}"))
+                        })?;
+                    } else {
+                        return Err(Self::unsupported_action(element_id, action, &element));
+                    }
                 }
                 "scroll_into_view" => {
                     let scroll = Self::pattern::<IUIAutomationScrollItemPattern>(

@@ -36,6 +36,11 @@ extern "C" {
     ) -> i32;
     fn AXUIElementCopyActionNames(element: *const c_void, names: *mut *mut c_void) -> i32;
     fn AXUIElementPerformAction(element: *const c_void, action: *const c_void) -> i32;
+    fn AXUIElementSetAttributeValue(
+        element: *const c_void,
+        attribute: *const c_void,
+        value: *const c_void,
+    ) -> i32;
     fn CFArrayGetCount(array: *const c_void) -> CFIndex;
     fn CFArrayGetValueAtIndex(array: *const c_void, index: CFIndex) -> *mut c_void;
     fn CFRetain(obj: *const c_void) -> *mut c_void;
@@ -448,8 +453,45 @@ impl PlatformAccessibility {
         self.build_ax_node(element as *const c_void, 0)
     }
 
-    pub fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    pub fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         let element = self.lookup(element_id)?;
+        // Accessibility on macOS splits actions and attributes in two: a verb
+        // goes through PerformAction, but putting text into a field is a
+        // *attribute write*, not an action. `set_value` is the verb the tool
+        // layer advertises for that write (`docs/ISSUES.md` #46).
+        let normalized = action.trim().to_ascii_lowercase().replace('-', "_");
+        if matches!(normalized.as_str(), "set_value" | "setvalue" | "set_text") {
+            let Some(wanted) = value else {
+                return Err(GuiError::PlatformError(format!(
+                    "the '{action}' action on element '{element_id}' writes a value and needs a value argument; none was given"
+                )));
+            };
+            // Always written as a string, never as a number: an edit field that
+            // happens to hold digits is text, and guessing from the operand's
+            // shape would silently change the attribute's type. Numeric controls
+            // have AXIncrement / AXDecrement for that.
+            return unsafe {
+                let attr = CFString::new("AXValue");
+                let val = CFString::new(wanted);
+                let result = AXUIElementSetAttributeValue(
+                    element as *const c_void,
+                    attr.as_concrete_TypeRef() as *const c_void,
+                    val.as_concrete_TypeRef() as *const c_void,
+                );
+                if result == 0 {
+                    Ok(())
+                } else {
+                    Err(GuiError::PlatformError(format!(
+                        "AXUIElementSetAttributeValue('AXValue') failed with AXError {result} on element '{element_id}'; the value is probably read-only on this control"
+                    )))
+                }
+            };
+        }
         // Accept the raw AX action names reported in `actions` (e.g. "AXPress")
         // plus a few obvious aliases for callers that pass a generic verb.
         let ax_action = match action {

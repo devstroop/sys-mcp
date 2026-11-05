@@ -248,6 +248,12 @@ impl GuiBackend for StubBackend {
 // Accessibility stub — a fixed tree with the platform id-cache contract
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// One action the backend received, recorded verbatim: `(element_id, action,
+/// value)`. Named because the recorder's signature otherwise nests four levels
+/// deep, and because the value deserves a slot: a verb that writes one is
+/// otherwise indistinguishable from a verb that ignored it.
+pub type StubA11yCall = (String, String, Option<String>);
+
 /// Test handle for [`StubA11yBackend`]: what the backend was actually asked to
 /// do.
 ///
@@ -256,23 +262,28 @@ impl GuiBackend for StubBackend {
 /// The recorder is the other side of that call.
 #[derive(Clone, Default)]
 pub struct StubA11yRecorder {
-    invoked: Arc<Mutex<Vec<(String, String)>>>,
+    invoked: Arc<Mutex<Vec<StubA11yCall>>>,
 }
 
 impl StubA11yRecorder {
-    /// `(element_id, action)` pairs in the order the backend received them.
-    pub fn invocations(&self) -> Vec<(String, String)> {
+    /// `(element_id, action, value)` triples in the order the backend received
+    /// them.
+    pub fn invocations(&self) -> Vec<StubA11yCall> {
         self.invoked
             .lock()
             .expect("stub accessibility recorder lock poisoned")
             .clone()
     }
 
-    fn record(&self, element_id: &str, action: &str) {
+    fn record(&self, element_id: &str, action: &str, value: Option<&str>) {
         self.invoked
             .lock()
             .expect("stub accessibility recorder lock poisoned")
-            .push((element_id.to_string(), action.to_string()));
+            .push((
+                element_id.to_string(),
+                action.to_string(),
+                value.map(String::from),
+            ));
     }
 }
 
@@ -412,6 +423,7 @@ fn stub_tree() -> AccessibilityNode {
     let mut edit = node("edit", Some("Voucher No"), 120, 60, 120, 22);
     edit.value = Some("12060623".to_string());
     edit.description = Some("Voucher number for the current transaction".to_string());
+    edit.actions = vec!["set_value".to_string(), "focus".to_string()];
     edit.states = vec!["enabled".to_string(), "focusable".to_string()];
 
     let mut button = node("button", Some("OK (F2)"), 640, 560, 80, 24);
@@ -580,7 +592,12 @@ impl AccessibilityCapability for StubA11yBackend {
         self.resolve(element_id)
     }
 
-    async fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    async fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         let element = self.resolve(element_id)?;
         if action.trim().is_empty() {
             return Err(GuiError::PlatformError(format!(
@@ -592,7 +609,17 @@ impl AccessibilityCapability for StubA11yBackend {
                 }
             )));
         }
-        self.recorder.record(element_id, action);
+        // The same value contract the platform backends implement: the verb that
+        // writes needs something to write. The tool layer refuses the pairing
+        // first, so this arm is reached only through a direct API call — but the
+        // stub stands in for a platform, so it holds the trait's contract too.
+        let verb = action.trim().to_ascii_lowercase().replace('-', "_");
+        if (verb == "set_value" || verb == "setvalue" || verb == "set_text") && value.is_none() {
+            return Err(GuiError::PlatformError(format!(
+                "the '{action}' action on element '{element_id}' writes a value and needs a value argument; none was given"
+            )));
+        }
+        self.recorder.record(element_id, action, value);
         Ok(())
     }
 }

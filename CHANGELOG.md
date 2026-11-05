@@ -42,7 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     role, name, value, position, actions, and states
   - `accessibility_action` — invoke a named action on an element by id
     (generic verbs `invoke`/`press`/`click`/`focus`/`increment`/`decrement`/
-    `close`/`minimize`/`maximize`/`restore`, or a raw platform action name)
+    `close`/`minimize`/`maximize`/`restore`, or a raw platform action name).
+    `set_value` plus the optional `value` argument writes text or a number
+    straight into the control — UIA Value/RangeValue/Legacy `SetValue`, macOS
+    `AXValue`, AT-SPI `EditableText.SetTextContents` — instead of typing it,
+    so the field keeps its identity and the session does not depend on
+    keyboard focus
   - Element ids stay resolvable between calls: Windows/macOS retain the most
     recent tree walk's elements in a per-tree cache (COM refs / `CFRetain`ed
     `AXUIElementRef`s, cleared on each `get_tree` and on `Drop`); Linux ids are

@@ -320,3 +320,59 @@ fn accessibility_descriptions_name_the_id_contract_and_the_other_tools() {
         "the tree description must mention what it returns: {tree_desc}"
     );
 }
+
+/// #46 added `value`, the operand `set_value` writes. It has to be *declared* —
+/// an undeclared property is invisible to a client that builds its call from the
+/// schema — and it has to stay optional, because only one verb uses it. The
+/// pairing rule ("required when the action is set_value, refused otherwise")
+/// cannot be expressed in JSON Schema, so the description is what carries it.
+#[test]
+fn accessibility_action_declares_value_as_an_optional_operand() {
+    let schema = schema_of("accessibility_action");
+    let props = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("properties must be an object");
+    assert!(
+        props.contains_key("value"),
+        "'value' is accepted by the handler but not declared in the schema"
+    );
+
+    let required = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !required.iter().any(|r| r.as_str() == Some("value")),
+        "'value' must stay optional: only set_value needs it, and every other verb rejects it"
+    );
+
+    let value_desc = props["value"]
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        value_desc.contains("set_value"),
+        "the value property must name the verb it belongs to: {value_desc}"
+    );
+    // Clearing a field is a legal write, so the schema has to say the empty
+    // string means something rather than "no value given".
+    assert!(
+        value_desc.contains("empty string"),
+        "the value property must say an empty string clears the field: {value_desc}"
+    );
+
+    let tool = declared_tools()
+        .into_iter()
+        .find(|t| tool_name(t) == "accessibility_action")
+        .expect("declared");
+    let desc = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        desc.contains("set_value") && desc.contains("requires"),
+        "the tool description must state the pairing rule the handler enforces: {desc}"
+    );
+}

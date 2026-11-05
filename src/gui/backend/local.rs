@@ -544,9 +544,14 @@ impl AccessibilityCapability for LocalBackend {
             .get_element_properties(element_id)
     }
 
-    async fn invoke_element_action(&self, element_id: &str, action: &str) -> Result<(), GuiError> {
+    async fn invoke_element_action(
+        &self,
+        element_id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
         self.accessibility_manager
-            .invoke_element_action(element_id, action)
+            .invoke_element_action(element_id, action, value)
     }
 }
 

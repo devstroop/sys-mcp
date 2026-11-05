@@ -359,6 +359,7 @@ impl AccessibilityCapability for ScriptedBackend {
         &self,
         _element_id: &str,
         _action: &str,
+        _value: Option<&str>,
     ) -> Result<(), GuiError> {
         Ok(())
     }
@@ -581,8 +582,13 @@ impl AccessibilityCapability for ScriptedBackendProxy {
     async fn get_element_properties(&self, id: &str) -> Result<AccessibilityNode, GuiError> {
         self.0.get_element_properties(id).await
     }
-    async fn invoke_element_action(&self, id: &str, action: &str) -> Result<(), GuiError> {
-        self.0.invoke_element_action(id, action).await
+    async fn invoke_element_action(
+        &self,
+        id: &str,
+        action: &str,
+        value: Option<&str>,
+    ) -> Result<(), GuiError> {
+        self.0.invoke_element_action(id, action, value).await
     }
 }
 

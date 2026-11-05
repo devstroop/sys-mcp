@@ -25,7 +25,7 @@ it was read from.
 | 3 | Linux & macOS window management are stubs | ✅ Fixed |
 | 4 | Accessibility — all platforms are stubs | ✅ Fixed |
 | 5 | Object detection is a stub | ✅ Fixed |
-| 6 | Test coverage is critically low | ✅ Fixed (298 passing / 4 ignored today) |
+| 6 | Test coverage is critically low | ✅ Fixed (306 passing / 4 ignored today) |
 | 7 | `handlers.rs` is too large (1546 lines) | ✅ Fixed |
 | 8 | CLI argument parsing is fragile | ✅ Fixed (clap) |
 | 9 | MCP Hub JSON-RPC I/O framing | ✅ Fixed |
@@ -43,7 +43,7 @@ it was read from.
 | 21 | Stale `gui_*` tool-name references after tool rename | ✅ Fixed |
 | 22 | Blocking process calls inside async handlers | ✅ Fixed |
 | 23 | `shell_exec` fixed 500ms wait loses output | ✅ Fixed |
-| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (298 passing / 4 ignored today; 7 of 72 uncovered — #43) |
+| 24 | Tool coverage gap (22 of 64 tools tested) | ✅ Fixed (306 passing / 4 ignored today; 7 of 72 uncovered — #43) |
 | 25 | Tests lack platform cfg gating | ✅ Resolved (see note) |
 | 26 | `network_connections` ignores its `limit` parameter | ✅ Fixed |
 | 27 | `detect_objects` model URL 404 (dead asset link) | ✅ Fixed |
@@ -65,7 +65,7 @@ it was read from.
 | 43 | 20 of 72 declared tools have no test reference; the four accessibility tools are untestable at handler level | 🟡 Partially fixed (7 of 72 remain — the `mcp_*` hub tools need a fake child server) |
 | 44 | CI never runs for branch pushes and tests no feature combination; the release workflow has never run | 🟡 Partially fixed (gates wired + proven remotely: first run found 2 real defects; release side still unexercised) |
 | 45 | Documentation that contradicts the shipped behavior | ✅ Fixed |
-| 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | 🟡 Open |
+| 46 | No accessibility path writes a value into an element (`set_value` missing from the trait) | ✅ Fixed (`invoke_element_action` carries an optional value; `set_value` writes on all three platforms) |
 | 47 | The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model | ✅ Fixed (SystemCapability + Ocr/Detection seams; the default suite no longer shells out or loads a model) |
 | 48 | Reading the JEV config before `init` permanently disabled the guardrails (denylist silently off) | ✅ Fixed |
 
@@ -153,7 +153,9 @@ earlier sentence here claimed the full generic set everywhere):
 
 So only Windows answers a generic verb the caller did not read off the tree. macOS and Linux fail loudly
 rather than silently, which is the right shape, but a caller that treats the four tools as portable will
-still lose the non-Windows cases. No platform can write a *value* into an element (#46).
+still lose the non-Windows cases. Value *writing* (`set_value`) was added by #46 and is spelled the same
+way on all three platforms, but it goes through each platform's value API rather than its action list, so
+the alias table above still only applies to the non-writing verbs.
 Residual gap: the Linux implementation uses blocking `zbus` calls and ignores `window_id` (always walks from
 the AT-SPI root).
 
@@ -243,7 +245,9 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 
 **File:** `src/platform/accessibility/windows.rs`
 **Problem (verified 2026-11-05):** `build_node` sets `value: None, description: None` unconditionally; `get_element_states` reports only `disabled` and `focused`; and `get_element_actions` advertises only `invoke` plus the four window verbs. `invoke_element_action` matches `invoke | focus | close | minimize | maximize | restore` and every other string errors, so the generic verbs `press`, `click`, `increment`, `decrement` — which the macOS backend aliases (`macos.rs`, `invoke_element_action`) and which `docs/ISSUES.md` #4 claims are mapped "on all platforms" — are rejected on Windows. No `TogglePattern`, `ValuePattern`, `ExpandCollapsePattern`, `SelectionItemPattern` or `RangeValuePattern` is imported at all, so none of their read state or actions are reachable. Net effect on the platform that matters: an agent cannot read what is in a text field, tick a checkbox, open a combo box, select a list item, or tell whether a node is expanded/offscreen through UIA, and has to fall back to OCR for all of it.
-**Status:** ✅ Fixed — `build_node` now fills `value` (ValuePattern → RangeValuePattern → LegacyIAccessible, capped at 4096 chars because a document view reports its whole text as its value) and `description` (`CurrentHelpText` → LegacyIAccessible description; UIA has no `CurrentFullDescription` on the client element). States add `offscreen` / `password` / `required` / `readonly` / `checked` / `indeterminate` / `expanded` / `partially_expanded` / `collapsed` / `selected` / `focus`, each read from the live pattern rather than assumed. Actions are derived from the patterns the element actually implements — Invoke, Toggle, ExpandCollapse, SelectionItem, RangeValue, ScrollItem, Window — and `invoke_element_action` was rewritten to canonicalize verbs case-insensitively with `-` read as `_`, accept `press` / `click` / `tap` / `do_default_action` as "activate" (Invoke → Toggle → legacy default action, so a caller stating intent works against a checkbox and against a VCL button alike), and implement `toggle` / `expand` / `collapse` / `select` / `increment` / `decrement` (RangeValue stepped by `CurrentSmallChange` and clamped to `CurrentMinimum`…`CurrentMaximum` — UIA publishes no Increment method) / `scroll_into_view` / `focus`. Unsupported verbs fail with the element's live action list echoed in the error, so the caller can self-correct from the response alone. **Not** fixed: writing a value into a field, which the trait cannot express — see #46.
+**Status:** ✅ Fixed — `build_node` now fills `value` (ValuePattern → RangeValuePattern → LegacyIAccessible, capped at 4096 chars because a document view reports its whole text as its value) and `description` (`CurrentHelpText` → LegacyIAccessible description; UIA has no `CurrentFullDescription` on the client element). States add `offscreen` / `password` / `required` / `readonly` / `checked` / `indeterminate` / `expanded` / `partially_expanded` / `collapsed` / `selected` / `focus`, each read from the live pattern rather than assumed. Actions are derived from the patterns the element actually implements — Invoke, Toggle, ExpandCollapse, SelectionItem, RangeValue, ScrollItem, Window — and `invoke_element_action` was rewritten to canonicalize verbs case-insensitively with `-` read as `_`, accept `press` / `click` / `tap` / `do_default_action` as "activate" (Invoke → Toggle → legacy default action, so a caller stating intent works against a checkbox and against a VCL button alike), and implement `toggle` / `expand` / `collapse` / `select` / `increment` / `decrement` (RangeValue stepped by `CurrentSmallChange` and clamped to `CurrentMinimum`…`CurrentMaximum` — UIA publishes no Increment method) / `scroll_into_view` / `focus`. Unsupported verbs fail with the element's live action list echoed in the error, so the caller can self-correct
+from the response alone. **Not** fixed at that time: writing a value into a field, which the trait could not
+express — #46 added the value parameter and the `set_value` verb that needed it.
 **Severity:** 🟡 High — this is the gap that forces OCR onto every form field.
 
 ### 40. Serialization failures return an empty tool payload instead of an error
@@ -278,7 +282,7 @@ overlapping tiles at native scale (or upscale small crops) instead of one whole-
 **Problem (verified 2026-11-05):** the declared/dispatched sets match exactly (0 orphan tools — `tests/tool_schema_tests.rs` is a real drift guard and works), but 20 advertised tools appear in no test file: `accessibility_tree`, `accessibility_find`, `accessibility_properties`, `accessibility_action`, `screen_scroll_to_text`, `decision_rank`, `decision_stats`, `detect_click_object`, `disk_usage`, `system_stats`, `system_logs`, and all eight `mcp_*` hub tools. The four accessibility tools are structurally untestable today: `StubBackend` implements no `AccessibilityCapability`, so `GuiClient::accessibility()` returns `UnsupportedCapability` and no handler path beyond the error can be exercised. `tests/handler_tests.rs` covers display/mouse/keyboard/clipboard/window only.
 **Status:** 🟡 Partially fixed (2026-11-05) — the accessibility half and the cheap argument/result half are closed; 7 tools remain, all of them `mcp_*` hub tools.
 - New `StubA11yBackend` in `src/gui/backend/stub.rs`: the `StubBackend` display/input behavior plus a fixed nine-element tree, and the id-cache contract the platform backends implement — every walk re-mints `stub:<n>` ids depth-first and invalidates the previous walk's ids, so `accessibility_properties` / `accessibility_action` behave the same way here as on Windows (issue #39). `max_depth` is honored (trimmed children are not issued ids), name and role are filtered as separate substring matches, and an unresolvable id is refused with the same wording.
-- `StubA11yRecorder` is handed back by `StubA11yBackend::new()` because `GuiClient` takes ownership of the backend. It exists because a tool response can echo an argument it never used: the tests assert the `(element_id, action)` pairs the backend actually received, and that a refused action records nothing.
+- `StubA11yRecorder` is handed back by `StubA11yBackend::new()` because `GuiClient` takes ownership of the backend. It exists because a tool response can echo an argument it never used: the tests assert the `(element_id, action, value)` triples the backend actually received, and that a refused action records nothing. (#46 later widened that recorder to carry the value; see its status below.)
 - `StubBackend::as_accessibility()` stays `None` on purpose, so the `UnsupportedCapability` path keeps a test. `handler_tests.rs` gained 9 accessibility tests; `tool_schema_tests.rs` gained 2 (schema `required` vs what the handler enforces, and the id-contract wording in the descriptions).
 - **Proven to fail, not just to pass:** with the cache replacement in `walk()` mutated to keep the first walk's tree and ids, `test_accessibility_ids_are_invalidated_by_the_next_walk` is the only test that fails — the invalidation assertion is load-bearing rather than decorative. The mutation was reverted and the suite re-run.
 - Measured coverage after this change (script over `tools.rs` names vs the test-bearing corpus): **13 of 72** declared tools still appear in no test — `decision_rank`, `decision_stats`, `detect_click_object`, `disk_usage`, `mcp_discover`, `mcp_exec`, `mcp_start`, `mcp_stop`, `mcp_tool_groups`, `mcp_tools`, `mcp_unregister`, `screen_scroll_to_text`, `system_stats`. (`system_logs` and `mcp_register`/`mcp_list` left the list via #41 and #40.)
@@ -597,7 +601,8 @@ and one of the counts was wrong:
 - `CHANGELOG.md` guardrails bullet now states the denylist is deterministic and never bypassed, that an
   unreachable model is decided by `--jev-guard-fail-mode`, and that the default `closed` means a guard
   failure is never a silent allow; the flag and its env var joined the config list.
-- `docs/ISSUES.md` #4 carries the per-platform verb table and points at #46 for the value-writing gap.
+- `docs/ISSUES.md` #4 carries the per-platform verb table and pointed at #46 for the value-writing gap, which
+  #46 has since closed.
 - All six `gui_click` doc comments renamed to `mouse_click`; the two on `AccessibilityNode.cx/cy` now point
   at `accessibility_action` with the node's `id` when `actions` is non-empty, which is the more reliable path.
 - 14 further pre-rename names in the still-current `[Unreleased]` block of `CHANGELOG.md`
@@ -650,7 +655,53 @@ and one of the counts was wrong:
 
 **Files:** `src/gui/accessibility.rs` (`AccessibilityCapability`), all three `src/platform/accessibility/*`
 **Problem (verified 2026-11-05):** `#38` is closed without a way to put text into an edit field, deliberately. `AccessibilityCapability::invoke_element_action(element_id, action)` takes an action *name* and no value argument, so `ValuePattern::SetValue` / `RangeValuePattern::SetValue` are unreachable through the public API on every platform — advertising a `set_value` action would advertise a call that cannot carry the value it needs. Form driving therefore still ends in keyboard injection via `shell`/`gui` input tools rather than the accessibility tree, which is slower and loses the field's identity. Fixing it properly means widening the trait (an `action` + optional `value` pair, or a separate `set_element_value`), implementing it on Windows (Value → RangeValue), macOS (`AXValue`) and Linux (AT-SPI `SetContents`), then extending the tool schema, the handler, `get_element_actions` and the `StubBackend` recording from #43.
-**Status:** 🟡 Open — design decision recorded while fixing #38; needs the trait change, not a pattern call.
+**Status:** ✅ Fixed — the trait now carries the operand, and all three platforms write through it.
+
+- **The decision #38 deferred went to widening `invoke_element_action` with `value: Option<&str>` rather than
+  a separate `set_element_value` tool.** `set_value` is a verb in the same dispatch the other verbs already
+  use, so a second tool would need its own schema, its own `required`-drift test in `tool_schema_tests`, and a
+  second path through three platform managers, for something that belongs in the element's own action list.
+  `Option<&str>` rather than `&str` defaulting to empty, because "no value" and "an empty value" are different
+  operations: the first is a refusal for `set_value`, the second clears the field.
+- **Windows** (`src/platform/accessibility/windows.rs`): a `set_value` verb — ValuePattern (refused with its own
+  message when `CurrentIsReadOnly`) → RangeValuePattern (the operand must parse as a number; NaN and infinity are
+  refused because they *do* parse, and a value outside `CurrentMinimum`…`CurrentMaximum` is refused rather than
+  silently clamped, which would answer a different question than the caller asked) → LegacyIAccessible `SetValue`,
+  the MSAA bridge a VCL control that never implemented ValuePattern still answers to. `get_element_actions`
+  advertises `set_value` only when a **writable** value pattern exists, so the list keeps its promise that nothing
+  in it can fail. `setvalue` / `set_text` normalize to it through the same case-and-`-` folding that already maps
+  `press`/`click`/`tap`.
+- **macOS**: `AXUIElementSetAttributeValue(element, "AXValue", CFString)`. This is an *attribute* write, not a
+  `PerformAction` — which is exactly why no AX action name could ever have carried it. Always written as a string:
+  an edit field that holds digits holds text, and guessing the attribute type from the operand's shape would
+  change what is written. Numeric controls use `AXIncrement`/`AXDecrement`, already reachable.
+- **Linux**: `org.a11y.atspi.EditableText.SetTextContents` (the original text of this issue said `SetContents`;
+  the real D-Bus method is `SetTextContents`). The Action interface never lists it, so
+  `get_element_properties` appends `set_value` to the advertised actions when `Accessible.GetInterfaces` reports
+  EditableText on the element.
+- **Tool layer** (`tools.rs`, `handlers/accessibility.rs`): `accessibility_action` gained the optional `value`,
+  declared `["string", "number"]` because `{"value": 42}` is the natural way to address a spinner. Two refusals
+  land before anything is invoked: a value paired with a verb that cannot use it (dropping one of the caller's
+  arguments and reporting success is the #40 failure class), and `set_value` with no value at all. The success
+  text says "with the given value" but never echoes the value itself — a field write can be a password.
+- **Stub and recorder** (#43's seam): `StubA11yRecorder` records `(element_id, action, value)` triples —
+  `StubA11yCall` — because "the verb arrived" and "the operand arrived" are different claims, and the `edit`
+  element in the fixture now advertises `set_value` the way the real backend does.
+- **Verified:** 8 tests added (7 in `tests/handler_tests.rs`, 1 schema guard in `tests/tool_schema_tests.rs`)
+  covering the value reaching the backend, a JSON number and an empty string both being accepted, the two
+  refusals leaving the recorder empty, a non-scalar `value` being rejected, the verb aliases, and the backend
+  holding the contract on its own for a direct API caller. **Mutation-checked:** passing `None` instead of the
+  parsed value in the handler makes the two threading tests fail, so the recorder assertion is load-bearing.
+  Measured after the batch: **306 passed / 0 failed / 4 ignored** default, 238 / 0 / 1 with
+  `--no-default-features`, 309 / 0 / 4 with `--features detection`; `fmt --check` and
+  `clippy --all-targets -- -D warnings` clean.
+- **Not verified on hardware:** the macOS and Linux writes are compile-gated only — CI's platform legs (#44)
+  build them, and this worktree has no Mac, no X server, and no second `rustup` target installed, so neither
+  was even `cargo check`ed locally. The Windows path is the one that will meet a real UIA call first, and it is
+  the platform the product is used on.
+- **Deliberately not added:** a value on `increment`/`decrement`. RangeValue already steps by the control's own
+  `CurrentSmallChange`, and an explicit target is expressible as `set_value`; accepting a number there would give
+  one argument two meanings.
 **Severity:** 🟡 High — the remaining reason a form-automation session falls back to keystrokes and OCR.
 
 ### 47. The `StubBackend` suite is not hermetic: system handlers shell out for real, and the detector loads its model
@@ -707,7 +758,7 @@ Current state of the planned feature phases:
 - All three platforms implemented: Windows UI Automation (COM), macOS AXUIElement, Linux AT-SPI2 (zbus). All four tools are live in the dispatch and in `tools/list` (see issue #4).
 - `get_element_properties` / `invoke_element_action` now implemented on all platforms (element caches on Windows/macOS, stable D-Bus paths on Linux).
 - Remaining: Linux ignores `window_id` and uses blocking D-Bus calls.
-- Audit 2026-11-05: Windows now reads value/description and the expanded / checked / selected / offscreen states and drives the Toggle, Value, ExpandCollapse, SelectionItem, RangeValue and ScrollItem patterns (#38, #39). Writing a value into an element is still unreachable on any platform because the capability trait has no value parameter — tracked as #46.
+- Audit 2026-11-05: Windows now reads value/description and the expanded / checked / selected / offscreen states and drives the Toggle, Value, ExpandCollapse, SelectionItem, RangeValue and ScrollItem patterns (#38, #39). Writing a value into an element was unreachable on any platform because the capability trait had no value parameter — closed the same day by #46: `invoke_element_action` takes `Option<&str>` and each platform writes through its own value API (UIA Value/RangeValue/Legacy, `AXValue`, AT-SPI EditableText).
 
 ### Phase 7 — Template Matching ✅ Done
 - `vision_find_image` / `vision_wait_for_image` wired to rustautogui's CPU FFT NCC path via the new `VisionCapability` backend trait; both tool schemas exposed in `tools/list` (issue #16).
@@ -742,6 +793,12 @@ Current state of the planned feature phases:
   `screen_scroll_to_text`, all served by the #47 stubs (no shell-out, no model, no gateway). 7 of 72 tools are now
   uncovered — the `mcp_*` hub tools, which need a fake child server to exercise the lifecycle. Re-measured:
   **298 passing / 0 failed / 4 ignored** (302 total) on Windows.
+- Fix 2026-11-05 (#46): `AccessibilityCapability::invoke_element_action` takes `value: Option<&str>`, and the new
+  `set_value` verb writes through UIA Value/RangeValue/Legacy, macOS `AXValue` and AT-SPI EditableText — the last
+  reason a form-driving session had to fall back to keystrokes and OCR. `StubA11yRecorder` now records the value
+  it received, and the tool layer refuses a value on a verb that cannot use it instead of dropping the argument.
+  8 tests added, mutation-checked by dropping the value at the handler. Re-measured: **306 passing / 0 failed /
+  4 ignored** (310 total) on Windows; 238 / 0 / 1 slim; 309 / 0 / 4 with `detection`.
 - Fix 2026-11-05 (#48): the guard tests' process-global config made a *safety* assertion order-dependent —
   three `assess`-level tests read the config without installing it, and the old `get_or_init` reader turned
   that first read into `guardrails: false` for the whole process. `init` is now authoritative in either order,
