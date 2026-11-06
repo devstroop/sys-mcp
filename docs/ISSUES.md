@@ -384,7 +384,7 @@ express — #46 added the value parameter and the `set_value` verb that needed i
 - The lint gate is now `cargo clippy --all-targets -- -D warnings`, i.e. as strict as the local run.
 - New `features` job (ubuntu, two legs). `--no-default-features` compiles **and** runs the suite — the combination nobody had ever compiled, which turned out to be uncompilable (bullet above). `--features detection` compiles and links with `--no-run` instead of executing, because running the suite provisions the real YOLO model to assert nothing — see #47.
 - New report-only `supply-chain` job (`EmbarkStudios/cargo-deny-action@v2`, `continue-on-error: true`) with a `deny.toml` seed.
-- `release.yml`: `workflow_dispatch` added so the pipeline can be exercised without a tag, with the `release` job gated on `if: github.event_name == 'push'` so a manual run never publishes; a `--version` smoke step per leg; a flatten step that fails if asset names collide across legs; `SHA256SUMS` generated over the flat asset set; and a comment recording that `macos-13` is load-bearing (last x86_64 macOS runner), not staleness.
+- `release.yml`: `workflow_dispatch` added so the pipeline can be exercised without a tag, with the `release` job gated on `if: github.event_name == 'push'` so a manual run never publishes; a `--version` smoke step per leg; a flatten step that fails if asset names collide across legs; `SHA256SUMS` generated over the flat asset set. The x86_64 macOS leg originally stayed on `macos-13` under the assumption that it was load-bearing (last Intel macOS image); GitHub has since retired that runner label, so the leg now cross-compiles `x86_64-apple-darwin` from `macos-latest` (universal SDK links both arch slices; the smoke test runs under pre-installed Rosetta 2). A job targeting the retired label would queue indefinitely for a runner that never picks it up.
 
 **Verified locally:** both workflow files pass `action-validator` against the GitHub Actions schema (exit 0 each). `deny.toml` parses as TOML and every key was checked against cargo-deny's current configuration docs — the keys newer cargo-deny rejects (`advisories.vulnerability/notice/severity-threshold`, `licenses.unlicensed/copyleft/deny/default/unknown`) are absent, and the two sections whose defaults could not be verified are omitted rather than guessed. `cargo check --all-targets --features detection` and `cargo test --all-targets --features detection` both exit 0 on Windows.
 
@@ -418,8 +418,8 @@ workaround are now documented in `CONTRIBUTING.md`.
 doc-verified only — and it predicted correctly that the report would be red until triaged. The feature legs
 run on Linux while all of the above ran on Windows, which is exactly the gap that produced the two failures
 below. The `ci.yml` test matrix uses `macos-latest`, so that leg ran on a current image and reached
-`cargo check` — the earlier worry about a retired runner applies only to `release.yml`'s `macos-13`
-x86_64 build leg, which has never run. `release.yml` has
+`cargo check`. The `release.yml` `macos-13` x86_64 leg has now been switched to cross-compile from
+`macos-latest` (GitHub retired the Intel macOS image), so no leg targets an unavailable runner. `release.yml` has
 still never published (`git tag` is empty, version `0.1.0`, all work under `## [Unreleased]`). Binary signing
 is deliberately **not** added: `SHA256SUMS` lets a downloader detect corruption, not establish provenance, and
 cosign/minisign or Windows code signing each need a key decision from the owner.

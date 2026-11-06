@@ -42,12 +42,12 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
 
-          # macos-13 is not staleness: it is the last GitHub runner image that
-          # provides x86_64 macOS, so it is the only way to produce
-          # x86_64-apple-darwin. Do not "modernise" it to macos-latest (arm64),
-          # which would silently produce two aarch64 binaries and no Intel one.
+          # Cross-compile the Intel binary from the ARM runner. GitHub retired
+          # macos-13 (the last Intel macOS image) in 2026; the universal SDK on
+          # macos-latest produces x86_64 Mach-O just fine, and the smoke test
+          # runs under Rosetta 2 which is pre-installed on the runner image.
           - name: macos-x86_64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
 

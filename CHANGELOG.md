@@ -157,6 +157,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wildcard ban is the workspace's own `{ path = "rustautogui", ... }` dep; the
   fix pins `version = "2.5.0"` in `Cargo.toml` rather than adding a `[bans] skip`
   that would mask future regressions
+- **`release.yml` x86_64 macOS leg queued forever on a retired runner.** GitHub
+  removed `macos-13`, the last Intel macOS image, from the hosted runner pool; a
+  job targeting `os: macos-13` sits in the queue indefinitely because no runner
+  will ever pick it up. The leg now runs on `macos-latest` and cross-compiles
+  `x86_64-apple-darwin` — the universal SDK on the ARM image links both arch
+  slices, and the `--version` smoke test runs under the pre-installed Rosetta 2.
 
 ## [0.1.0] - 2025-04-12
 
