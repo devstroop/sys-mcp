@@ -30,7 +30,7 @@ impl ServiceManager {
                 .args([
                     "-NoProfile",
                     "-Command",
-                    "Get-Service | Select-Object Name, DisplayName, Status, StartType | ConvertTo-Json"
+                    "Get-Service | Select-Object Name, DisplayName, @{N='Status';E={$_.Status.ToString()}}, @{N='StartType';E={$_.StartType.ToString()}} | ConvertTo-Json"
                 ])
                 .stdout(Stdio::piped())
                 .output()
@@ -41,8 +41,8 @@ impl ServiceManager {
                             for item in arr {
                                 let name = item.get("Name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                 let display = item.get("DisplayName").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let status = format!("{:?}", item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown"));
-                                let start_type = format!("{:?}", item.get("StartType").and_then(|v| v.as_str()).unwrap_or("Manual"));
+                                let status = item.get("Status").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+                                let start_type = item.get("StartType").and_then(|v| v.as_str()).unwrap_or("Manual").to_string();
 
                                 services.push(ServiceInfo {
                                     name,
@@ -236,35 +236,43 @@ impl NetworkManager {
                 .args([
                     "-NoProfile",
                     "-Command",
-                    "Get-NetIPConfiguration | Select-Object InterfaceAlias, IPv4Address, IPv4DefaultGateway, DNSServer | ConvertTo-Json"
+                    "Get-CimInstance Win32_NetworkAdapterConfiguration -Filter \"IPEnabled=True\" | Select-Object IPAddress, DefaultIPGateway, DNSServerSearchOrder | ConvertTo-Json"
                 ])
                 .stdout(Stdio::piped())
                 .output()
             {
                 if let Ok(text) = String::from_utf8(output.stdout) {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if let Some(arr) = json.as_array() {
-                            for item in arr {
-                                if let Some(ip) = item.get("IPv4Address").and_then(|v| v.as_array()).and_then(|a| a.first()) {
-                                    if let Some(addr) = ip.get("IPAddress").and_then(|v| v.as_str()) {
-                                        if !addr.starts_with("169.254") {
+                        let arr = if json.is_array() {
+                            json.as_array().cloned().unwrap_or_default()
+                        } else {
+                            vec![json.clone()]
+                        };
+                        for item in arr {
+                            if let Some(ips) = item.get("IPAddress").and_then(|v| v.as_array()) {
+                                for ip in ips {
+                                    if let Some(addr) = ip.as_str() {
+                                        if !addr.starts_with("169.254")
+                                            && !addr.starts_with("fe80")
+                                            && !info.ip_addresses.contains(&addr.to_string())
+                                        {
                                             info.ip_addresses.push(addr.to_string());
                                         }
                                     }
                                 }
-                                if let Some(gw) = item.get("IPv4DefaultGateway").and_then(|v| v.as_array()).and_then(|a| a.first()) {
-                                    if let Some(addr) = gw.get("NextHop").and_then(|v| v.as_str()) {
+                            }
+                            if info.default_gateway.is_none() {
+                                if let Some(gws) = item.get("DefaultIPGateway").and_then(|v| v.as_array()) {
+                                    if let Some(addr) = gws.first().and_then(|v| v.as_str()) {
                                         info.default_gateway = Some(addr.to_string());
                                     }
                                 }
-                                if let Some(dns) = item.get("DNSServer").and_then(|v| v.as_array()) {
-                                    for server in dns {
-                                        if let Some(addr) = server.get("ServerAddresses").and_then(|v| v.as_array()) {
-                                            for a in addr {
-                                                if let Some(ip) = a.as_str() {
-                                                    info.dns_servers.push(ip.to_string());
-                                                }
-                                            }
+                            }
+                            if let Some(dns) = item.get("DNSServerSearchOrder").and_then(|v| v.as_array()) {
+                                for server in dns {
+                                    if let Some(ip) = server.as_str() {
+                                        if !info.dns_servers.contains(&ip.to_string()) {
+                                            info.dns_servers.push(ip.to_string());
                                         }
                                     }
                                 }
@@ -612,7 +620,7 @@ impl SystemMonitor {
                 .args([
                     "-NoProfile",
                     "-Command",
-                    "Get-Volume | Select-Object DriveLetter, FileSystemLabel, Size, FreeSpace | ConvertTo-Json"
+                    "Get-Volume | Select-Object DriveLetter, FileSystemLabel, Size, @{N='FreeSpace';E={$_.SizeRemaining}} | ConvertTo-Json"
                 ])
                 .stdout(Stdio::piped())
                 .output()
