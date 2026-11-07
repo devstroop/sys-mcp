@@ -1,6 +1,6 @@
 [package]
 name = "sys-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "MCP server for local system automation — screen capture, OCR, input, window management, accessibility, shell/terminal, file system, process/service/network management, MCP Hub, and system monitoring"
 license = "MIT"
