@@ -7,11 +7,16 @@ use sys_mcp::mcp::server::GuiMcpServer;
 async fn main() -> anyhow::Result<()> {
     let config = ServerConfig::from_args();
 
-    // Initialize logging
+    // Initialize logging — MUST go to stderr so stdout stays a clean
+    // JSON-RPC channel for stdio MCP transport.
     if config.debug {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug")).init();
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
+            .target(env_logger::Target::Stderr)
+            .init();
     } else {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .target(env_logger::Target::Stderr)
+            .init();
     }
 
     log::info!("gui-mcp v{} starting...", env!("CARGO_PKG_VERSION"));

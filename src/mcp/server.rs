@@ -76,7 +76,9 @@ impl McpRequestHandler {
     pub async fn handle_request(&self, req: &McpRequest) -> McpResponse {
         match req.method.as_str() {
             "initialize" => self.handle_initialize(req),
-            "initialized" => McpResponse::success(req.id.clone(), json!({})),
+            "initialized" | "notifications/initialized" => {
+                McpResponse::success(req.id.clone(), json!({}))
+            }
             "tools/list" => self.handle_tools_list(req),
             "tools/call" => self.handle_tools_call(req).await,
             // Resources: read-only observations of the host. No side effects.
@@ -343,6 +345,9 @@ where
             }
         };
 
+        // Notifications (no `id`) are handled for side effects but never answered.
+        let is_notification = request.id.is_none();
+
         // Admission control; see [`MAX_IN_FLIGHT`].
         while in_flight.len() >= MAX_IN_FLIGHT {
             reap(&mut in_flight).await;
@@ -352,7 +357,9 @@ where
         let sink = Arc::clone(&sink);
         in_flight.spawn(async move {
             let response = handler.handle_request(&request).await;
-            emit(&sink, response).await;
+            if !is_notification {
+                emit(&sink, response).await;
+            }
         });
     }
 
@@ -660,6 +667,34 @@ mod tests {
         );
         assert!(responses[0].get("id").map(|v| v.is_null()).unwrap_or(false));
         assert_eq!(id_of(&responses[1]), "after");
+    }
+
+    /// JSON-RPC notifications (no `id`) are handled for their side effects but
+    /// must never be answered — including a notification whose method is
+    /// unknown. A bogus response is worse than none: the client has no pending
+    /// call to match it to.
+    #[tokio::test]
+    async fn notifications_are_processed_but_never_answered() {
+        let input = format!(
+            "{}\n{}\n{}\n",
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            json!({ "jsonrpc": "2.0", "method": "does/not/exist" }),
+            ping_request("after"),
+        );
+        let sink = sink();
+
+        serve_lines(
+            handler(),
+            BufReader::new(input.as_bytes()),
+            Arc::clone(&sink),
+        )
+        .await
+        .expect("transport ran clean");
+
+        let responses = lines_out(&sink).await;
+        assert_eq!(responses.len(), 1, "{responses:?}");
+        assert_eq!(id_of(&responses[0]), "after");
+        assert!(responses[0].get("error").is_none(), "{}", responses[0]);
     }
 
     /// Admission control must not become the bug it replaces. Requests past the

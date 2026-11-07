@@ -181,8 +181,19 @@ async fn mcp_handler(
         }
     };
 
-    // Handle MCP request
+    // Handle MCP request. A JSON-RPC notification (no `id`) is still executed
+    // for its side effects, but it is never answered: MCP Streamable HTTP
+    // returns 202 Accepted with an empty body for notifications.
+    let is_notification = mcp_request.id.is_none();
     let response = state.mcp_handler.handle_request(&mcp_request).await;
+
+    if is_notification {
+        return Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .header("mcp-session-id", session.id)
+            .body(Body::empty())
+            .unwrap();
+    }
 
     // Serialize response
     let response_json = match serde_json::to_string(&response) {
@@ -198,14 +209,8 @@ async fn mcp_handler(
         }
     };
 
-    let status = if response_json.is_empty() {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::OK
-    };
-
     Response::builder()
-        .status(status)
+        .status(StatusCode::OK)
         .header("Content-Type", "application/json")
         .header("mcp-session-id", session.id)
         .body(Body::from(response_json))
